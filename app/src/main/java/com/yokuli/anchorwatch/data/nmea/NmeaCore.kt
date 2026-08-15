@@ -27,18 +27,25 @@ class NmeaStreamSplitter(private val maxLength:Int=1024) {
  }
 }
 
-data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val depth:Double?=null,val utcMillis:Long?=null,val type:String)
+data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val depth:Double?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String)
 
 class Nmea0183Parser {
  fun parse(line:String,requireChecksum:Boolean=true,elapsed:Long=System.nanoTime()/1_000_000):NmeaUpdate? {
   if(!NmeaChecksum.validate(line,requireChecksum)) return null
   val body=line.substring(1).substringBefore('*'); val f=body.split(','); if(f[0].length<3)return null
-  return when(f[0].takeLast(3)){"RMC"->rmc(f,line,elapsed);"GGA"->gga(f,line,elapsed);"GLL"->gll(f,line,elapsed);"VTG"->NmeaUpdate(sog=f.getOrNull(5).d(),cog=f.getOrNull(1).d(),type="VTG");"HDT"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),type="HDT");"HDM"->NmeaUpdate(magneticHeading=f.getOrNull(1).d(),type="HDM");"HDG"->hdg(f);"DPT"->NmeaUpdate(depth=f.getOrNull(1).d(),type="DPT");"DBT"->NmeaUpdate(depth=f.getOrNull(3).d(),type="DBT");"ZDA"->zda(f);else->null}
+  return when(f[0].takeLast(3)){"RMC"->rmc(f,line,elapsed);"GGA"->gga(f,line,elapsed);"GLL"->gll(f,line,elapsed);"VTG"->NmeaUpdate(sog=f.getOrNull(5).d(),cog=f.getOrNull(1).d(),type="VTG");"HDT"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),type="HDT");"HDM"->NmeaUpdate(magneticHeading=f.getOrNull(1).d(),type="HDM");"HDG"->hdg(f);"DPT"->NmeaUpdate(depth=f.getOrNull(1).d(),type="DPT");"DBT"->NmeaUpdate(depth=f.getOrNull(3).d(),type="DBT");"MWD"->mwd(f);"MWV"->mwv(f);"ZDA"->zda(f);else->null}
  }
  private fun rmc(f:List<String>,raw:String,e:Long):NmeaUpdate? { val p=position(f,3,4,5,6)?:return null; val valid=f.getOrNull(2)=="A"; val utc=parseRmcTime(f.getOrNull(1),f.getOrNull(9)); return NmeaUpdate(NavigationFix(p.first,p.second,utc,e,f.getOrNull(7).d(),f.getOrNull(8).d(),sourceSentence=raw,valid=valid),f.getOrNull(7).d(),f.getOrNull(8).d(),utcMillis=utc,type="RMC") }
  private fun gga(f:List<String>,raw:String,e:Long):NmeaUpdate? { val p=position(f,2,3,4,5)?:return null; val q=f.getOrNull(6)?.toIntOrNull()?:0; return NmeaUpdate(NavigationFix(p.first,p.second,null,e,hdop=f.getOrNull(8).d(),fixQuality=q,satellites=f.getOrNull(7)?.toIntOrNull(),altitudeMeters=f.getOrNull(9).d(),sourceSentence=raw,valid=q>0),type="GGA") }
  private fun gll(f:List<String>,raw:String,e:Long):NmeaUpdate? { val p=position(f,1,2,3,4)?:return null; return NmeaUpdate(NavigationFix(p.first,p.second,null,e,sourceSentence=raw,valid=f.getOrNull(6)=="A"),type="GLL") }
  private fun hdg(f:List<String>):NmeaUpdate { val mag=f.getOrNull(1).d(); val variation=f.getOrNull(4).d()?.let{if(f.getOrNull(5)=="W")-it else it}; return NmeaUpdate(trueHeading=if(mag!=null&&variation!=null)(mag+variation+360)%360 else null,magneticHeading=mag,type="HDG") }
+ private fun mwd(f:List<String>):NmeaUpdate { val knots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(1.943844);return NmeaUpdate(trueWindDirection=f.getOrNull(1).d(),windSpeedKnots=knots,trueWindSpeedKnots=knots,type="MWD") }
+ private fun mwv(f:List<String>):NmeaUpdate? {
+  if(f.getOrNull(5)!="A")return null
+  val angle=f.getOrNull(1).d()?.let{(it%360.0+360.0)%360.0}
+  val speed=f.getOrNull(3).d()?.let{when(f.getOrNull(4)){"M"->it*1.943844;"K"->it*.539957;else->it}}
+  return when(f.getOrNull(2)){"R"->NmeaUpdate(windSpeedKnots=speed,apparentWindAngle=angle,apparentWindSpeedKnots=speed,type="MWV");"T"->NmeaUpdate(windSpeedKnots=speed,trueWindAngle=angle,trueWindSpeedKnots=speed,type="MWV");else->null}
+ }
  private fun zda(f:List<String>):NmeaUpdate? = try { val t=f[1]; val date=LocalDate.of(f[4].toInt(),f[3].toInt(),f[2].toInt()); val time=LocalTime.of(t.substring(0,2).toInt(),t.substring(2,4).toInt(),t.substring(4).toDouble().toInt()); NmeaUpdate(utcMillis=date.atTime(time).toInstant(ZoneOffset.UTC).toEpochMilli(),type="ZDA") }catch(_:Exception){null}
  private fun position(f:List<String>,li:Int,lh:Int,oi:Int,oh:Int):Pair<Double,Double>? { val lat=coord(f.getOrNull(li),f.getOrNull(lh))?:return null; val lon=coord(f.getOrNull(oi),f.getOrNull(oh))?:return null; if(lat !in -90.0..90.0||lon !in -180.0..180.0)return null; return lat to lon }
  private fun coord(v:String?,hem:String?):Double? { val n=v?.toDoubleOrNull()?:return null; val deg=(n/100).toInt(); val x=deg+(n-deg*100)/60; return if(hem=="S"||hem=="W")-x else x }

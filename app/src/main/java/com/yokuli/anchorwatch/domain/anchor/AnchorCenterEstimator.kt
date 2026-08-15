@@ -13,7 +13,8 @@ class AnchorCenterEstimator(private val random:Random=Random.Default){
   var best:Circle?=null;var bestIn=emptyList<P>();repeat(300){val s=hull.shuffled(random).take(3);val c=circumcircle(s[0],s[1],s[2])?:return@repeat;val tolerance=max(3.5,c.r*.12);val inside=hull.filter{abs(hypot(it.x-c.x,it.y-c.y)-c.r)<=tolerance};if(inside.size>bestIn.size){best=c;bestIn=inside}}
   if(bestIn.size<3)return null;val fit=leastSquares(bestIn)?:best!!;val residual=sqrt(hull.map{(hypot(it.x-fit.x,it.y-fit.y)-fit.r).pow(2)}.average());val angles=hull.map{(Math.toDegrees(atan2(it.y-fit.y,it.x-fit.x))+360)%360}.sorted();val maxGap=(angles.zipWithNext{a,b->b-a}+((angles.first()+360)-angles.last())).maxOrNull()?:360.0;val coverage=360-maxGap
   val priorPenalty=expectedRadius?.let{abs(fit.r-it)/max(it,1.0)}?:0.0
-  val confidence=when{points.size>=30&&coverage>=60&&residual<=4&&priorPenalty<.5->Confidence.HIGH;coverage>=30&&residual<=8->Confidence.MEDIUM;else->Confidence.LOW}
+  val sectorCount=angles.map{(it/30.0).toInt().coerceIn(0,11)}.distinct().size
+  val confidence=when{points.size>=120&&coverage>=200&&sectorCount>=8&&residual<=max(4.0,fit.r*.12)&&priorPenalty<.35->Confidence.HIGH;coverage>=90&&sectorCount>=4&&residual<=8->Confidence.MEDIUM;else->Confidence.LOW}
   return AnchorEstimate(oLat+fit.y/110540,oLon+fit.x/(111320*cosLat),fit.r,confidence,residual,coverage,points.size)
  }
  private data class P(val x:Double,val y:Double);private data class Circle(val x:Double,val y:Double,val r:Double)

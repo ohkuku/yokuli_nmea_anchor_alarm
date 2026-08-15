@@ -22,7 +22,7 @@ object AnchorRangeCalculator {
         preset: AnchorSafetyPreset,
         bowRollerHeightMeters: Double = 1.5,
     ): AnchorRangeSuggestion? {
-        if (depthMeters < 0 || rodeMeters <= 0 || boatLengthMeters < 0) return null
+        if (depthMeters < 0 || rodeMeters <= 0 || boatLengthMeters < 0 || bowRollerHeightMeters <= 0) return null
         val vertical = depthMeters + bowRollerHeightMeters
         if (rodeMeters < vertical) return null
         val horizontal = sqrt(max(0.0, rodeMeters * rodeMeters - vertical * vertical))

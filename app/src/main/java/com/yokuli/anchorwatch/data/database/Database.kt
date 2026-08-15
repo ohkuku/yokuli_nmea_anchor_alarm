@@ -32,7 +32,7 @@ import kotlinx.coroutines.flow.Flow
  val provisionalAnchorLongitude:Double?=null,
  val provisionalRadiusMeters:Double?=null,
 )
-@Entity(tableName="track_points",foreignKeys=[ForeignKey(entity=AnchorSessionEntity::class,parentColumns=["id"],childColumns=["sessionId"],onDelete=ForeignKey.CASCADE)],indices=[Index("sessionId")]) data class TrackPointEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val latitude:Double,val longitude:Double,val distanceFromAnchor:Double,val sog:Double?,val cog:Double?,val heading:Double?,val hdop:Double?)
+@Entity(tableName="track_points",foreignKeys=[ForeignKey(entity=AnchorSessionEntity::class,parentColumns=["id"],childColumns=["sessionId"],onDelete=ForeignKey.CASCADE)],indices=[Index("sessionId")]) data class TrackPointEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val latitude:Double,val longitude:Double,val distanceFromAnchor:Double,val sog:Double?,val cog:Double?,val heading:Double?,val hdop:Double?,val windDirectionTrue:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,@ColumnInfo(defaultValue="0")val headingMeasured:Boolean=false,val headingSampleSequence:Long?=null,val windSampleSequence:Long?=null)
 @Entity(tableName="alarm_events",indices=[Index("sessionId")]) data class AlarmEventEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val type:String,val detail:String="")
 @Dao interface AnchorDao {
  @Insert suspend fun insertSession(v:AnchorSessionEntity):Long
@@ -44,4 +44,4 @@ import kotlinx.coroutines.flow.Flow
  @Insert suspend fun insertEvent(v:AlarmEventEntity)
  @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp") fun events(id:Long):Flow<List<AlarmEventEntity>>
 }
-@Database(entities=[AnchorSessionEntity::class,TrackPointEntity::class,AlarmEventEntity::class],version=3,exportSchema=false) abstract class AppDatabase:RoomDatabase(){abstract fun anchorDao():AnchorDao}
+@Database(entities=[AnchorSessionEntity::class,TrackPointEntity::class,AlarmEventEntity::class],version=5,exportSchema=false) abstract class AppDatabase:RoomDatabase(){abstract fun anchorDao():AnchorDao}

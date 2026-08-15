@@ -31,6 +31,7 @@ class DemoLocationRepository @Inject constructor(){
         val startedElapsed:Long,
         val pausedElapsed:Long?=null,
         val accumulatedPauseMillis:Long=0L,
+        val seed:Long=0L,
     )
 
     private val guard=Any()
@@ -38,8 +39,8 @@ class DemoLocationRepository @Inject constructor(){
     private val _status=MutableStateFlow(DemoGpsStatus());val status=_status.asStateFlow()
     private var run:Run?=null
 
-    fun start(originLatitude:Double,originLongitude:Double,placement:AnchorPlacementMode,scenario:DemoScenario,alarmRadiusMeters:Double,speedMultiplier:Int,nowElapsed:Long=SystemClock.elapsedRealtime(),initialElapsedMillis:Long=0L):NavigationFix?=synchronized(guard){
-        run=Run(originLatitude,originLongitude,placement,scenario,alarmRadiusMeters,speedMultiplier,nowElapsed-initialElapsedMillis.coerceAtLeast(0L))
+    fun start(originLatitude:Double,originLongitude:Double,placement:AnchorPlacementMode,scenario:DemoScenario,alarmRadiusMeters:Double,speedMultiplier:Int,nowElapsed:Long=SystemClock.elapsedRealtime(),initialElapsedMillis:Long=0L,seed:Long=System.nanoTime()):NavigationFix?=synchronized(guard){
+        run=Run(originLatitude,originLongitude,placement,scenario,alarmRadiusMeters,speedMultiplier,nowElapsed-initialElapsedMillis.coerceAtLeast(0L),seed=seed)
         _status.value=DemoGpsStatus(running=true,scenario=scenario)
         tickLocked(nowElapsed)
     }
@@ -72,7 +73,7 @@ class DemoLocationRepository @Inject constructor(){
         val current=run?:return null
         if(current.pausedElapsed!=null)return _fix.value
         val elapsed=(nowElapsed-current.startedElapsed-current.accumulatedPauseMillis).coerceAtLeast(0L)
-        val point=DemoTrajectory.point(elapsed,current.placement,current.scenario,current.alarmRadiusMeters,current.speedMultiplier)
+        val point=DemoTrajectory.point(elapsed,current.placement,current.scenario,current.alarmRadiusMeters,current.speedMultiplier,current.seed)
         _status.value=_status.value.copy(signalAvailable=point.signalAvailable)
         if(!point.signalAvailable)return null
         val distance=hypot(point.northMeters,point.eastMeters)

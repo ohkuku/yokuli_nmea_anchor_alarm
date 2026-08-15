@@ -13,34 +13,50 @@ import javax.inject.Singleton
  private val _fix=MutableStateFlow<NavigationFix?>(null);val fix=_fix.asStateFlow();val connectionState=connection.state
  private val _recentFixes=MutableStateFlow<List<NavigationFix>>(emptyList());val recentFixes=_recentFixes.asStateFlow()
  private val _diagnostics=MutableStateFlow(NmeaDiagnostics());val diagnostics=_diagnostics.asStateFlow()
+ private val _connectionStartedElapsed=MutableStateFlow<Long?>(null);val connectionStartedElapsed=_connectionStartedElapsed.asStateFlow()
  @Volatile private var requireChecksum=true
- private var headingTrue:Pair<Double,Long>?=null;private var headingMag:Pair<Double,Long>?=null;private var depth:Pair<Double,Long>?=null;private var sog:Pair<Double,Long>?=null;private var cog:Pair<Double,Long>?=null
- init{scope.launch{connection.lines.collect{accept(it,requireChecksum)}}}
- fun connect(p:ConnectionProfile)=synchronized(requestGuard){appConnectionRequested=true;requireChecksum=p.requireChecksum;connection.connect(p)}
- fun disconnect()=synchronized(requestGuard){appConnectionRequested=false;if(!backgroundConnectionRequested)connection.disconnect()}
+ private var headingTrue:Pair<Double,Long>?=null;private var headingMag:Pair<Double,Long>?=null;private var depth:Pair<Double,Long>?=null;private var sog:Pair<Double,Long>?=null;private var cog:Pair<Double,Long>?=null;private var windDirectionTrue:Pair<Double,Long>?=null;private var trueWindSpeed:Pair<Double,Long>?=null;private var apparentWindSpeed:Pair<Double,Long>?=null;private var apparentWindAngle:Pair<Double,Long>?=null;private var trueWindAngle:Pair<Double,Long>?=null
+ private var headingSampleSequence=0L;private var windSampleSequence=0L
+ init{
+  scope.launch{connection.lines.collect{accept(it,requireChecksum)}}
+  scope.launch{connection.state.collect{state->when(state){NmeaConnectionState.CONNECTING->if(_connectionStartedElapsed.value==null)_connectionStartedElapsed.value=SystemClock.elapsedRealtime();NmeaConnectionState.RECONNECTING->_connectionStartedElapsed.value=SystemClock.elapsedRealtime();else->Unit}}}
+ }
+ fun connect(p:ConnectionProfile)=synchronized(requestGuard){appConnectionRequested=true;requireChecksum=p.requireChecksum;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.connect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
+ fun disconnect()=synchronized(requestGuard){appConnectionRequested=false;if(!backgroundConnectionRequested){connection.disconnect();_connectionStartedElapsed.value=null}}
  /** Acquire the shared NMEA stream for a foreground service without replacing a
   * connection that the user already opened from the Connect page. */
  fun acquireBackgroundConnection(p:ConnectionProfile)=synchronized(requestGuard){
   backgroundConnectionRequested=true
-  connection.ensureConnected(p).also{started->if(started)requireChecksum=p.requireChecksum}
+  val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.ensureConnected(p).also{started->if(started)requireChecksum=p.requireChecksum else _connectionStartedElapsed.value=previous}
+ }
+ /** Claims ownership only when the user already has a live NMEA connection.
+  * Source selection must never silently start a saved endpoint. */
+ fun claimBackgroundConnectionIfConnected():Boolean=synchronized(requestGuard){
+  if(connectionState.value!=NmeaConnectionState.CONNECTED)return@synchronized false
+  backgroundConnectionRequested=true
+  true
  }
  fun releaseBackgroundConnection()=synchronized(requestGuard){
   backgroundConnectionRequested=false
-  if(!appConnectionRequested)connection.disconnect()
+  if(!appConnectionRequested){connection.disconnect();_connectionStartedElapsed.value=null}
  }
  /** Explicit safety decision: release every owner and close the transport. */
  fun disconnectAll()=synchronized(requestGuard){
   appConnectionRequested=false
   backgroundConnectionRequested=false
   connection.disconnect()
+  _connectionStartedElapsed.value=null
  }
  fun clearDiagnostics(){_diagnostics.value=NmeaDiagnostics()}
  fun accept(line:String,requireChecksum:Boolean=true){
   val now=SystemClock.elapsedRealtime();val u=parser.parse(line,requireChecksum,now);val old=_diagnostics.value;val raw=(old.raw+line).takeLast(200)
   if(u==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
-  u.trueHeading?.let{headingTrue=it to now};u.magneticHeading?.let{headingMag=it to now};u.depth?.let{depth=it to now};u.sog?.let{sog=it to now};u.cog?.let{cog=it to now}
+  if(u.trueHeading!=null){headingTrue=u.trueHeading to now;headingSampleSequence++};u.magneticHeading?.let{headingMag=it to now};u.depth?.let{depth=it to now};u.sog?.let{sog=it to now};u.cog?.let{cog=it to now}
+  val newWind=u.trueWindDirection!=null||u.trueWindSpeedKnots!=null||u.apparentWindSpeedKnots!=null||u.apparentWindAngle!=null||u.trueWindAngle!=null
+  if(newWind)windSampleSequence++;u.trueWindDirection?.let{windDirectionTrue=it to now};u.trueWindSpeedKnots?.let{trueWindSpeed=it to now};u.apparentWindSpeedKnots?.let{apparentWindSpeed=it to now};u.apparentWindAngle?.let{apparentWindAngle=it to now};u.trueWindAngle?.let{trueWindAngle=it to now}
   u.position?.let{position->
-   val merged=position.copy(sogKnots=sog.fresh(now),cogTrueDegrees=cog.fresh(now),headingTrueDegrees=headingTrue.fresh(now),headingMagneticDegrees=headingMag.fresh(now),depthMeters=depth.fresh(now))
+   val freshHeading=headingTrue.fresh(now);val freshTrueDirection=windDirectionTrue.fresh(now);val freshTrueSpeed=trueWindSpeed.fresh(now);val freshApparentSpeed=apparentWindSpeed.fresh(now);val freshApparentAngle=apparentWindAngle.fresh(now);val freshTrueAngle=trueWindAngle.fresh(now)
+   val merged=position.copy(sogKnots=sog.fresh(now),cogTrueDegrees=cog.fresh(now),headingTrueDegrees=freshHeading,headingMagneticDegrees=headingMag.fresh(now),depthMeters=depth.fresh(now),windDirectionTrueDegrees=freshTrueDirection,windSpeedKnots=freshTrueSpeed?:freshApparentSpeed,apparentWindAngleDegrees=freshApparentAngle,trueWindAngleDegrees=freshTrueAngle,trueWindSpeedKnots=freshTrueSpeed,apparentWindSpeedKnots=freshApparentSpeed,headingSampleSequence=headingSampleSequence.takeIf{freshHeading!=null},windSampleSequence=windSampleSequence.takeIf{freshTrueDirection!=null||freshTrueSpeed!=null||freshApparentSpeed!=null||freshApparentAngle!=null||freshTrueAngle!=null})
    _fix.value=merged
    if(merged.valid){val cutoff=now-10*60_000L;_recentFixes.value=(_recentFixes.value+merged).filter{it.receivedElapsedRealtime>=cutoff}.takeLast(1_200)}
   }

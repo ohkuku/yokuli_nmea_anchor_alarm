@@ -25,4 +25,11 @@ class AnchorRangeCalculatorTest {
     @Test fun rejectsRodeShorterThanVerticalDrop() {
         assertNull(AnchorRangeCalculator.advanced(20.0, 15.0, 8.0, AnchorPlacementMode.CENTER_DROP, AnchorSafetyPreset.STRICT))
     }
+
+    @Test fun enteredBowHeightIsPartOfTheVerticalDrop() {
+        val lowBow=AnchorRangeCalculator.advanced(8.0,40.0,10.0,AnchorPlacementMode.BACKDOWN,AnchorSafetyPreset.BALANCED,1.0)!!
+        val highBow=AnchorRangeCalculator.advanced(8.0,40.0,10.0,AnchorPlacementMode.BACKDOWN,AnchorSafetyPreset.BALANCED,4.0)!!
+        assertTrue(highBow.horizontalRodeMeters<lowBow.horizontalRodeMeters)
+        assertTrue(highBow.radiusMeters<lowBow.radiusMeters)
+    }
 }

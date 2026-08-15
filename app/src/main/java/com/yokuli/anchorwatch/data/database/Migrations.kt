@@ -29,3 +29,22 @@ object Migration2To3 : Migration(2, 3) {
         db.execSQL("UPDATE anchor_sessions SET learningReferenceLatitude=anchorLatitude, learningReferenceLongitude=anchorLongitude WHERE placementMode='BACKDOWN' AND centerStatus='LEARNING'")
     }
 }
+
+object Migration3To4 : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE track_points ADD COLUMN windDirectionTrue REAL")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN windSpeedKnots REAL")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN apparentWindAngle REAL")
+    }
+}
+
+object Migration4To5 : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE track_points ADD COLUMN trueWindAngle REAL")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN trueWindSpeedKnots REAL")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN apparentWindSpeedKnots REAL")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN headingMeasured INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN headingSampleSequence INTEGER")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN windSampleSequence INTEGER")
+    }
+}

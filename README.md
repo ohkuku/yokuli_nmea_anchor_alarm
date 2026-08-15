@@ -31,14 +31,14 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 ### 主要功能
 
 - TCP 客户端与 UDP 监听器；连接前必须完成地址校验、端点测试并收到有效 NMEA 数据。
-- 支持 RMC、GGA、GLL、VTG、ZDA、HDG、HDM、HDT、DPT、DBT，以及 GP/GN/GL/GA/BD 等 talker ID。
+- 支持 RMC、GGA、GLL、VTG、ZDA、HDG、HDM、HDT、DPT、DBT、MWD、MWV，以及 GP/GN/GL/GA/BD 等 talker ID；TWD、TWA、TWS、AWA、AWS 分开保存，不会互相覆盖。
 - 地图仅提供默认图与卫星图，可直接在地图页切换；隐藏 Google 地图工具栏、导航入口、室内与缩放按钮。
-- 船形标记随真艏向或 COG 旋转，锚点单独显示；轨迹由旧到新渐变，完全淡出的点仍保留用于计算和历史记录。
-- GPS 数据源可选系统 GPS、NMEA GPS，以及开发者设置中的演示 GPS。NMEA 成功连接后会自动成为默认数据源。
+- 船形标记随真艏向或 COG 旋转，锚点单独显示；地图保留最近 24 小时的 breadcrumb 轨迹并由旧到新渐变，渲染时只抽稀、不删除数据库中的计算与历史点。
+- 正常模式可选系统 GPS 或 NMEA GPS；只有服务器已连接并持续提供新鲜有效定位时才能选择 NMEA，成功连接后它会自动成为默认数据源。演示模式会单独锁定演示 GPS。
 - 锚泊会话支持暂停、原会话继续、活动中调整范围和永久起锚；暂停不会清除中心、轨迹、范围或样本。
 - 告警覆盖走锚、GPS 数据丢失、NMEA 连接丢失、定位质量和代理失败；“稍后提醒”会停止当前声音与振动，但危险持续时会再次提醒。
 - 可查看最近 200 条原始 NMEA 语句、解析位置、校验错误和连接统计。
-- 界面与关键后台安全通知支持跟随系统、English、简体中文，设置后立即生效。
+- 界面与关键后台安全通知通过 🇨🇳 / 🇬🇧 两个按钮即时切换。
 - 像素风锚形应用图标；桌面名称固定为 **Anchor by Yokuli**。
 
 ### 快速使用
@@ -52,16 +52,23 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
    - **倒车下锚：** 在落锚点开始，然后稳定倒车。橙色临时边界立即承担告警；青色圈显示锚点估算的不确定范围。样本、持续时间、位移和稳定性达到高置信度后，两圈合并为最终锚警圈。
 6. 监控中可随时“调整范围”。“暂停”会保留整次会话，“继续”会在确认所选 GPS 的新鲜定位后恢复；只有“起锚”会永久关闭本次会话。
 7. 如果活动锚警正在使用 NMEA，主动断开时必须选择：先安全切到新的系统 GPS 定位，或暂停锚警再断开。被动断线会保留布防、发出通知并自动重连，超过定位超时后升级为 GPS 数据丢失报警。
+8. 圆心确认后可点“在 Google 地图中打开锚点”，直接用 Google Maps App（未安装时使用浏览器）显示精确坐标，便于查看和复制。
 
 ### 报警范围
 
-基础模式直接填写报警半径，并可选填水深。高级模式填写低潮水深、放出的锚缆/锚链和船长，再选择严格、均衡或宽容模式。建议值以绷直后的水平锚缆长度 `sqrt(rode² - (depth + 1.5 m)²)` 为基础，再加入船长、GPS 余量，以及倒车中心学习余量。
+基础模式由用户直接填写报警半径；高级模式根据几何参数与严格、均衡或宽容档位自动计算报警半径。**倒车下锚无论使用哪种范围模式，都必须填写水深、放出的锚缆/锚链和船艏滚轮离水面高度**；收到 DPT/DBT 时水深会自动预填。高级模式还填写船长。水平锚缆按 `sqrt(rode² - (depth + bowHeight)²)` 计算。
 
-倒车下锚的第一阶段使用开始后的稳定落锚点簇和持续后退距离确定中心，不会用一小段直线硬拟合圆；形成足够摆动弧后，才允许抗离群圆拟合做小幅修正。
+倒车下锚开始时，青色圈代表锚可能存在的可行域，其初始尺度约为水平锚缆长度，而不是几米 GPS 散布。每个 GPS 点都会与该可行域做允许少量离群点的鲁棒求交。真实艏向、TWD−TWA、低 SOG 时经过 AWS/TWS 与 AWA/TWA 重复匹配的 TWD−AWA，以及航速至少 0.8 节时由 COG 反推的艏向，都会作为不同权重的方向证据；风向使用环形均值与 20 秒稳定窗口，单条缓存风句不会被重复计数。这些证据只调整可行域概率，不能单独确定中心。
+
+时间门槛会随证据自适应：真实艏向和重复风证据都存在且与 GPS 几何中心一致时最快 5 分钟；只有其中一种方向证据时至少 8 分钟；只有 GPS 轨迹时至少 15 分钟。无论时间多久，仍必须达到至少 200° 摆动覆盖、8 个方位扇区、两次有意义的摆向反转，并让前后两个独立时间段分别拟合出一致的圆心与半径。直线倒车、单向小弧、风数据跳变或风推断艏向与几何圆心不一致时永远不会提前确认。
+
+活动会话中的“调整范围”只修改报警半径。水深、锚链、船艏高度、船长、下锚方式以及已积累的中心学习证据都是本次下锚的一次性参数，不会被范围调整重写。走锚时，后台继续发出通知和循环警报；如果 App 正在前台，还会显示不可直接略过的操作弹窗，提供稍后提醒、调整范围、暂停监控和起锚。
+
+设置页可选择系统警报音、系统铃声、系统通知音或用户自己的音频文件。自定义文件不可读取时自动回退到系统警报音；通知通道本身保持静音，由锚警服务统一播放所选的循环警报，避免叠加两个声音。
 
 ### 演示 GPS
 
-“设置 → 开发者设置 → 演示模式”开启后，GPS 数据源中才会出现演示 GPS。设置锚点前仍显示真实系统 GPS 位置；设置锚点后才运行所选轨迹。可测试安全摆动、持续走锚、风向改变和 GPS 中断，并选择 1×、2×、5× 速度。关闭演示模式会安全切回系统 GPS。
+“设置 → 开发者设置 → 演示模式”开启后，本应用会强制锁定演示 GPS，并隐藏系统/NMEA 数据源选项。每次设置锚点都会重新获取一个新鲜的真实系统 GPS 起点，然后平滑向外运行本次会话随机化的安全摆动、持续走锚、风向改变或 GPS 中断轨迹，不会在风向切换时瞬移。存在活动或暂停会话时，演示模式、场景和速度都不能修改；必须先“起锚”结束会话。连接 NMEA 不会夺走演示数据源。
 
 ### NMEA 全局 GPS 代理
 
@@ -77,7 +84,7 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 
 ### 语言
 
-进入“设置 → 语言”，可选择跟随系统、English 或简体中文。应用桌面名称在所有语言下始终是 **Anchor by Yokuli**；中文界面内产品标题为 **Yokuli锚警系统**。
+进入“设置 → 语言”，点击 🇨🇳 或 🇬🇧 即可。应用桌面名称在所有语言下始终是 **Anchor by Yokuli**；中文界面内产品标题为 **Yokuli锚警系统**。
 
 ### 本地编译
 
@@ -124,14 +131,14 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 ### Highlights
 
 - TCP client and UDP listener with validation and a real NMEA preflight before a connection can be saved or accepted.
-- RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT and DBT support across common talker IDs.
+- RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT, DBT, MWD and MWV support across common talker IDs, with TWD/TWA/TWS/AWA/AWS stored independently.
 - Normal and satellite maps are switched on the map itself; Google toolbar, directions, indoor and zoom controls are disabled.
-- A heading-aware boat marker, separate anchor marker, fading visual track, and complete retained calculation/history track.
-- Selectable System, NMEA and developer-only Demo GPS sources. A verified NMEA connection becomes the selected source automatically.
+- A heading-aware boat marker, separate anchor marker, a fading 24-hour breadcrumb track, and a complete retained calculation/history track.
+- System and NMEA GPS in normal mode, with NMEA disabled until a connected source supplies a fresh valid fix. Developer Demo mode separately locks the App to Demo GPS.
 - Persistent anchoring sessions with Pause, safe Resume, live range adjustment, and permanent Lift anchor actions.
 - Drag, GPS-loss, NMEA-loss, quality and proxy-failure alarms. Snooze silences the current alert while monitoring continues and reminds again if danger persists.
 - A live page for the latest 200 raw NMEA sentences, parsed position and diagnostics.
-- Immediate in-app switching among Follow system, English and Simplified Chinese, including key background safety notifications.
+- Compact 🇨🇳 / 🇬🇧 language switching, including key background safety notifications.
 - A pixel-art anchor launcher icon; the launcher label remains **Anchor by Yokuli** in every language.
 
 ### How to use
@@ -145,16 +152,23 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
    - **Back down:** start at the drop point and reverse steadily. An orange temporary boundary protects the session immediately while a cyan uncertainty circle tightens around the estimated anchor. They merge after high-confidence centre resolution.
 6. Adjust the radius at any time. Pause preserves the session, centre, samples, range and track; Resume waits for a fresh selected-source fix. Lift anchor permanently ends the session.
 7. Disconnecting NMEA from a live NMEA-based watch requires a deliberate choice: safely acquire System GPS first, or pause and disconnect. Passive loss keeps the watch armed, warns immediately, reconnects, and escalates to GPS-data-loss if positions remain stale.
+8. After centre resolution, tap **Open anchor in Google Maps** to display the precise coordinate in the Google Maps app, or a browser fallback, for inspection and copying.
 
 ### Range and centre estimation
 
-Basic mode accepts a direct radius and optional depth. Advanced mode combines low-tide depth, rode/chain paid out, boat length and a Strict/Balanced/Tolerant preset. It starts with taut horizontal rode `sqrt(rode² - (depth + 1.5 m)²)`, then adds boat length, GPS margin and a visible Back-down learning margin.
+Basic mode accepts a manually chosen alarm radius. Advanced mode calculates it from geometry and a Strict/Balanced/Tolerant preset. Back down always requires water depth, rode/chain paid out and the actual bow-roller height above water, regardless of range mode; DPT/DBT depth is prefilled when available. Advanced also uses boat length. Horizontal rode is `sqrt(rode² - (depth + bowHeight)²)`.
 
-Back-down resolution first identifies the stable, time-ordered drop cluster and requires sustained reverse movement. It does not pretend that a short straight line uniquely defines a circle. A robust circle fit may refine the centre later, only after the swing arc has sufficient coverage and acceptable residual error.
+The initial cyan region is a possible-anchor area approximately one horizontal-rode radius across, not a tiny GPS-scatter circle. GPS discs are intersected robustly with a small outlier allowance. Physical heading, TWD−TWA, TWD−AWA only after repeated low-SOG AWS/TWS and AWA/TWA agreement, and reverse COG above 0.8 kn become separately weighted direction evidence. Circular means and stable 20-second windows prevent wrap-around and spike errors; a cached wind sentence counts only once. Direction evidence changes the feasible-region likelihood but can never resolve the centre alone.
+
+The minimum time adapts to evidence: five minutes only when repeated physical-heading and wind evidence both agree with the GPS geometry; eight minutes with one reliable direction channel; fifteen minutes for GPS-only learning. Every path still needs at least 200° of swing coverage, eight bearing sectors, two meaningful swing reversals, and independently agreeing early/late robust fits. Straight back-downs, one-way shallow arcs, wind spikes or a wind-inferred heading inconsistent with the geometric centre never resolve early.
+
+Adjust range changes only the current alarm radius. Depth, rode, bow height, boat length, placement mode and accumulated centre evidence remain one-time session inputs. An anchor-drag condition keeps the background notification and looping alarm, and also shows an unavoidable action dialog while the App is foregrounded, with Snooze, Adjust range, Pause and Lift anchor actions.
+
+Alarm sound choices include the system alarm, ringtone, notification tone and a user-selected audio document. If the custom document becomes unreadable, playback falls back to the system alarm. The notification channel is silent so the service-owned looping alarm does not double-play with Android's channel sound.
 
 ### Demo GPS
 
-Enable **Settings → Developer settings → Demo mode** to reveal Demo GPS. The real System GPS position remains the origin until Set anchor is pressed. The available scenarios are Safe swing, Anchor drag, Wind shift and GPS dropout at 1×, 2× or 5×. Disabling Demo performs a safe handover back to System GPS.
+Enable **Settings → Developer settings → Demo mode** to lock the App to Demo GPS and hide System/NMEA source choices. Every Set anchor captures a fresh real System GPS origin before a continuously moving, per-session randomized scenario starts. An open active or paused session locks Demo mode, scenario and speed until Lift anchor. Connecting NMEA does not replace Demo GPS.
 
 ### Global NMEA GPS proxy
 
@@ -169,7 +183,7 @@ The proxy uses Fused Location mock mode and can also publish to `GPS_PROVIDER`. 
 
 ### Language and app name
 
-Choose Follow system, English or Simplified Chinese under Settings → Language. The launcher name is always **Anchor by Yokuli**; the Chinese in-app product title is **Yokuli锚警系统**.
+Choose 🇨🇳 or 🇬🇧 under Settings → Language. The launcher name is always **Anchor by Yokuli**; the Chinese in-app product title is **Yokuli锚警系统**.
 
 ### Build, test and download
 
