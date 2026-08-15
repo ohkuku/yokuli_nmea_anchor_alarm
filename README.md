@@ -1,5 +1,9 @@
 # Anchor by Yokuli
 
+<p align="center">
+  <img src="docs/images/anchor-yokuli-logo.png" width="150" alt="Anchor by Yokuli pixel-art anchor logo">
+</p>
+
 **中文产品名：Yokuli锚警系统** · [中文说明](#中文) · [English](#english)
 
 Android 锚警与 NMEA 0183 航行数据工具。它可以通过 TCP/UDP 接收船载 NMEA、显示实时原始数据和船舶轨迹、监测走锚与 GPS 丢失，并可在用户明确授权后把 NMEA 位置代理为 Android 全局 GPS。
@@ -35,6 +39,7 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 - 告警覆盖走锚、GPS 数据丢失、NMEA 连接丢失、定位质量和代理失败；“稍后提醒”会停止当前声音与振动，但危险持续时会再次提醒。
 - 可查看最近 200 条原始 NMEA 语句、解析位置、校验错误和连接统计。
 - 界面与关键后台安全通知支持跟随系统、English、简体中文，设置后立即生效。
+- 像素风锚形应用图标；桌面名称固定为 **Anchor by Yokuli**。
 
 ### 快速使用
 
@@ -98,11 +103,19 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 `.github/workflows/android.yml` 会自动：
 
 1. 运行单元测试与 Lint；
-2. 编译 Debug/Release APK；
+2. 编译 Debug APK；
 3. 启动 Android 14 模拟器运行设备集成测试；
-4. 上传 APK、测试报告和 Lint 报告。
+4. 每次 push 上传可安装的 Debug APK，并上传测试和 Lint 报告。
 
-在 GitHub 仓库的 Actions 运行详情中打开 **Artifacts**，下载 `anchor-by-yokuli-build`；其中的 `app-debug.apk` 可直接安装。集成测试报告位于 `anchor-by-yokuli-integration-reports`。仓库应配置名为 `MAPS_API_KEY` 的 Actions Secret。
+在 GitHub 仓库的 Actions 运行详情中打开 **Artifacts**，下载 `anchor-by-yokuli-debug`；其中的 `app-debug.apk` 可直接安装。报告分别位于 `anchor-by-yokuli-build-reports` 和 `anchor-by-yokuli-integration-reports`。仓库应配置名为 `MAPS_API_KEY` 的 Actions Secret。
+
+真正的版本发布使用独立的 `.github/workflows/release.yml`，只允许在 Actions 页面手动运行。先配置以下 GitHub Actions Secrets：
+
+- `ANDROID_SIGNING_KEY_BASE64`：发布 keystore 文件的 Base64 内容；
+- `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`；
+- `MAPS_API_KEY`。
+
+然后运行 **Publish Anchor by Yokuli Release**，填写唯一的 Git tag、版本名和递增的 version code。Action 会验证签名，并创建 GitHub Release，附带已签名的 APK、可提交商店的 AAB 和 SHA-256 校验文件。签名 keystore 必须长期安全备份；丢失后无法为同一安装渠道发布可升级版本。
 
 ---
 
@@ -119,6 +132,7 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 - Drag, GPS-loss, NMEA-loss, quality and proxy-failure alarms. Snooze silences the current alert while monitoring continues and reminds again if danger persists.
 - A live page for the latest 200 raw NMEA sentences, parsed position and diagnostics.
 - Immediate in-app switching among Follow system, English and Simplified Chinese, including key background safety notifications.
+- A pixel-art anchor launcher icon; the launcher label remains **Anchor by Yokuli** in every language.
 
 ### How to use
 
@@ -166,7 +180,9 @@ JDK 17 and Android SDK 35 are required. Put `MAPS_API_KEY` in untracked `local.p
 ./gradlew connectedDebugAndroidTest
 ```
 
-GitHub Actions runs unit tests, lint, debug/release builds and the Android 14 instrumented suite. Download the installable Debug APK from the `anchor-by-yokuli-build` artifact and device-test reports from `anchor-by-yokuli-integration-reports`.
+GitHub Actions runs unit tests, lint, the Debug build and the Android 14 instrumented suite. Every push publishes the installable APK as the `anchor-by-yokuli-debug` artifact; reports are available as `anchor-by-yokuli-build-reports` and `anchor-by-yokuli-integration-reports`.
+
+Production publishing is intentionally separate. Configure `ANDROID_SIGNING_KEY_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `MAPS_API_KEY`, then manually run **Publish Anchor by Yokuli Release** with a unique tag, version name and increasing version code. It creates a GitHub Release containing the verified signed APK, Play-ready AAB and SHA-256 checksums. Keep the release keystore backed up securely; losing it prevents future upgrades through the same distribution channel.
 
 ## Privacy and permissions
 

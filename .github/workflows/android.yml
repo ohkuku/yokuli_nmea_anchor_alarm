@@ -13,17 +13,23 @@ jobs:
         with: { distribution: temurin, java-version: '17', cache: gradle }
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests, lint and APKs
+      - name: Unit tests, lint and Debug APK
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease --stacktrace
-      - name: Upload APKs and reports
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --stacktrace
+      - name: Upload Debug APK
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-by-yokuli-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload unit-test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: anchor-by-yokuli-build
+          name: anchor-by-yokuli-build-reports
           path: |
-            app/build/outputs/apk/**/*.apk
             app/build/reports/**
   integration:
     runs-on: ubuntu-latest
@@ -51,3 +57,4 @@ jobs:
         with:
           name: anchor-by-yokuli-integration-reports
           path: app/build/reports/androidTests/**
+          if-no-files-found: warn

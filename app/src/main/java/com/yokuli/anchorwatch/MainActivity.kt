@@ -59,6 +59,8 @@ import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.localization.usesChinese
+import com.yokuli.anchorwatch.map.FollowCameraMove
+import com.yokuli.anchorwatch.map.MapCameraPolicy
 import dagger.hilt.android.AndroidEntryPoint
 import java.text.DateFormat
 
@@ -105,14 +107,27 @@ private fun WatchPage(state: MainUiState, vm: MainViewModel) {
     val fix = state.fix; val active = state.active
     val boatIcon = remember { boatMarkerIcon() }; val anchorIcon = remember { anchorMarkerIcon() }
     val trail = remember(state.points) { fadingTrailChunks(state.points) }
-    val camera = rememberCameraPositionState { position = CameraPosition.fromLatLngZoom(LatLng(fix?.latitude ?: -36.8485, fix?.longitude ?: 174.7633), 16f) }
-    LaunchedEffect(fix, state.follow) { if (fix != null && state.follow) camera.animate(CameraUpdateFactory.newLatLng(LatLng(fix.latitude, fix.longitude))) }
+    val camera = rememberCameraPositionState { position = CameraPosition.fromLatLngZoom(LatLng(fix?.latitude ?: -36.8485, fix?.longitude ?: 174.7633), MapCameraPolicy.DEFAULT_FOLLOW_ZOOM) }
+    var mapLoaded by remember { mutableStateOf(false) }
+    var hasCenteredOnFix by remember { mutableStateOf(false) }
+    var followedSource by remember { mutableStateOf<GpsDataSource?>(null) }
+    LaunchedEffect(mapLoaded, fix?.latitude, fix?.longitude, fix?.valid, state.follow, state.settings.gpsDataSource) {
+        if (mapLoaded && fix?.valid == true && state.follow) {
+            val target = LatLng(fix.latitude, fix.longitude)
+            val update = when (MapCameraPolicy.nextMove(hasCenteredOnFix, followedSource, state.settings.gpsDataSource)) {
+                FollowCameraMove.CENTER_WITH_DEFAULT_ZOOM -> CameraUpdateFactory.newLatLngZoom(target, MapCameraPolicy.DEFAULT_FOLLOW_ZOOM)
+                FollowCameraMove.CENTER_PRESERVING_ZOOM -> CameraUpdateFactory.newLatLng(target)
+            }
+            camera.animate(update)
+            hasCenteredOnFix = true
+            followedSource = state.settings.gpsDataSource
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         LiveStatusStrip(state)
         Box(Modifier.weight(1f).background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (BuildConfig.MAPS_CONFIGURED) {
-                key(state.settings.mapType) {
-                    GoogleMap(Modifier.fillMaxSize(), cameraPositionState = camera, properties = MapProperties(mapType = if(state.settings.mapType==2)MapType.SATELLITE else MapType.NORMAL), uiSettings = MapUiSettings(compassEnabled = false, indoorLevelPickerEnabled = false, mapToolbarEnabled = false, myLocationButtonEnabled = false, zoomControlsEnabled = false)) {
+                    GoogleMap(Modifier.fillMaxSize(), cameraPositionState = camera, properties = MapProperties(mapType = if(state.settings.mapType==2)MapType.SATELLITE else MapType.NORMAL), uiSettings = MapUiSettings(compassEnabled = false, indoorLevelPickerEnabled = false, mapToolbarEnabled = false, myLocationButtonEnabled = false, zoomControlsEnabled = false), onMapLoaded = { mapLoaded = true }) {
                         fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(position.headingTrueDegrees?:position.cogTrueDegrees?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=3f) }
                         active?.let { session ->
                             if(session.centerStatus==AnchorCenterStatus.RESOLVED.name){val anchor=LatLng(session.anchorLatitude,session.anchorLongitude)
@@ -127,10 +142,9 @@ private fun WatchPage(state: MainUiState, vm: MainViewModel) {
                             trail.forEachIndexed{index,points->Polyline(points=points,color=Color(0xFFFFD54F).copy(alpha=.10f+.85f*(index+1)/trail.size.coerceAtLeast(1)),width=4f)}
                         }
                     }
-                }
             } else MapNotConfigured()
             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalIconButton({ vm.follow(!state.follow) }) { Icon(Icons.Default.MyLocation, tr("Follow boat","跟随船位")) }
+                FilledTonalIconButton({ val enable=!state.follow;if(enable)hasCenteredOnFix=false;vm.follow(enable) }) { Icon(Icons.Default.MyLocation, tr("Follow boat","跟随船位")) }
                 FilledTonalButton({vm.setMapType(if(state.settings.mapType==2)1 else 2)}){Icon(Icons.Default.Layers,null);Spacer(Modifier.width(6.dp));Text(if(state.settings.mapType==2)tr("Default","默认") else tr("Satellite","卫星"))}
             }
         }

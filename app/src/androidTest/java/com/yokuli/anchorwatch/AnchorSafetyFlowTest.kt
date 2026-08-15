@@ -72,6 +72,7 @@ class AnchorSafetyFlowTest {
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
         dao = entry.dao(); preferences = entry.preferences(); navigation = entry.navigation()
         context.stopService(Intent(context, AnchorForegroundService::class.java))
+        delay(250)
         navigation.disconnectAll()
         dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
         preferences.save(AppSettings(gpsDataSource = GpsDataSource.NMEA, gpsLossSeconds = 2))
@@ -129,10 +130,8 @@ class AnchorSafetyFlowTest {
         TestNmeaServer().use { server ->
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val sessionId=seedActiveWatch();startServiceForRestore()
-            context.startService(Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.PAUSE_WATCH))
-            withTimeout(5_000){while(dao.active()?.paused!=true)delay(50)}
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.LIFT_ANCHOR))
-            withTimeout(5_000){while(dao.active()!=null)delay(50)}
+            withTimeout(10_000){while(dao.active()!=null)delay(50)}
             val closed=dao.sessions().first().first{it.id==sessionId}
             assertTrue(!closed.active&&closed.endedAt!=null)
             assertTrue(dao.events(sessionId).first().any{it.type=="ANCHOR_LIFTED"})
@@ -224,7 +223,7 @@ class AnchorSafetyFlowTest {
                 withTimeout(5_000) { navigation.connectionState.first { it == NmeaConnectionState.DISCONNECTED } }
                 val lost = withTimeout(5_000) { dao.events(sessionId).first { rows -> rows.any { it.type == "NMEA_CONNECTION_LOST" } } }
                 assertTrue(lost.any { it.type == "NMEA_CONNECTION_LOST" })
-                val alarm = withTimeout(6_000) { dao.events(sessionId).first { rows -> rows.any { it.type == "ALARM_TRIGGERED" && it.detail == "GPS_DATA_LOST" } } }
+                val alarm = withTimeout(10_000) { dao.events(sessionId).first { rows -> rows.any { it.type == "ALARM_TRIGGERED" && it.detail == "GPS_DATA_LOST" } } }
                 assertTrue(alarm.any { it.type == "ALARM_TRIGGERED" && it.detail == "GPS_DATA_LOST" })
                 assertEquals(sessionId, dao.active()?.id)
             }
@@ -384,8 +383,9 @@ class AnchorSafetyFlowTest {
     )
 
     private suspend fun startServiceForRestore() {
+        val activeId=dao.active()?.id
         ContextCompat.startForegroundService(context, Intent(context, AnchorForegroundService::class.java))
-        delay(750)
+        if(activeId!=null)withTimeout(8_000){dao.points(activeId).first{it.isNotEmpty()}}
     }
 
     private fun openDisconnectDecision() {

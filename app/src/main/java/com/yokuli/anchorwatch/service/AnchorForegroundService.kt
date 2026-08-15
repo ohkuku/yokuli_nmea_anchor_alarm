@@ -30,14 +30,14 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class AnchorForegroundService:Service(){
  @Inject lateinit var navigation:NavigationRepository;@Inject lateinit var dao:AnchorDao;@Inject lateinit var preferences:SettingsRepository;@Inject lateinit var mockGps:GlobalMockLocationManager;@Inject lateinit var systemLocation:SystemLocationRepository;@Inject lateinit var demoLocation:DemoLocationRepository
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val commandMutex=Mutex();private val proxyMutex=Mutex();private var wake:PowerManager.WakeLock?=null;private var wifi:WifiManager.WifiLock?=null;private var alarmPlayer:MediaPlayer?=null;private var engine=AlarmEngine();private var session:AnchorSessionEntity?=null;private var lastSnapshot:AlarmSnapshot?=null;private var lastTrack=0L;private var proxyPolicy:MockGpsPolicy?=null;private var lowBatteryReported=false;private var lastReportedAlarm:AlarmType?=null;private var nmeaLossAnnounced=false;private var currentGpsSource=GpsDataSource.SYSTEM;private var alarmSnoozeMinutes=5;private var restoredDemoElapsed=0L;private val centerEstimator=AnchorCenterEstimator();private val backdownEstimator=BackdownCenterEstimator();private val centerPoints=mutableListOf<AnchorCenterEstimator.Point>();private val backdownSamples=mutableListOf<BackdownCenterEstimator.Sample>();private var lastCenterUpdate=0L;@Volatile private var armPending=false;@Volatile private var appLanguage=AppLanguage.SYSTEM
+ private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val commandMutex=Mutex();private val proxyMutex=Mutex();private val stateReady=CompletableDeferred<Unit>();private var wake:PowerManager.WakeLock?=null;private var wifi:WifiManager.WifiLock?=null;private var alarmPlayer:MediaPlayer?=null;private var engine=AlarmEngine();private var session:AnchorSessionEntity?=null;private var lastSnapshot:AlarmSnapshot?=null;private var lastTrack=0L;private var proxyPolicy:MockGpsPolicy?=null;private var lowBatteryReported=false;private var lastReportedAlarm:AlarmType?=null;private var nmeaLossAnnounced=false;private var currentGpsSource=GpsDataSource.SYSTEM;private var alarmSnoozeMinutes=5;private var restoredDemoElapsed=0L;private val centerEstimator=AnchorCenterEstimator();private val backdownEstimator=BackdownCenterEstimator();private val centerPoints=mutableListOf<AnchorCenterEstimator.Point>();private val backdownSamples=mutableListOf<BackdownCenterEstimator.Sample>();private var lastCenterUpdate=0L;@Volatile private var armPending=false;@Volatile private var appLanguage=AppLanguage.SYSTEM
 
  private data class SourcedFix(val source:GpsDataSource,val fix:NavigationFix)
  private data class ArmRequest(val config:AnchorConfig,val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val boatLength:Double?)
 
  override fun onCreate(){
   super.onCreate();channels();ServiceCompat.startForeground(this,ONGOING,notification(l("Starting safety monitor…","正在启动安全监控…"),false),ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-  scope.launch{commandMutex.withLock{restoreState()}}
+  scope.launch{commandMutex.withLock{try{restoreState()}finally{stateReady.complete(Unit)}}}
   scope.launch{combine(preferences.settings.map{it.gpsDataSource}.distinctUntilChanged(),navigation.fix,systemLocation.fix){source,nmea,system->currentGpsSource=source;when(source){GpsDataSource.NMEA->nmea?.let{SourcedFix(source,it)};GpsDataSource.SYSTEM->system?.let{SourcedFix(source,it)};GpsDataSource.DEMO->null}}.filterNotNull().collect{value->commandMutex.withLock{handleFix(value.fix,value.source)}}}
   scope.launch{navigation.connectionState.collect{state->commandMutex.withLock{handleNmeaState(state)}}}
   scope.launch{preferences.settings.map{it.alarmSnoozeMinutes}.distinctUntilChanged().collect{alarmSnoozeMinutes=it}}
@@ -49,22 +49,24 @@ class AnchorForegroundService:Service(){
 
  override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
   when(intent?.action){
-   ARM->{armPending=true;val c=AnchorConfig(intent.getDoubleExtra("lat",0.0),intent.getDoubleExtra("lon",0.0),intent.getDoubleExtra("rode",0.0),intent.getDoubleExtra("depth",Double.NaN).takeUnless{it.isNaN()},warningRadiusMeters=intent.getDoubleExtra("warning",40.0),alarmRadiusMeters=intent.getDoubleExtra("alarm",50.0));val request=ArmRequest(c,enumExtra(intent,"placement",AnchorPlacementMode.CENTER_DROP),enumExtra(intent,"rangeMode",AnchorRangeMode.BASIC),enumExtra(intent,"safetyPreset",AnchorSafetyPreset.BALANCED),intent.getDoubleExtra("boatLength",Double.NaN).takeUnless{it.isNaN()});scope.launch{commandMutex.withLock{try{arm(request)}finally{armPending=false;releaseIfIdle()}}}}
-   ACK,SNOOZE->scope.launch{commandMutex.withLock{snoozeAlarm()}}
-   STOP_WATCH,PAUSE_WATCH->scope.launch{commandMutex.withLock{pauseWatch()}}
-   RESUME_WATCH->scope.launch{commandMutex.withLock{resumeWatch()}}
-   LIFT_ANCHOR->scope.launch{commandMutex.withLock{liftAnchor()}}
-   UPDATE_RADIUS->scope.launch{commandMutex.withLock{updateWatchSettings(intent)}}
-   STOP_WATCH_AND_DISCONNECT->scope.launch{commandMutex.withLock{stopWatchAndDisconnect()}}
-   SWITCH_WATCH_TO_SYSTEM->scope.launch{commandMutex.withLock{switchWatchToSystem(true)}}
-   SWITCH_WATCH_SOURCE_SYSTEM->scope.launch{commandMutex.withLock{switchWatchToSystem(false)}}
-   SWITCH_WATCH_SOURCE_NMEA->scope.launch{commandMutex.withLock{switchWatchToNmea()}}
-   START_PROXY->scope.launch{commandMutex.withLock{startProxy()}}
-   STOP_PROXY->scope.launch{commandMutex.withLock{stopProxy(l("Android GPS proxy stopped by user.","用户已关闭 Android GPS 代理。"))}}
-   DISABLE_DEMO_TO_SYSTEM->scope.launch{commandMutex.withLock{switchWatchToSystem(false,true)}}
+   ARM->{armPending=true;val c=AnchorConfig(intent.getDoubleExtra("lat",0.0),intent.getDoubleExtra("lon",0.0),intent.getDoubleExtra("rode",0.0),intent.getDoubleExtra("depth",Double.NaN).takeUnless{it.isNaN()},warningRadiusMeters=intent.getDoubleExtra("warning",40.0),alarmRadiusMeters=intent.getDoubleExtra("alarm",50.0));val request=ArmRequest(c,enumExtra(intent,"placement",AnchorPlacementMode.CENTER_DROP),enumExtra(intent,"rangeMode",AnchorRangeMode.BASIC),enumExtra(intent,"safetyPreset",AnchorSafetyPreset.BALANCED),intent.getDoubleExtra("boatLength",Double.NaN).takeUnless{it.isNaN()});launchCommand{try{arm(request)}finally{armPending=false;releaseIfIdle()}}}
+   ACK,SNOOZE->launchCommand{snoozeAlarm()}
+   STOP_WATCH,PAUSE_WATCH->launchCommand{pauseWatch()}
+   RESUME_WATCH->launchCommand{resumeWatch()}
+   LIFT_ANCHOR->launchCommand{liftAnchor()}
+   UPDATE_RADIUS->launchCommand{updateWatchSettings(intent)}
+   STOP_WATCH_AND_DISCONNECT->launchCommand{stopWatchAndDisconnect()}
+   SWITCH_WATCH_TO_SYSTEM->launchCommand{switchWatchToSystem(true)}
+   SWITCH_WATCH_SOURCE_SYSTEM->launchCommand{switchWatchToSystem(false)}
+   SWITCH_WATCH_SOURCE_NMEA->launchCommand{switchWatchToNmea()}
+   START_PROXY->launchCommand{startProxy()}
+   STOP_PROXY->launchCommand{stopProxy(l("Android GPS proxy stopped by user.","用户已关闭 Android GPS 代理。"))}
+   DISABLE_DEMO_TO_SYSTEM->launchCommand{switchWatchToSystem(false,true)}
   }
   return START_STICKY
  }
+
+ private fun launchCommand(action:suspend ()->Unit){scope.launch{stateReady.await();commandMutex.withLock{action()}}}
 
  private suspend fun restoreState(){
   val settings=preferences.settings.first();currentGpsSource=settings.gpsDataSource;alarmSnoozeMinutes=settings.alarmSnoozeMinutes;appLanguage=settings.appLanguage;channels();session=dao.active();session?.let{active->
@@ -126,11 +128,11 @@ class AnchorForegroundService:Service(){
    notifySeparate("GPS source not changed","No fresh System GPS fix was available. Anchor watch is still using ${previousSource.name}.",true);refreshNotification();return
   }
   currentGpsSource=GpsDataSource.SYSTEM;nmeaLossAnnounced=false
-  preferences.save(settings.copy(gpsDataSource=GpsDataSource.SYSTEM,mockEnabled=false,demoMode=if(disableDemoMode)false else settings.demoMode))
   updateAlarm(engine.onFix(systemFix,SystemClock.elapsedRealtime()))
+  dao.insertEvent(AlarmEventEntity(sessionId=active.id,timestamp=System.currentTimeMillis(),type="WATCH_GPS_SOURCE_CHANGED",detail="${previousSource.name}_TO_SYSTEM"))
+  preferences.save(settings.copy(gpsDataSource=GpsDataSource.SYSTEM,mockEnabled=false,demoMode=if(disableDemoMode)false else settings.demoMode))
   if(previousSource==GpsDataSource.NMEA){if(disconnectNmea)navigation.disconnectAll()else navigation.releaseBackgroundConnection()}
   if(previousSource==GpsDataSource.DEMO)demoLocation.stop()
-  dao.insertEvent(AlarmEventEntity(sessionId=active.id,timestamp=System.currentTimeMillis(),type="WATCH_GPS_SOURCE_CHANGED",detail="${previousSource.name}_TO_SYSTEM"))
   notifySeparate("Anchor watch switched to System GPS",if(previousSource==GpsDataSource.DEMO)"Demo stopped only after a fresh System GPS position was acquired." else if(disconnectNmea)"NMEA was disconnected only after a fresh System GPS position was acquired." else "A fresh, non-mock System GPS position was acquired before the watch switched.",false)
   refreshNotification()
  }
@@ -148,10 +150,10 @@ class AnchorForegroundService:Service(){
   }
   if(nmeaFix==null){navigation.releaseBackgroundConnection();notifySeparate("GPS source not changed","No fresh NMEA position was available. Anchor watch is still using ${previousSource.name}.",true);refreshNotification();return}
   currentGpsSource=GpsDataSource.NMEA;nmeaLossAnnounced=false
-  preferences.save(settings.copy(gpsDataSource=GpsDataSource.NMEA))
   updateAlarm(engine.onFix(nmeaFix));systemLocation.setBackgroundEnabled(false)
   if(previousSource==GpsDataSource.DEMO)demoLocation.stop()
   dao.insertEvent(AlarmEventEntity(sessionId=active.id,timestamp=System.currentTimeMillis(),type="WATCH_GPS_SOURCE_CHANGED",detail="${previousSource.name}_TO_NMEA"))
+  preferences.save(settings.copy(gpsDataSource=GpsDataSource.NMEA))
   notifySeparate("Anchor watch switched to NMEA GPS","A fresh NMEA position was verified before the watch switched.",false);refreshNotification()
  }
 
