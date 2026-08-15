@@ -1,0 +1,8 @@
+<resources>
+ <string name="app_name">NMEA 锚泊监控</string><string name="map_key_missing">尚未配置 Google Maps API 密钥。</string>
+ <string name="connected">已连接</string><string name="disconnected">未连接</string><string name="valid">有效</string><string name="stale">已过期</string>
+ <string name="anchor_watch">锚泊监控</string><string name="set_anchor">设置锚位</string><string name="stop">停止</string><string name="settings">设置</string><string name="diagnostics">诊断</string><string name="history">历史</string>
+ <string name="recenter">回到船位</string><string name="follow">跟随</string><string name="map_layer">地图图层</string><string name="gps_override">GPS 覆盖</string>
+ <string name="acknowledge">确认报警</string><string name="cancel">取消</string><string name="save">保存</string><string name="test_connection">测试连接</string>
+ <string name="safety_notice">本应用仅为辅助工具，请保持正常锚泊值守。</string>
+</resources>

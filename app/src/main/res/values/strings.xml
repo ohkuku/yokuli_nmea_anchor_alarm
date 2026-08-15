@@ -1,0 +1,8 @@
+<resources>
+ <string name="app_name">NMEA Anchor Watch</string><string name="map_key_missing">Google Maps API key is not configured.</string>
+ <string name="connected">CONNECTED</string><string name="disconnected">DISCONNECTED</string><string name="valid">VALID</string><string name="stale">STALE</string>
+ <string name="anchor_watch">ANCHOR WATCH</string><string name="set_anchor">Set Anchor</string><string name="stop">Stop</string><string name="settings">Settings</string><string name="diagnostics">Diagnostics</string><string name="history">History</string>
+ <string name="recenter">Recenter</string><string name="follow">Follow</string><string name="map_layer">Map Layer</string><string name="gps_override">GPS Override</string>
+ <string name="acknowledge">ACKNOWLEDGE</string><string name="cancel">Cancel</string><string name="save">Save</string><string name="test_connection">TEST CONNECTION</string>
+ <string name="safety_notice">Auxiliary aid only. Maintain a proper anchor watch.</string>
+</resources>
