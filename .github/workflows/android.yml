@@ -1,4 +1,4 @@
-name: Android CI
+name: Anchor by Yokuli Android CI
 on:
   push:
   pull_request:
@@ -21,7 +21,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nmea-anchor-watch-build
+          name: anchor-by-yokuli-build
           path: |
             app/build/outputs/apk/**/*.apk
             app/build/reports/**
@@ -49,5 +49,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-reports
+          name: anchor-by-yokuli-integration-reports
           path: app/build/reports/androidTests/**

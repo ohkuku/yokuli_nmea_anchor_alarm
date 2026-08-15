@@ -25,6 +25,12 @@ import kotlinx.coroutines.flow.Flow
  val boatLengthMeters:Double?=null,
  @ColumnInfo(defaultValue="'BASIC'")val rangeMode:String="BASIC",
  @ColumnInfo(defaultValue="'BALANCED'")val safetyPreset:String="BALANCED",
+ val alarmSnoozedUntil:Long?=null,
+ val learningReferenceLatitude:Double?=null,
+ val learningReferenceLongitude:Double?=null,
+ val provisionalAnchorLatitude:Double?=null,
+ val provisionalAnchorLongitude:Double?=null,
+ val provisionalRadiusMeters:Double?=null,
 )
 @Entity(tableName="track_points",foreignKeys=[ForeignKey(entity=AnchorSessionEntity::class,parentColumns=["id"],childColumns=["sessionId"],onDelete=ForeignKey.CASCADE)],indices=[Index("sessionId")]) data class TrackPointEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val latitude:Double,val longitude:Double,val distanceFromAnchor:Double,val sog:Double?,val cog:Double?,val heading:Double?,val hdop:Double?)
 @Entity(tableName="alarm_events",indices=[Index("sessionId")]) data class AlarmEventEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val type:String,val detail:String="")
@@ -38,4 +44,4 @@ import kotlinx.coroutines.flow.Flow
  @Insert suspend fun insertEvent(v:AlarmEventEntity)
  @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp") fun events(id:Long):Flow<List<AlarmEventEntity>>
 }
-@Database(entities=[AnchorSessionEntity::class,TrackPointEntity::class,AlarmEventEntity::class],version=2,exportSchema=false) abstract class AppDatabase:RoomDatabase(){abstract fun anchorDao():AnchorDao}
+@Database(entities=[AnchorSessionEntity::class,TrackPointEntity::class,AlarmEventEntity::class],version=3,exportSchema=false) abstract class AppDatabase:RoomDatabase(){abstract fun anchorDao():AnchorDao}

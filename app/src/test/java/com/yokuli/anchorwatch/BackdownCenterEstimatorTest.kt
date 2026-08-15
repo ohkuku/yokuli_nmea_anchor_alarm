@@ -18,6 +18,18 @@ class BackdownCenterEstimatorTest {
         assertTrue(kotlin.math.abs(estimate.latitude) < 3.0/110_540.0)
         assertEquals(21.0,estimate.distanceMeters,2.0)
         assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+        assertTrue(estimate.uncertaintyRadiusMeters in 5.0..20.0)
+    }
+
+    @Test fun provisionalEstimateExistsImmediatelyAndTightensWithoutResolvingEarly(){
+        val estimator=BackdownCenterEstimator()
+        val first=estimator.provisionalEstimate(listOf(fix(0.0,0)).map{BackdownCenterEstimator.Sample(it.latitude,it.longitude,it.receivedElapsedRealtime,it.hdop)})!!
+        val stable=(0..7).map{index->fix(if(index%2==0)0.3 else -0.3,index*1_000L)}
+        val later=estimator.provisionalEstimate(stable.map{BackdownCenterEstimator.Sample(it.latitude,it.longitude,it.receivedElapsedRealtime,it.hdop)})!!
+        assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.LOW,first.confidence)
+        assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.MEDIUM,later.confidence)
+        assertTrue(later.uncertaintyRadiusMeters<first.uncertaintyRadiusMeters)
+        assertNull(estimator.estimate(stable))
     }
 
     @Test fun rejectsAStationaryTrack(){
