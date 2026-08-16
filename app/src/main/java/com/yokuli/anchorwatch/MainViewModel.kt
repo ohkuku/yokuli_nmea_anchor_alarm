@@ -23,9 +23,14 @@ import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingStatus
 import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
+import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
+import com.yokuli.anchorwatch.data.linz.LinzDepthReferenceRepository
+import com.yokuli.anchorwatch.data.linz.LinzDepthReference
+import com.yokuli.anchorwatch.data.linz.LinzDepthDiagnostics
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarGrid
-import com.yokuli.anchorwatch.domain.sonar.SonarGridSample
+import com.yokuli.anchorwatch.domain.sonar.DepthUiState
+import com.yokuli.anchorwatch.data.sonar.SonarGridScope
 import com.yokuli.anchorwatch.domain.anchor.AnchorCenterEstimator
 import com.yokuli.anchorwatch.domain.model.AnchorEstimate
 import com.yokuli.anchorwatch.domain.model.AnchorCenterSource
@@ -60,8 +65,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 enum class ConnectionAttemptState { IDLE, TESTING, FAILED }
@@ -97,7 +102,12 @@ data class MainUiState(
     val activeSonarSurvey:SonarSurveyEntity? = null,
     val sonarSamples:List<DepthSampleEntity> = emptyList(),
     val sonarGrid:SonarGrid = SonarGrid.build(emptyList()),
+    val sonarGridVersion:Long=0L,
+    val sonarGridChangedCells:Set<Pair<Long,Long>> = emptySet(),
     val sonarRecorder:SonarRecorderStatus = SonarRecorderStatus(),
+    val linzDepth:LinzDepthReference=LinzDepthReference(),
+    val linzDepthDiagnostics:LinzDepthDiagnostics=LinzDepthDiagnostics(),
+    val depthUi:DepthUiState=DepthUiState(),
 )
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
@@ -119,6 +129,8 @@ class MainViewModel @Inject constructor(
     private val acceptedPosition:AcceptedPositionRepository,
     private val sonarDao:SonarDao,
     private val sonarRecorder:SonarSurveyRecorder,
+    private val sonarGridUpdater:SonarIncrementalGridUpdater,
+    private val linzDepthRepository:LinzDepthReferenceRepository,
 ):AndroidViewModel(app){
     private val _ui=MutableStateFlow(MainUiState());val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
@@ -156,7 +168,7 @@ class MainViewModel @Inject constructor(
                 observePoints(active)
             }
         }
-        viewModelScope.launch{acceptedPosition.state.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)}}}
+        viewModelScope.launch{acceptedPosition.state.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)};refreshDepthUi()}}
         viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{systemLocation.setAppEnabled(it==GpsDataSource.SYSTEM||it==GpsDataSource.DEMO)}}
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
@@ -171,7 +183,12 @@ class MainViewModel @Inject constructor(
             val selected=status.activeSurvey?.id?:_ui.value.selectedSonarSurveyId?:_ui.value.sonarSurveys.firstOrNull()?.id
             _ui.update{it.copy(activeSonarSurvey=status.activeSurvey,sonarRecorder=status,selectedSonarSurveyId=selected)}
             observeSonarSamples(selected)
+            refreshDepthUi()
         }}
+        viewModelScope.launch{linzDepthRepository.state.collect{value->_ui.update{it.copy(linzDepth=value)};refreshDepthUi()}}
+        viewModelScope.launch{linzDepthRepository.diagnostics.collect{value->_ui.update{it.copy(linzDepthDiagnostics=value)}}}
+        viewModelScope.launch{combine(acceptedPosition.state.map{it.acceptedFix}.distinctUntilChanged(),prefs.settings.map{it.showLinzDepthReference}.distinctUntilChanged()){fix,enabled->fix to enabled}.conflate().collect{(fix,enabled)->delay(2_000);if(enabled&&fix?.valid==true)linzDepthRepository.refresh(fix.latitude,fix.longitude)}}
+        viewModelScope.launch{while(true){delay(1_000);refreshDepthUi()}}
     }
 
     private fun observePoints(session:AnchorSessionEntity?){
@@ -191,12 +208,34 @@ class MainViewModel @Inject constructor(
         if(sonarSamplesJob?.isActive==true&&observedSonarSurveyId==surveyId)return
         sonarSamplesJob?.cancel();observedSonarSurveyId=surveyId
         if(surveyId==null){_ui.update{it.copy(sonarSamples=emptyList(),sonarGrid=SonarGrid.build(emptyList()))};return}
-        val samplesFlow=if(surveyId==CORRECTED_SONAR_HISTORY_ID)sonarDao.normalizedHistory()else sonarDao.samples(surveyId)
-        sonarSamplesJob=viewModelScope.launch{samplesFlow.conflate().collect{samples->val grid=withContext(kotlinx.coroutines.Dispatchers.Default){SonarGrid.build(samples.filter{it.usable}.map{sample->
-            val trustWeight=if(sample.fixTrust==com.yokuli.anchorwatch.domain.model.FixTrust.TRUSTED.name)1.0 else .35
-            val speedWeight=if((sample.sogKnots?:0.0)>12.0).5 else 1.0
-            SonarGridSample(sample.latitude,sample.longitude,sample.normalizedDepthMeters?:sample.measuredDepthMeters,sample.horizontalAccuracyMeters,trustWeight*speedWeight)
-        })};_ui.update{it.copy(sonarSamples=samples,sonarGrid=grid)}}}
+        val scope=if(surveyId==CORRECTED_SONAR_HISTORY_ID)SonarGridScope.CORRECTED_HISTORY else SonarGridScope.SURVEY
+        val scopeId=if(surveyId==CORRECTED_SONAR_HISTORY_ID)SonarGridScope.CORRECTED_HISTORY_ID else surveyId
+        sonarSamplesJob=viewModelScope.launch{
+            var grid=SonarGrid.fromPersisted(sonarDao.gridCellsNow(scope,scopeId))
+            _ui.update{it.copy(sonarSamples=emptyList(),sonarGrid=grid,sonarGridVersion=it.sonarGridVersion+1,sonarGridChangedCells=emptySet())};refreshDepthUi()
+            sonarGridUpdater.changes.collect{change->
+                if(change.scopeType!=scope||change.scopeId!=scopeId)return@collect
+                if(change.reload){grid=SonarGrid.fromPersisted(sonarDao.gridCellsNow(scope,scopeId));_ui.update{it.copy(sonarGrid=grid,sonarGridVersion=it.sonarGridVersion+1,sonarGridChangedCells=emptySet())}}
+                else{val x=change.gridX?:return@collect;val y=change.gridY?:return@collect;grid.applyCell(x,y,change.cell);_ui.update{it.copy(sonarGrid=grid,sonarGridVersion=it.sonarGridVersion+1,sonarGridChangedCells=if(it.page==0)it.sonarGridChangedCells+(x to y)else emptySet())}}
+                refreshDepthUi()
+            }
+        }
+    }
+
+    fun consumeSonarGridChanges(version:Long)=_ui.update{state->if(state.sonarGridVersion==version)state.copy(sonarGridChangedCells=emptySet())else state}
+
+    private fun refreshDepthUi(nowElapsed:Long=android.os.SystemClock.elapsedRealtime()){
+        _ui.update{state->
+            val recorder=state.sonarRecorder;val age=recorder.lastDepthReceivedElapsedRealtime?.let{(nowElapsed-it).coerceAtLeast(0L)};val fresh=age!=null&&age<=2_000L
+            val inspection=if(state.settings.showPersonalMapReference)state.fix?.let{state.sonarGrid.inspect(it.latitude,it.longitude)}else null
+            val selectedSurvey=state.selectedSonarSurveyId?.takeIf{it!=CORRECTED_SONAR_HISTORY_ID}?.let{id->state.sonarSurveys.firstOrNull{it.id==id}}
+            state.copy(depthUi=DepthUiState(
+                liveDepthMeters=recorder.lastDepthMeters.takeIf{fresh},liveDepthReference=recorder.lastDepthReference.takeIf{fresh},liveDepthAgeMillis=age,
+                correctedDepthMeters=recorder.lastDepthMeters.takeIf{fresh&&recorder.lastDepthIsChartDatum},linz=state.linzDepth,
+                personalMapDepthMeters=inspection?.depthMeters,personalMapMeasured=inspection?.measured,personalMapSamples=inspection?.sampleCount,personalMapUncertaintyMeters=inspection?.uncertaintyMeters,
+                personalSurveyName=selectedSurvey?.name,personalSurveyStartedAt=selectedSurvey?.startedAt,
+            ))
+        }
     }
 
     fun validateProfile(profile:ConnectionProfile)=endpointPreflight.validate(profile,_ui.value.settings.nmeaSharingEnabled,_ui.value.settings.nmeaSharingPort)
@@ -312,7 +351,6 @@ class MainViewModel @Inject constructor(
     fun testAlarm()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.TEST_ALARM))
     fun stopAlarmTest()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_ALARM_TEST))
     fun startSonarSurvey(name:String,tideMode:TideMode,manualTideOffsetMeters:Double){
-        if(_ui.value.settings.demoMode){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Disable Demo mode before recording a personal sonar survey."))};return}
         val intent=Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name",name).putExtra("tideMode",tideMode.name).putExtra("manualTideOffset",manualTideOffsetMeters)
         ContextCompat.startForegroundService(app,intent)
     }
@@ -341,7 +379,7 @@ class MainViewModel @Inject constructor(
         val intent=if(google.resolveActivity(app.packageManager)!=null)google else Intent(Intent.ACTION_VIEW,uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching{app.startActivity(intent)}.onFailure{_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"No map application or browser is available to open the anchor position."))}}
     }
-    fun page(index:Int)=_ui.update{it.copy(page=index)}
+    fun page(index:Int)=_ui.update{it.copy(page=index,sonarGridChangedCells=emptySet())}
     fun follow(value:Boolean)=_ui.update{it.copy(follow=value)}
     fun requestRangeEditor()=_ui.update{it.copy(page=0,rangeEditorRequested=true)}
     fun consumeRangeEditorRequest()=_ui.update{it.copy(rangeEditorRequested=false)}

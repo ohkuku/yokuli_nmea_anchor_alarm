@@ -13,6 +13,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -75,37 +77,75 @@ import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
 
-/** Settings entry point; individual cards remain small, state-driven sections. */
-@Composable
-internal fun SettingsScreen(state:MainUiState,vm:MainViewModel)=SettingsPageContent(state,vm)
+private enum class SettingsDestination{ROOT,ALARM,VESSEL,DEPTH_SOUNDER,POSITIONING,MAP_DEPTH,BACKGROUND,DEVELOPER}
 
-@Composable
-internal fun SettingsPageContent(state: MainUiState, vm: MainViewModel) { LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("settings_list"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-    item { PageHeader(tr("Settings","设置"), tr("Alarm, vessel profile, positioning and background reliability.","管理报警、船舶资料、定位和后台可靠性。")) }
-    item { AlarmBehaviourCard(state,vm) }
-    item { VesselProfileCard(state,vm) }
-    item { GpsDataSourceCard(state,vm) }
-    if(state.settings.gpsDataSource==GpsDataSource.NMEA)item { GpsProxyCard(state,vm) }
-    item { LanguageCard(state,vm) }
-    item { BackgroundReliabilityCard(state,vm) }
-    item { DeveloperSettingsCard(state,vm) }
-} }
+@Composable internal fun SettingsScreen(state:MainUiState,vm:MainViewModel)=SettingsPageContent(state,vm)
+
+@Composable internal fun SettingsPageContent(state:MainUiState,vm:MainViewModel){
+ var destination by rememberSaveable{mutableStateOf(SettingsDestination.ROOT)};var languageDialog by remember{mutableStateOf(false)};val chinese=state.settings.appLanguage==AppLanguage.SIMPLIFIED_CHINESE||(state.settings.appLanguage==AppLanguage.SYSTEM&&state.settings.appLanguage.usesChinese());BackHandler(destination!=SettingsDestination.ROOT){destination=SettingsDestination.ROOT}
+ if(destination==SettingsDestination.ROOT)SettingsRoot(state,{destination=it},{languageDialog=true}) else SettingsSubPage(destination,state,vm){destination=SettingsDestination.ROOT}
+ if(languageDialog)AlertDialog(onDismissRequest={languageDialog=false},title={Text(tr("Language","语言"))},text={Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){FilterChip(chinese,{vm.updateSettings(state.settings.copy(appLanguage=AppLanguage.SIMPLIFIED_CHINESE));languageDialog=false},label={Text("🇨🇳",style=MaterialTheme.typography.headlineMedium)},modifier=Modifier.testTag("language_zh"));FilterChip(!chinese,{vm.updateSettings(state.settings.copy(appLanguage=AppLanguage.ENGLISH));languageDialog=false},label={Text("🇬🇧",style=MaterialTheme.typography.headlineMedium)},modifier=Modifier.testTag("language_en"))}},confirmButton={})
+}
+
+@Composable private fun SettingsRoot(state:MainUiState,open:(SettingsDestination)->Unit,language:()->Unit){
+ LazyColumn(Modifier.fillMaxSize().padding(horizontal=18.dp).testTag("settings_list"),contentPadding=PaddingValues(vertical=18.dp)){
+  item{PageHeader(tr("Settings","设置"),tr("Choose a section; runtime NMEA and sonar controls stay in Data.","选择要配置的类别；NMEA 与声呐运行操作仍在“数据”页面。"));Spacer(Modifier.height(18.dp))}
+  item{SettingsSection(tr("ALARM & WATCH","报警与监控"));SettingsRow(Icons.Default.NotificationsActive,tr("Alarm & notifications","报警与通知"),tr("Anchor alarm · ${state.settings.alarmSnoozeMinutes} min snooze","锚警 · ${state.settings.alarmSnoozeMinutes} 分钟后提醒"),"settings_alarm"){open(SettingsDestination.ALARM)}}
+  item{SettingsSection(tr("VESSEL & SENSORS","船舶与传感器"));SettingsRow(Icons.Default.Sailing,tr("Vessel profile","船舶资料"),tr("${state.settings.boatLengthMeters} m · bow ${state.settings.bowRollerHeightMeters} m","${state.settings.boatLengthMeters} 米 · 船艏 ${state.settings.bowRollerHeightMeters} 米"),"settings_vessel"){open(SettingsDestination.VESSEL)};SettingsRow(Icons.Default.Waves,tr("Depth sounder","测深仪"),tr("Depth offset ${signed(state.settings.sounderOffsetMeters)} m","水深修正 ${signed(state.settings.sounderOffsetMeters)} 米"),"settings_depth_sounder"){open(SettingsDestination.DEPTH_SOUNDER)}}
+  item{SettingsSection(tr("POSITION & MAP","定位与地图"));SettingsRow(Icons.Default.GpsFixed,tr("Positioning","定位"),tr("Default: ${state.settings.gpsDataSource.name} GPS","默认：${state.settings.gpsDataSource.name} GPS"),"settings_positioning"){open(SettingsDestination.POSITIONING)};SettingsRow(Icons.Default.Layers,tr("Map & depth","地图与水深"),tr("${if(state.settings.mapType==2)tr("Satellite","卫星")else tr("Default","默认")} · LINZ · Sonar","${if(state.settings.mapType==2)tr("卫星","卫星")else tr("默认","默认")} · LINZ · 声呐"),"settings_map_depth"){open(SettingsDestination.MAP_DEPTH)}}
+  item{SettingsSection(tr("DEVICE","设备"));SettingsRow(Icons.Default.BatterySaver,tr("Background reliability","后台可靠性"),tr("Permissions, power and Wi-Fi","权限、电源与 Wi-Fi"),"settings_background"){open(SettingsDestination.BACKGROUND)};SettingsRow(Icons.Default.Language,tr("Language","语言"),if(state.settings.appLanguage==AppLanguage.SIMPLIFIED_CHINESE)"中文" else "English","settings_language",language)}
+  item{SettingsSection(tr("ADVANCED","高级"));SettingsRow(Icons.Default.DeveloperMode,tr("Developer","开发者"),if(state.settings.demoMode)tr("Demo mode on","演示模式已开启")else tr("Demo mode off","演示模式已关闭"),"settings_developer"){open(SettingsDestination.DEVELOPER)}}
+ }
+}
+
+@Composable private fun SettingsSubPage(destination:SettingsDestination,state:MainUiState,vm:MainViewModel,back:()->Unit){Column(Modifier.fillMaxSize()){Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically){IconButton(back){Icon(Icons.Default.ArrowBack,tr("Back","返回"))};Text(when(destination){SettingsDestination.ALARM->tr("Alarm & notifications","报警与通知");SettingsDestination.VESSEL->tr("Vessel profile","船舶资料");SettingsDestination.DEPTH_SOUNDER->tr("Depth sounder","测深仪");SettingsDestination.POSITIONING->tr("Positioning","定位");SettingsDestination.MAP_DEPTH->tr("Map & depth","地图与水深");SettingsDestination.BACKGROUND->tr("Background reliability","后台可靠性");SettingsDestination.DEVELOPER->tr("Developer","开发者");else->""},style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold)};LazyColumn(Modifier.fillMaxSize().padding(horizontal=16.dp),contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){item{when(destination){SettingsDestination.ALARM->AlarmSettingsPage(state,vm);SettingsDestination.VESSEL->VesselProfileCard(state,vm);SettingsDestination.DEPTH_SOUNDER->DepthSounderPage(state,vm);SettingsDestination.POSITIONING->GpsDataSourceCard(state,vm);SettingsDestination.MAP_DEPTH->MapDepthSettingsPage(state,vm);SettingsDestination.BACKGROUND->BackgroundReliabilityCard(state,vm);SettingsDestination.DEVELOPER->DeveloperSettingsCard(state,vm);else->{}}}}}}
+
+@Composable private fun SettingsSection(title:String){Text(title,Modifier.padding(top=14.dp,bottom=5.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.primary)}
+@Composable private fun SettingsRow(icon:ImageVector,title:String,summary:String,tag:String,click:()->Unit){Row(Modifier.fillMaxWidth().heightIn(min=66.dp).testTag(tag).clickable(onClick=click).padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,Modifier.size(24.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.width(16.dp));Column(Modifier.weight(1f)){Text(title,fontWeight=FontWeight.Medium);Text(summary,maxLines=1,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.Default.ChevronRight,null,tint=MaterialTheme.colorScheme.onSurfaceVariant)};HorizontalDivider()}
+internal fun signed(value:Double)=if(value>=0)"+${"%.1f".format(value)}" else "%.1f".format(value)
+
+@Composable private fun AlarmSettingsPage(state:MainUiState,vm:MainViewModel){
+ var radius by remember(state.settings.preferredAlarmRadiusMeters){mutableStateOf(state.settings.preferredAlarmRadiusMeters.toString())};val value=radius.toDoubleOrNull()
+ Column(verticalArrangement=Arrangement.spacedBy(12.dp)){AlarmBehaviourCard(state,vm);Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Default range","默认范围"),style=MaterialTheme.typography.titleMedium);OutlinedTextField(radius,{radius=it.filter{c->c.isDigit()||c=='.'}},label={Text(tr("Preferred alarm radius","首选报警半径"))},suffix={Text(tr("m","米"))},isError=value==null||value<=0,modifier=Modifier.fillMaxWidth());Button({vm.updateSettings(state.settings.copy(preferredAlarmRadiusMeters=value!!))},enabled=value!=null&&value>0&&value!=state.settings.preferredAlarmRadiusMeters,modifier=Modifier.fillMaxWidth()){Text(tr("Save range","保存范围"))}}}}
+}
+
+@Composable private fun DepthSounderPage(state:MainUiState,vm:MainViewModel){
+ var offset by remember(state.settings.sounderOffsetMeters){mutableStateOf(state.settings.sounderOffsetMeters.toString())};var saved by remember{mutableStateOf(false)};val value=offset.toDoubleOrNull();val valid=value!=null&&value in -20.0..20.0;val dirty=valid&&value!=state.settings.sounderOffsetMeters
+ LaunchedEffect(dirty){if(dirty)saved=false}
+ Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+  Text(tr("Simple depth calibration","简化水深校准"),style=MaterialTheme.typography.titleMedium);Text(tr("Yokuli displays and maps: sounder-reported depth + this fixed offset.","Yokuli 显示并绘制：测深仪报告的水深 + 此固定修正值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Metric(tr("Sounder reports","测深仪报告"),state.sonarRecorder.lastRawDepthMeters?.let{"%.2f m".format(it)}?:"—");Metric(tr("After offset","修正后"),state.sonarRecorder.lastDepthMeters?.let{"%.2f m".format(it)}?:"—")}
+  OutlinedTextField(offset,{text->offset=text.filterIndexed{index,c->c.isDigit()||c=='.'||(c=='-'&&index==0)}},label={Text(tr("Depth offset","水深 offset"))},prefix={Text(if((value?:0.0)>=0)"+" else "")},suffix={Text(tr("m","米"))},supportingText={Text(tr("Example: instrument 6.0 m, offset +0.4 m → Yokuli 6.4 m.","例如：仪器显示 6.0 米，offset 为 +0.4 米 → Yokuli 显示 6.4 米。"))},isError=!valid,modifier=Modifier.fillMaxWidth())
+  Text(tr("GPS only places the sounding on the map. Its accuracy remains quality metadata and never changes the depth number.","GPS 只负责把测深点放到地图上；定位精度仅作为质量信息，不会修改水深数值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Button({vm.updateSettings(state.settings.copy(sounderOffsetMeters=value!!));saved=true},Modifier.fillMaxWidth(),enabled=dirty){Icon(Icons.Default.Save,null);Spacer(Modifier.width(6.dp));Text(if(saved)tr("Saved","已保存")else tr("Save offset","保存 offset"))}
+ }}
+}
+
+@Composable private fun MapDepthSettingsPage(state:MainUiState,vm:MainViewModel){
+ var showLinzDisclaimer by remember{mutableStateOf(false)}
+ Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+  Text(tr("Default base map","默认底图"),style=MaterialTheme.typography.labelLarge);SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){SegmentedButton(state.settings.mapType==1,{vm.setMapType(1)},shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Default","默认"))};SegmentedButton(state.settings.mapType==2,{vm.setMapType(2)},shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("Satellite","卫星"))}}
+  HorizontalDivider();SettingSwitch(tr("LINZ chart image","LINZ 海图影像"),if(BuildConfig.LINZ_HYDRO_CONFIGURED)tr("Official hydrographic image overlay","官方水文海图影像叠加层")else tr("Not configured in this build","当前构建未配置"),state.settings.linzHydroEnabled,BuildConfig.LINZ_HYDRO_CONFIGURED){enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))}
+  if(state.settings.linzHydroEnabled){Text(tr("LINZ opacity ${"%.0f".format(state.settings.linzHydroOpacity*100)}%","LINZ 不透明度 ${"%.0f".format(state.settings.linzHydroOpacity*100)}%"));Slider(state.settings.linzHydroOpacity.toFloat(),{vm.updateSettings(state.settings.copy(linzHydroOpacity=it.toDouble()))},valueRange=.30f..1f)}
+  SettingSwitch(tr("Current-position LINZ depth","当前位置 LINZ 水深"),tr("Vector reference; never presented as live sonar","矢量海图参考；绝不会冒充实时声呐"),state.settings.showLinzDepthReference,BuildConfig.LINZ_API_KEY.isNotBlank()){vm.updateSettings(state.settings.copy(showLinzDepthReference=it))}
+  Text(tr("LINZ vector status: ${state.linzDepth.status.name}","LINZ 矢量状态：${state.linzDepth.status.name}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  HorizontalDivider();SettingSwitch(tr("Personal sonar layer","个人声呐图层"),tr("Only this switch controls whether survey cells are drawn","只有此开关决定是否在地图上绘制调查网格"),state.settings.sonarLayerEnabled){vm.updateSettings(state.settings.copy(sonarLayerEnabled=it))}
+  if(state.settings.sonarLayerEnabled){Text(tr("Sonar opacity ${"%.0f".format(state.settings.sonarLayerOpacity*100)}%","声呐不透明度 ${"%.0f".format(state.settings.sonarLayerOpacity*100)}%"));Slider(state.settings.sonarLayerOpacity.toFloat(),{vm.updateSettings(state.settings.copy(sonarLayerOpacity=it.toDouble()))},valueRange=.20f..1f)}
+  SettingSwitch(tr("Current-position personal depth","当前位置个人水深"),tr("Show measured/interpolated status in Watch","在监控页显示实测/插值状态"),state.settings.showPersonalMapReference){vm.updateSettings(state.settings.copy(showPersonalMapReference=it))}
+ }}
+ if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is an aid only and does not replace official charts, Notices to Mariners, depth instruments or a passage plan.","该海图影像层仅供辅助，不能替代官方海图、航海通告、测深仪或航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})
+}
 
 @Composable private fun VesselProfileCard(state:MainUiState,vm:MainViewModel){
  var boat by remember(state.settings.boatLengthMeters){mutableStateOf(state.settings.boatLengthMeters.toString())}
  var bow by remember(state.settings.bowRollerHeightMeters){mutableStateOf(state.settings.bowRollerHeightMeters.toString())}
  var antenna by remember(state.settings.nmeaGpsAntennaToBowMeters){mutableStateOf(state.settings.nmeaGpsAntennaToBowMeters.toString())}
- var radius by remember(state.settings.preferredAlarmRadiusMeters){mutableStateOf(state.settings.preferredAlarmRadiusMeters.toString())}
- var transducerDraft by remember(state.settings.transducerDraftMeters){mutableStateOf(state.settings.transducerDraftMeters.toString())}
- var keelOffset by remember(state.settings.keelOffsetMeters){mutableStateOf(state.settings.keelOffsetMeters.toString())}
- var gpsToTransducer by remember(state.settings.gpsToTransducerMeters){mutableStateOf(state.settings.gpsToTransducerMeters.toString())}
- var depthReference by remember(state.settings.depthReference){mutableStateOf(state.settings.depthReference)}
  var savedFeedback by remember{mutableStateOf(false)}
  fun numeric(value:String)=value.filter{it.isDigit()||it=='.'}
- val valid=listOf(boat,bow,antenna,radius,transducerDraft,keelOffset,gpsToTransducer).all{it.toDoubleOrNull()!=null}&&(radius.toDoubleOrNull()?:0.0)>0
- val dirty=valid&&(boat.toDouble()!=state.settings.boatLengthMeters||bow.toDouble()!=state.settings.bowRollerHeightMeters||antenna.toDouble()!=state.settings.nmeaGpsAntennaToBowMeters||radius.toDouble()!=state.settings.preferredAlarmRadiusMeters||transducerDraft.toDouble()!=state.settings.transducerDraftMeters||keelOffset.toDouble()!=state.settings.keelOffsetMeters||gpsToTransducer.toDouble()!=state.settings.gpsToTransducerMeters||depthReference!=state.settings.depthReference)
+ val valid=listOf(boat,bow,antenna).all{it.toDoubleOrNull()!=null}
+ val dirty=valid&&(boat.toDouble()!=state.settings.boatLengthMeters||bow.toDouble()!=state.settings.bowRollerHeightMeters||antenna.toDouble()!=state.settings.nmeaGpsAntennaToBowMeters)
  LaunchedEffect(dirty){if(dirty)savedFeedback=false}
- Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(tr("Vessel profile","船舶资料"),style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f));when{!valid->AssistChip({},label={Text(tr("Invalid values","数值无效"))},leadingIcon={Icon(Icons.Default.Error,null,Modifier.size(18.dp))});dirty->AssistChip({},label={Text(tr("Unsaved changes","尚未保存"))},leadingIcon={Icon(Icons.Default.Edit,null,Modifier.size(18.dp))});savedFeedback->AssistChip({},label={Text(tr("Saved","已保存"))},leadingIcon={Icon(Icons.Default.CheckCircle,null,Modifier.size(18.dp))})}};Text(tr("Defaults for each new setup. System GPS never assumes a fixed antenna-to-bow offset because the phone can move.","作为每次新设置的默认值。系统 GPS 不假设固定的天线到船艏距离，因为手机可能移动。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);OutlinedTextField(boat,{boat=numeric(it)},label={Text(tr("Boat length","船长"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(bow,{bow=numeric(it)},label={Text(tr("Bow roller height","船艏滚轮高度"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(antenna,{antenna=numeric(it)},label={Text(tr("NMEA GPS antenna to bow roller","NMEA GPS 天线到船艏滚轮距离"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(radius,{radius=numeric(it)},label={Text(tr("Preferred alarm radius","首选报警半径"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());HorizontalDivider();Text(tr("Sonar geometry","声呐安装参数"),style=MaterialTheme.typography.titleSmall);Text(tr("Stored with each new survey so raw depth can be rebuilt later.","每次新调查都会保存这些参数，便于以后从原始深度重建。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(tr("Sounder depth reference","测深仪深度基准"),style=MaterialTheme.typography.labelLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){FilterChip(depthReference==DepthReference.BELOW_TRANSDUCER,{depthReference=DepthReference.BELOW_TRANSDUCER},label={Text(tr("Transducer","探头"))});FilterChip(depthReference==DepthReference.BELOW_SURFACE,{depthReference=DepthReference.BELOW_SURFACE},label={Text(tr("Waterline","水线"))});FilterChip(depthReference==DepthReference.BELOW_KEEL,{depthReference=DepthReference.BELOW_KEEL},label={Text(tr("Keel","龙骨"))})};if(depthReference==DepthReference.UNKNOWN)Text(tr("Not calibrated; samples remain explicitly marked with their sentence reference.","尚未校准；样本会明确保留 NMEA 语句的原始基准。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)else TextButton({depthReference=DepthReference.UNKNOWN}){Text(tr("Clear calibration","清除校准"))};OutlinedTextField(transducerDraft,{transducerDraft=numeric(it)},label={Text(tr("Transducer below waterline","探头低于水线"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(keelOffset,{keelOffset=numeric(it)},label={Text(tr("Transducer to keel","探头到龙骨"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(gpsToTransducer,{gpsToTransducer=numeric(it)},label={Text(tr("GPS antenna to transducer","GPS 天线到探头"))},suffix={Text(tr("m","米"))},supportingText={Text(if(gpsToTransducer.toDoubleOrNull()==0.0)tr("0 m · not calibrated","0 米 · 未校准")else tr("Applied only with a physical heading; never guessed from COG.","仅在有物理船首向时修正；不会用 COG 猜测。"))},modifier=Modifier.fillMaxWidth());Button({vm.updateSettings(state.settings.copy(boatLengthMeters=boat.toDouble(),bowRollerHeightMeters=bow.toDouble(),nmeaGpsAntennaToBowMeters=antenna.toDouble(),preferredAlarmRadiusMeters=radius.toDouble(),transducerDraftMeters=transducerDraft.toDouble(),keelOffsetMeters=keelOffset.toDouble(),gpsToTransducerMeters=gpsToTransducer.toDouble(),depthReference=depthReference));savedFeedback=true},Modifier.fillMaxWidth(),enabled=dirty){Icon(Icons.Default.Save,null);Spacer(Modifier.width(6.dp));Text(tr("Save changes","保存修改"))}}}
+ Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(tr("Vessel profile","船舶资料"),style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f));when{!valid->AssistChip({},label={Text(tr("Invalid values","数值无效"))});dirty->AssistChip({},label={Text(tr("Unsaved changes","尚未保存"))});savedFeedback->AssistChip({},label={Text(tr("Saved","已保存"))})}};Text(tr("Defaults for new anchor setups. System GPS does not assume a fixed antenna position.","用于新锚泊设置的默认值；系统 GPS 不假设手机有固定安装位置。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);OutlinedTextField(boat,{boat=numeric(it)},label={Text(tr("Boat length","船长"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(bow,{bow=numeric(it)},label={Text(tr("Bow roller height","船艏滚轮高度"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(antenna,{antenna=numeric(it)},label={Text(tr("NMEA GPS antenna to bow roller","NMEA GPS 天线到船艏滚轮距离"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());Button({vm.updateSettings(state.settings.copy(boatLengthMeters=boat.toDouble(),bowRollerHeightMeters=bow.toDouble(),nmeaGpsAntennaToBowMeters=antenna.toDouble()));savedFeedback=true},Modifier.fillMaxWidth(),enabled=dirty){Icon(Icons.Default.Save,null);Spacer(Modifier.width(6.dp));Text(tr("Save changes","保存修改"))}}}
 }
 
 @Composable private fun LanguageCard(state:MainUiState,vm:MainViewModel){
@@ -161,7 +201,7 @@ internal fun SettingsPageContent(state: MainUiState, vm: MainViewModel) { LazyCo
 
 @Composable internal fun GpsSourceRow(title:String,subtitle:String,selected:Boolean,enabled:Boolean,testTag:String,click:()->Unit){Row(Modifier.fillMaxWidth().testTag(testTag).clickable(enabled=enabled,onClick=click),verticalAlignment=Alignment.CenterVertically){RadioButton(selected,null,enabled=enabled);Column(Modifier.weight(1f)){Text(title,color=if(enabled)Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant);Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
 
-@Composable private fun GpsProxyCard(state:MainUiState,vm:MainViewModel){
+@Composable internal fun GpsProxyCard(state:MainUiState,vm:MainViewModel){
  val context=androidx.compose.ui.platform.LocalContext.current;val permissionReady=ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;val active=state.mockGps.state==MockGpsState.ACTIVE;val fixReady=state.connection==NmeaConnectionState.CONNECTED&&state.nmeaFix?.valid==true&&permissionReady
  Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
   Text("NMEA → Android GPS",style=MaterialTheme.typography.titleMedium)
@@ -178,6 +218,7 @@ internal fun SettingsPageContent(state: MainUiState, vm: MainViewModel) { LazyCo
 
 @Composable private fun AlarmBehaviourCard(state:MainUiState,vm:MainViewModel){
  val context=androidx.compose.ui.platform.LocalContext.current
+ val audio=context.getSystemService(android.media.AudioManager::class.java);val alarmVolume=audio.getStreamVolume(android.media.AudioManager.STREAM_ALARM);val alarmMax=audio.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM);val testing=state.alarmSnapshot.type==AlarmType.ALARM_TEST&&state.alarmSnapshot.state==AlarmState.ALARM
  val customName=remember(state.settings.customAlarmSoundUri){alarmSoundDisplayName(context,state.settings.customAlarmSoundUri)}
  val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->
   if(uri!=null){runCatching{context.contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)};vm.updateSettings(state.settings.copy(alarmSound=AlarmSound.CUSTOM,customAlarmSoundUri=uri.toString()))}
@@ -192,7 +233,9 @@ internal fun SettingsPageContent(state: MainUiState, vm: MainViewModel) { LazyCo
   Text(tr("Snooze stops sound and vibration now, while monitoring continues. If the danger remains, the alarm sounds again after this interval.","稍后提醒会立即停止声音和振动，但监控继续；如果危险仍然存在，超过所选时间后会再次响铃。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Text(tr("Remind again after","再次提醒间隔"),style=MaterialTheme.typography.labelLarge)
   Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(5,10,15).forEach{minutes->FilterChip(state.settings.alarmSnoozeMinutes==minutes,{vm.updateSettings(state.settings.copy(alarmSnoozeMinutes=minutes))},label={Text(tr("$minutes min","$minutes 分钟"))})}}
-  Button(vm::testAlarm,Modifier.fillMaxWidth().testTag("test_alarm")){Icon(Icons.Default.Campaign,null);Spacer(Modifier.width(6.dp));Text(tr("Test alarm","测试警报"))}
+  PreflightRow(tr("Android alarm volume","Android 警报音量"),alarmVolume>0,"$alarmVolume / $alarmMax")
+  Button(if(testing)vm::stopAlarmTest else vm::testAlarm,Modifier.fillMaxWidth().testTag("test_alarm")){Icon(if(testing)Icons.Default.StopCircle else Icons.Default.Campaign,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Stop alarm test","停止警报测试")else tr("Test alarm","测试警报"))}
+  if(alarmVolume==0)Text(tr("Android's Alarm volume is muted. Playback can start but cannot be heard until this system volume is raised.","Android 的“警报”音量已静音；播放器可以启动，但必须先调高系统警报音量才能听见。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
   OutlinedButton(vm::openAlarmNotificationSettings){Icon(Icons.Default.NotificationsActive,null);Spacer(Modifier.width(6.dp));Text(tr("Notification settings","通知设置"))}
  }}
 }
@@ -267,16 +310,19 @@ private fun alarmSoundDisplayName(context:Context,uriText:String?):String?{
   "Lift the current anchor session before changing the Demo trajectory."->"修改演示轨迹前必须先起锚结束当前会话。"
   "Disable the global NMEA GPS proxy before enabling Demo mode. Demo needs an independent System GPS origin."->"开启演示模式前请关闭全局 NMEA GPS 代理；演示需要独立的系统 GPS 起点。"
   "GPS source is locked for the whole active anchor session, including while paused. Lift the anchor before changing source."->"整个锚泊会话（包括暂停期间）都锁定 GPS 来源；请先起锚再更换来源。"
-  "Disable Demo mode before recording a personal sonar survey."->"记录个人声呐调查前请关闭演示模式。"
   "Not recording"->"未在记录"
   "Recording restored"->"已恢复记录"
+  "Rebuilding sonar map…"->"正在重建声呐地图…"
   "Waiting for fresh depth and accepted position"->"正在等待新的水深与可信定位"
   "Depth sample recorded"->"已记录水深样本"
   "Survey saved"->"调查已保存"
   "Survey grid rebuilt from raw soundings"->"已根据原始测深重建调查网格"
+  "Stop the survey before rebuilding its map"->"请先停止调查，再重建其地图"
   "Ready · live NMEA depth received"->"已就绪 · 收到实时 NMEA 水深"
+  "Ready · live Demo sonar received"->"已就绪 · 收到实时演示声呐"
   "Depth received; waiting for Accepted Position"->"已收到水深，正在等待可信定位"
-  "Demo positions are never written to personal sonar maps"->"演示定位不会写入个人声呐地图"
+  "Real sonar was not paired with Demo GPS"->"真实声呐不会与演示 GPS 配对"
+  "Demo sonar is waiting for Demo GPS"->"演示声呐正在等待演示 GPS"
   "Select NMEA GPS before enabling the global proxy."->"开启全局代理前请先选择 NMEA GPS。"
   "Connect to the NMEA source first."->"请先连接 NMEA 数据源。"
   "The NMEA connection has not supplied a valid position yet."->"NMEA 连接尚未提供有效位置。"

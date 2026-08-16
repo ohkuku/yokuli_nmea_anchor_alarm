@@ -11,6 +11,7 @@ import com.yokuli.anchorwatch.domain.sonar.DepthNormalizer
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarGrid
 import com.yokuli.anchorwatch.domain.sonar.SonarGridSample
+import com.yokuli.anchorwatch.data.database.SonarGridCellEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -58,5 +59,15 @@ class SonarPipelineTest {
         val indexed=SonarGrid.build(listOf(point(-321.0,-321.0,7.0),point(321.0,321.0,9.0)))
         val projected=SonarGrid.project(-321.0/110_540.0,-321.0/111_320.0)
         assertEquals(1,indexed.cellsInBounds(projected.first-10,projected.first+10,projected.second-10,projected.second+10).size)
+    }
+
+    @Test fun persistedGridAppliesOnlyTheChangedCellInPlace(){
+        val first=SonarGridCellEntity("SURVEY",7,10,20,5.0,8.0,.2,3,1)
+        val grid=SonarGrid.fromPersisted(listOf(first))
+        val identity=grid
+        grid.applyCell(11,20,SonarGridCellEntity("SURVEY",7,11,20,5.0,9.0,.3,2,2))
+        assertTrue(grid===identity);assertEquals(2,grid.cells.size);assertEquals(9.0,grid.cells[11L to 20L]!!.depthMeters,.001)
+        grid.applyCell(10,20,null)
+        assertEquals(setOf(11L to 20L),grid.cells.keys)
     }
 }

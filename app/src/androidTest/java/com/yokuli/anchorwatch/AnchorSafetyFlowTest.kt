@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -194,6 +195,33 @@ class AnchorSafetyFlowTest {
         }
     }
 
+    @Test fun realSonarStartNeedsFreshConnectedNmeaButDemoIsTheExplicitException() = runBlocking<Unit> {
+        navigation.disconnectAll();preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,demoMode=false,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithText("Data").performClick();compose.onNodeWithText("Sonar").performClick()
+            compose.onNodeWithText("Start sonar survey").assertIsNotEnabled()
+            compose.onNodeWithText("Connect the NMEA server before starting a real sonar survey.").assertExists()
+        }
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,demoMode=true,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithText("Data").performClick();compose.onNodeWithText("Sonar").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Demo survey uses continuous simulated sonar",substring=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Start sonar survey").assertIsEnabled()
+            compose.onNodeWithText("Demo survey uses continuous simulated sonar",substring=true).assertExists()
+        }
+    }
+
+    @Test fun mapCanSwitchBetweenLockedFollowAndFreeBrowsing() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithTag("map_lock_toggle").assertExists()
+            compose.onNodeWithContentDescription("Map locked to boat").assertExists()
+            compose.onNodeWithTag("map_lock_toggle").performClick()
+            compose.onNodeWithContentDescription("Free map pan and zoom").assertExists()
+            compose.onNodeWithTag("map_recenter").assertExists().performClick()
+        }
+    }
+
     @Test fun successfulSaveAndConnectMakesNmeaTheDefaultGpsSource() = runBlocking<Unit> {
         TestNmeaServer().use { server ->
             preferences.save(AppSettings(profile=liveProfile(server,true),gpsDataSource=GpsDataSource.SYSTEM,demoMode=false))
@@ -207,6 +235,7 @@ class AnchorSafetyFlowTest {
                 assertTrue(!selected.demoMode)
                 compose.onNodeWithText("Settings").performClick()
                 compose.onNodeWithTag("settings_list").performScrollToIndex(3)
+                compose.onNodeWithTag("settings_positioning").performClick()
                 compose.onNodeWithTag("gps_source_nmea").assertIsEnabled()
             }
         }
@@ -219,6 +248,7 @@ class AnchorSafetyFlowTest {
             compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Settings").performClick()
             compose.onNodeWithTag("settings_list").performScrollToIndex(3)
+            compose.onNodeWithTag("settings_positioning").performClick()
             compose.onNodeWithTag("gps_source_nmea").assertIsNotEnabled()
             compose.onNodeWithText("Connect the NMEA server before selecting this source.").assertExists()
             assertEquals(GpsDataSource.SYSTEM,preferences.settings.first().gpsDataSource)
@@ -245,6 +275,7 @@ class AnchorSafetyFlowTest {
                 assertEquals(GpsDataSource.DEMO,preferences.settings.first().gpsDataSource)
                 compose.onNodeWithText("Settings").performClick()
                 compose.onNodeWithTag("settings_list").performScrollToIndex(3)
+                compose.onNodeWithTag("settings_positioning").performClick()
                 compose.onNodeWithTag("gps_source_demo").assertIsNotEnabled()
                 compose.onNodeWithTag("gps_source_system").assertDoesNotExist()
                 compose.onNodeWithTag("gps_source_nmea").assertDoesNotExist()
@@ -255,9 +286,9 @@ class AnchorSafetyFlowTest {
     @Test fun proxyButtonExplainsWhyItCannotStart() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.NMEA))
         ActivityScenario.launch(MainActivity::class.java).use {
-            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithText("Settings").performClick()
-            compose.onNodeWithTag("settings_list").performScrollToIndex(4)
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Data").performClick()
+            compose.onNodeWithTag("nmea_runtime_list").performScrollToIndex(3)
             compose.onNodeWithText("Enable global GPS proxy").performClick()
             compose.onNodeWithText("Connect to the NMEA source first.").assertExists()
             compose.onNodeWithText("Select mock location app → Anchor by Yokuli.",substring=true).assertExists()
@@ -269,7 +300,8 @@ class AnchorSafetyFlowTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Settings").performClick()
-            compose.onNodeWithTag("settings_list").performScrollToIndex(5)
+            compose.onNodeWithTag("settings_list").performScrollToIndex(4)
+            compose.onNodeWithTag("settings_language").performClick()
             compose.onNodeWithTag("language_zh").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithText("锚警").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("锚警").assertExists()
@@ -284,6 +316,7 @@ class AnchorSafetyFlowTest {
             compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Settings").performClick()
             compose.onNodeWithTag("settings_list").performScrollToIndex(1)
+            compose.onNodeWithTag("settings_alarm").performClick()
             compose.onNodeWithTag("alarm_sound_SYSTEM_ALARM").assertExists()
             compose.onNodeWithTag("alarm_sound_CUSTOM").assertExists()
             compose.onNodeWithTag("alarm_sound_SYSTEM_NOTIFICATION").assertDoesNotExist()
@@ -293,6 +326,33 @@ class AnchorSafetyFlowTest {
         preferences.save(preferences.settings.first().copy(alarmSound=AlarmSound.CUSTOM,customAlarmSoundUri=custom))
         val restored=withTimeout(15_000){preferences.settings.first{it.alarmSound==AlarmSound.CUSTOM}}
         assertEquals(custom,restored.customAlarmSoundUri)
+    }
+
+    @Test fun settingsRootIsShortAndEveryConfigurationSectionOpens() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Settings").performClick()
+            val pages=listOf(
+                "settings_alarm" to 1,
+                "settings_vessel" to 2,
+                "settings_depth_sounder" to 2,
+                "settings_positioning" to 3,
+                "settings_map_depth" to 3,
+                "settings_background" to 4,
+                "settings_developer" to 5,
+            )
+            pages.forEach{(tag,index)->
+                compose.onNodeWithTag("settings_list").performScrollToIndex(index)
+                compose.onNodeWithTag(tag).performClick()
+                compose.onNodeWithContentDescription("Back").assertExists()
+                compose.onNodeWithContentDescription("Back").performClick()
+            }
+            compose.onNodeWithTag("settings_list").performScrollToIndex(4)
+            compose.onNodeWithTag("settings_language").performClick()
+            compose.onNodeWithTag("language_en").assertExists().performClick()
+            compose.onNodeWithText("Enable global GPS proxy").assertDoesNotExist()
+        }
     }
 
     @Test fun stoppingAlarmTestCannotBeOvertakenByAPendingStartCommand() = runBlocking<Unit> {
@@ -561,9 +621,9 @@ class AnchorSafetyFlowTest {
     }
 
     @Test fun sharingAndLinzPreferencesRoundTrip() = runBlocking<Unit> {
-        preferences.save(AppSettings(nmeaSharingEnabled=true,nmeaSharingPort=12001,linzHydroEnabled=true,linzHydroOpacity=.55,linzHydroDisclaimerAccepted=true))
+        preferences.save(AppSettings(nmeaSharingEnabled=true,nmeaSharingPort=12001,linzHydroEnabled=true,linzHydroOpacity=.55,linzHydroDisclaimerAccepted=true,sounderOffsetMeters=.4,showLinzDepthReference=false,showPersonalMapReference=false))
         val restored=withTimeout(5_000){preferences.settings.first{it.nmeaSharingEnabled&&it.nmeaSharingPort==12001&&it.linzHydroEnabled}}
-        assertEquals(.55,restored.linzHydroOpacity,.001);assertTrue(restored.linzHydroDisclaimerAccepted)
+        assertEquals(.55,restored.linzHydroOpacity,.001);assertTrue(restored.linzHydroDisclaimerAccepted);assertEquals(.4,restored.sounderOffsetMeters,.001);assertTrue(!restored.showLinzDepthReference&&!restored.showPersonalMapReference)
     }
 
     @Test fun sonarSurveyPersistsRawAndNormalizedDepthAndDeletesAsOneUnit() = runBlocking<Unit> {
@@ -574,16 +634,19 @@ class AnchorSafetyFlowTest {
     }
 
     @Test fun sonarRuntimePairsFreshDepthOnlyWithAcceptedPosition() = runBlocking<Unit> {
-        preferences.save(AppSettings(gpsDataSource=GpsDataSource.NMEA,transducerDraftMeters=1.2))
-        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name","Runtime test").putExtra("tideMode","OFF"))
-        val survey=withTimeout(5_000){while(sonarDao.active()==null)delay(25);sonarDao.active()!!}
-        delay(100)
-        val elapsed=android.os.SystemClock.elapsedRealtime();acceptedPosition.selectSource(GpsDataSource.NMEA);acceptedPosition.submit(GpsDataSource.NMEA,NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=elapsed,horizontalAccuracyMeters=2.0,positionProvider=PositionProvider.NMEA,sourceSentence="TEST_ACCEPTED",valid=true))
-        navigation.accept(NmeaChecksum.append("IIDPT,8.0,1.0"),true)
-        val sample=withTimeout(5_000){sonarDao.samples(survey.id).first{it.isNotEmpty()}.single()}
-        assertEquals(8.0,sample.rawDepthMeters,.001);assertEquals(9.0,sample.measuredDepthMeters,.001);assertTrue(sample.normalizedDepthMeters==null);assertTrue(sample.usable)
-        context.startService(Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_SONAR_SURVEY))
-        withTimeout(5_000){while(sonarDao.active()!=null)delay(25)}
+        TestNmeaServer().use{server->
+            val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA,sounderOffsetMeters=.4));connectAndAwaitFix(profile)
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java));delay(300)
+            val elapsed=android.os.SystemClock.elapsedRealtime();acceptedPosition.selectSource(GpsDataSource.NMEA);acceptedPosition.submit(GpsDataSource.NMEA,NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=elapsed,horizontalAccuracyMeters=2.0,positionProvider=PositionProvider.NMEA,sourceSentence="TEST_ACCEPTED",valid=true))
+            navigation.accept(NmeaChecksum.append("IIDPT,8.0,1.0"),true);delay(100)
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name","Runtime test").putExtra("tideMode","OFF"))
+            val survey=withTimeout(5_000){while(sonarDao.active()==null)delay(25);sonarDao.active()!!}
+            val nextElapsed=android.os.SystemClock.elapsedRealtime();acceptedPosition.submit(GpsDataSource.NMEA,NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=nextElapsed,horizontalAccuracyMeters=2.0,positionProvider=PositionProvider.NMEA,sourceSentence="TEST_ACCEPTED_2",valid=true));navigation.accept(NmeaChecksum.append("IIDPT,8.0,1.0"),true)
+            val sample=withTimeout(5_000){sonarDao.samples(survey.id).first{it.isNotEmpty()}.single()}
+            assertEquals(8.0,sample.rawDepthMeters,.001);assertEquals(9.4,sample.measuredDepthMeters,.001);assertTrue(sample.normalizedDepthMeters==null);assertTrue(sample.usable);assertTrue(!sample.positionCorrectionApplied)
+            context.startService(Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_SONAR_SURVEY))
+            withTimeout(5_000){while(sonarDao.active()!=null)delay(25)}
+        }
     }
 
     @Test fun sharingReusesTheLiveUpstreamAndKeepsServingAfterActivityCloses() = runBlocking<Unit> {

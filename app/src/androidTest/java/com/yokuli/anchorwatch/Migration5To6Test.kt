@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.Migration5To6
 import com.yokuli.anchorwatch.data.database.Migration6To7
+import com.yokuli.anchorwatch.data.database.Migration7To8
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -19,12 +20,25 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class Migration5To6Test {
+    @Test fun migration7To8PreservesV7SurveyAndCreatesOnlyDerivedCaches()=runBlocking {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext;val name="migration-v7-v8-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeToV7(context,name)
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration7To8).build()
+        try{
+            database.openHelper.writableDatabase
+            val survey=database.sonarDao().survey(91L)!!
+            assertEquals("V7 survey",survey.name);assertEquals(0.0,survey.sounderOffsetMeters,0.0)
+            val tables=database.openHelper.writableDatabase.query("SELECT name FROM sqlite_master WHERE type='table'").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(0))}}
+            assertTrue(tables.containsAll(setOf("sonar_grid_cells","linz_depth_cache")))
+            assertEquals(0L,database.sonarDao().gridCellCount())
+        }finally{database.close();context.deleteDatabase(name)}
+    }
+
     @Test fun migrationPreservesV5SessionAndAddsSafetyMetadata()=runBlocking {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val name="migration-v5-v6-${System.nanoTime()}.db"
         context.deleteDatabase(name)
         createV5(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7,Migration7To8).build()
         try {
             database.openHelper.writableDatabase
             val session=database.anchorDao().sessions().first().single()
@@ -43,7 +57,13 @@ class Migration5To6Test {
             assertTrue(sonarColumns.keys.containsAll(setOf("baseGridX","baseGridY","sourceElapsedRealtime","rawDepthMeters","measuredDepthMeters","normalizedDepthMeters","gpsSource","positionProvider","positionCorrectionApplied")))
             assertEquals(0,sonarColumns.getValue("normalizedDepthMeters"))
             val sonarIndices=database.openHelper.writableDatabase.query("PRAGMA index_list(depth_samples)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
-            assertTrue(sonarIndices.contains("index_depth_samples_baseGridX_baseGridY"))
+            assertTrue(sonarIndices.containsAll(setOf("index_depth_samples_baseGridX_baseGridY","index_depth_samples_surveyId_baseGridX_baseGridY","index_depth_samples_surveyId_sourceElapsedRealtime")))
+            val surveyColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(sonar_surveys)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
+            assertTrue(surveyColumns.contains("sounderOffsetMeters"))
+            val v8Tables=database.openHelper.writableDatabase.query("SELECT name FROM sqlite_master WHERE type='table'").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(0))}}
+            assertTrue(v8Tables.containsAll(setOf("sonar_grid_cells","linz_depth_cache")))
+            val gridPrimaryKey=database.openHelper.writableDatabase.query("PRAGMA table_info(sonar_grid_cells)").use{cursor->buildMap{while(cursor.moveToNext())put(cursor.getString(cursor.getColumnIndexOrThrow("name")),cursor.getInt(cursor.getColumnIndexOrThrow("pk")))}}
+            assertEquals(1,gridPrimaryKey.getValue("scopeType"));assertEquals(2,gridPrimaryKey.getValue("scopeId"));assertEquals(3,gridPrimaryKey.getValue("gridX"));assertEquals(4,gridPrimaryKey.getValue("gridY"))
         } finally {
             database.close();context.deleteDatabase(name)
         }
@@ -60,6 +80,17 @@ class Migration5To6Test {
                 db.execSQL("INSERT INTO anchor_sessions (startedAt,anchorLatitude,anchorLongitude,rodeLengthMeters,waterDepthMeters,bowRollerHeightMeters,gpsAntennaOffsetMeters,expectedSwingRadiusMeters,warningRadiusMeters,alarmRadiusMeters,active) VALUES (1234,-36.8485,174.7633,40,8,1.5,0,38,40,50,1)")
             }
             override fun onUpgrade(db:SupportSQLiteDatabase,oldVersion:Int,newVersion:Int)=Unit
+        }).build()
+        FrameworkSQLiteOpenHelperFactory().create(configuration).also{it.writableDatabase;it.close()}
+    }
+
+    private fun upgradeToV7(context:Context,name:String){
+        val configuration=SupportSQLiteOpenHelper.Configuration.builder(context).name(name).callback(object:SupportSQLiteOpenHelper.Callback(7){
+            override fun onCreate(db:SupportSQLiteDatabase)=error("Expected the v5 fixture")
+            override fun onUpgrade(db:SupportSQLiteDatabase,oldVersion:Int,newVersion:Int){
+                assertEquals(5,oldVersion);assertEquals(7,newVersion);Migration5To6.migrate(db);Migration6To7.migrate(db)
+                db.execSQL("INSERT INTO sonar_surveys (id,name,startedAt,active,tideMode,manualTideOffsetMeters,transducerDraftMeters,keelOffsetMeters,gpsToTransducerMeters,configuredDepthReference,sampleCount) VALUES (91,'V7 survey',1234,0,'OFF',0,0,0,0,'UNKNOWN',0)")
+            }
         }).build()
         FrameworkSQLiteOpenHelperFactory().create(configuration).also{it.writableDatabase;it.close()}
     }

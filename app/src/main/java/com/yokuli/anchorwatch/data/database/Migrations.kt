@@ -92,3 +92,16 @@ object Migration6To7 : Migration(6, 7) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_depth_samples_baseGridX_baseGridY` ON `depth_samples` (`baseGridX`, `baseGridY`)")
     }
 }
+
+/** Derived caches are created empty; raw soundings remain the source of truth. */
+object Migration7To8 : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE sonar_surveys ADD COLUMN sounderOffsetMeters REAL NOT NULL DEFAULT 0")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId_baseGridX_baseGridY` ON `depth_samples` (`surveyId`, `baseGridX`, `baseGridY`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId_sourceElapsedRealtime` ON `depth_samples` (`surveyId`, `sourceElapsedRealtime`)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `sonar_grid_cells` (`scopeType` TEXT NOT NULL, `scopeId` INTEGER NOT NULL, `gridX` INTEGER NOT NULL, `gridY` INTEGER NOT NULL, `cellSizeMeters` REAL NOT NULL, `depthMeters` REAL NOT NULL, `uncertaintyMeters` REAL NOT NULL, `sampleCount` INTEGER NOT NULL, `lastUpdatedAt` INTEGER NOT NULL, PRIMARY KEY(`scopeType`, `scopeId`, `gridX`, `gridY`))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sonar_grid_cells_scopeType_scopeId` ON `sonar_grid_cells` (`scopeType`, `scopeId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sonar_grid_cells_gridX_gridY` ON `sonar_grid_cells` (`gridX`, `gridY`)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `linz_depth_cache` (`cellKey` TEXT NOT NULL, `queriedLatitude` REAL NOT NULL, `queriedLongitude` REAL NOT NULL, `queriedAt` INTEGER NOT NULL, `depthAreaMinMeters` REAL, `depthAreaMaxMeters` REAL, `nearestSoundingDepthMeters` REAL, `nearestSoundingDistanceMeters` REAL, `nearestSoundingLatitude` REAL, `nearestSoundingLongitude` REAL, `nearestContourDepthMeters` REAL, `nearestContourDistanceMeters` REAL, `sourceLayers` TEXT NOT NULL, `status` TEXT NOT NULL, PRIMARY KEY(`cellKey`))")
+    }
+}

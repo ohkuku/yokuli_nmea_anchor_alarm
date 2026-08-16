@@ -33,6 +33,11 @@ val linzChartSetTemplates = if (linzHydroTileTemplateOverride != null) {
 val linzHydroConfigured = linzChartSetTemplates.isNotEmpty() && linzChartSetTemplates.all { template ->
     template.startsWith("https://") && listOf("{z}", "{x}", "{y}").all(template::contains)
 }
+// Public S-57-derived layers, ordered from the most detailed chart scale to
+// the least detailed. The key stays build-time/private; layer IDs are public.
+val linzSoundingLayerIds = "50858|50866|50506|50418|51612"
+val linzDepthAreaLayerIds = "50671|50553|50447|50852|51639"
+val linzDepthContourLayerIds = "50672|50554|50448|50849|51638"
 fun String.asBuildConfigString() = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
 val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
@@ -54,6 +59,10 @@ android {
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
         buildConfigField("String", "LINZ_HYDRO_TILE_TEMPLATES", linzChartSetTemplates.joinToString("|").asBuildConfigString())
         buildConfigField("boolean", "LINZ_HYDRO_CONFIGURED", linzHydroConfigured.toString())
+        buildConfigField("String", "LINZ_API_KEY", linzApiKey.asBuildConfigString())
+        buildConfigField("String", "LINZ_SOUNDING_LAYER_IDS", linzSoundingLayerIds.asBuildConfigString())
+        buildConfigField("String", "LINZ_DEPTH_AREA_LAYER_IDS", linzDepthAreaLayerIds.asBuildConfigString())
+        buildConfigField("String", "LINZ_DEPTH_CONTOUR_LAYER_IDS", linzDepthContourLayerIds.asBuildConfigString())
     }
     signingConfigs {
         if (releaseSigningAvailable) {

@@ -12,6 +12,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Update
 import androidx.room.Transaction
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "anchor_sessions")
@@ -126,6 +127,7 @@ data class SonarSurveyEntity(
     @ColumnInfo(defaultValue = "0") val keelOffsetMeters: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val gpsToTransducerMeters: Double = 0.0,
     @ColumnInfo(defaultValue = "'UNKNOWN'") val configuredDepthReference: String = "UNKNOWN",
+    @ColumnInfo(defaultValue = "0") val sounderOffsetMeters: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val sampleCount: Int = 0,
 )
 
@@ -137,7 +139,7 @@ data class SonarSurveyEntity(
         childColumns = ["surveyId"],
         onDelete = ForeignKey.CASCADE,
     )],
-    indices = [Index("surveyId"), Index(value = ["surveyId", "timestamp"]), Index(value = ["baseGridX", "baseGridY"])],
+    indices = [Index("surveyId"), Index(value = ["surveyId", "timestamp"]), Index(value = ["baseGridX", "baseGridY"]), Index(value = ["surveyId", "baseGridX", "baseGridY"]), Index(value=["surveyId","sourceElapsedRealtime"])],
 )
 data class DepthSampleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -168,6 +170,41 @@ data class DepthSampleEntity(
     @ColumnInfo(defaultValue = "'NONE'") val positionCorrectionMethod: String = "NONE",
 )
 
+@Entity(
+    tableName = "sonar_grid_cells",
+    primaryKeys = ["scopeType", "scopeId", "gridX", "gridY"],
+    indices = [Index(value = ["scopeType", "scopeId"]), Index(value = ["gridX", "gridY"])],
+)
+data class SonarGridCellEntity(
+    val scopeType: String,
+    val scopeId: Long,
+    val gridX: Long,
+    val gridY: Long,
+    val cellSizeMeters: Double = 5.0,
+    val depthMeters: Double,
+    val uncertaintyMeters: Double,
+    val sampleCount: Int,
+    val lastUpdatedAt: Long,
+)
+
+@Entity(tableName = "linz_depth_cache")
+data class LinzDepthCacheEntity(
+    @PrimaryKey val cellKey: String,
+    val queriedLatitude: Double,
+    val queriedLongitude: Double,
+    val queriedAt: Long,
+    val depthAreaMinMeters: Double? = null,
+    val depthAreaMaxMeters: Double? = null,
+    val nearestSoundingDepthMeters: Double? = null,
+    val nearestSoundingDistanceMeters: Double? = null,
+    val nearestSoundingLatitude: Double? = null,
+    val nearestSoundingLongitude: Double? = null,
+    val nearestContourDepthMeters: Double? = null,
+    val nearestContourDistanceMeters: Double? = null,
+    val sourceLayers: String = "",
+    val status: String,
+)
+
 @Dao
 interface AnchorDao {
     @Insert suspend fun insertSession(value: AnchorSessionEntity): Long
@@ -196,21 +233,49 @@ interface SonarDao {
     @Query("SELECT * FROM depth_samples WHERE normalizedDepthMeters IS NOT NULL AND usable=1 ORDER BY timestamp") fun normalizedHistory(): Flow<List<DepthSampleEntity>>
     @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId AND usable=1 ORDER BY timestamp") suspend fun usableSamples(surveyId:Long): List<DepthSampleEntity>
     @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId ORDER BY timestamp") suspend fun samplesNow(surveyId:Long): List<DepthSampleEntity>
-    @Insert suspend fun insertSample(value: DepthSampleEntity)
+    @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun samplesPage(surveyId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<DepthSampleEntity>
+    @Query("SELECT EXISTS(SELECT 1 FROM depth_samples WHERE surveyId=:surveyId LIMIT 1)") suspend fun hasSamples(surveyId:Long):Boolean
+    @Insert suspend fun insertSample(value: DepthSampleEntity):Long
     @Update suspend fun updateSamples(values: List<DepthSampleEntity>)
     @Query("UPDATE depth_samples SET disposition='ACCEPTED_STEEP_SLOPE', usable=1, integrityReason='Released by coherent three-point slope' WHERE surveyId=:surveyId AND sourceElapsedRealtime IN (:elapsedTimestamps)") suspend fun releaseSlopeSamples(surveyId:Long,elapsedTimestamps:List<Long>)
     @Query("UPDATE sonar_surveys SET name=:name WHERE id=:surveyId") suspend fun rename(surveyId:Long,name:String)
     @Query("UPDATE sonar_surveys SET active=0, endedAt=:endedAt WHERE id=:surveyId") suspend fun finish(surveyId:Long,endedAt:Long)
     @Query("UPDATE sonar_surveys SET sampleCount=(SELECT COUNT(*) FROM depth_samples WHERE surveyId=:surveyId) WHERE id=:surveyId") suspend fun refreshSampleCount(surveyId:Long)
+    @Query("UPDATE sonar_surveys SET sampleCount=sampleCount+1 WHERE id=:surveyId") suspend fun incrementSampleCount(surveyId:Long)
+    @Transaction suspend fun insertSampleAndIncrement(value:DepthSampleEntity):Long{val id=insertSample(value);incrementSampleCount(value.surveyId);return id}
     @Query("DELETE FROM sonar_surveys WHERE id=:surveyId AND active=0") suspend fun deleteCompleted(surveyId:Long):Int
+    @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId AND baseGridX=:gridX AND baseGridY=:gridY AND usable=1") suspend fun usableSamplesInCell(surveyId:Long,gridX:Long,gridY:Long):List<DepthSampleEntity>
+    @Query("SELECT * FROM depth_samples WHERE normalizedDepthMeters IS NOT NULL AND usable=1 AND baseGridX=:gridX AND baseGridY=:gridY") suspend fun correctedSamplesInCell(gridX:Long,gridY:Long):List<DepthSampleEntity>
+    @Query("SELECT DISTINCT baseGridX,baseGridY FROM depth_samples WHERE surveyId=:surveyId AND normalizedDepthMeters IS NOT NULL AND usable=1") suspend fun correctedCellsForSurvey(surveyId:Long):List<GridCoordinate>
+    @Query("SELECT DISTINCT baseGridX,baseGridY FROM depth_samples WHERE surveyId=:surveyId AND usable=1") suspend fun usableCellsForSurvey(surveyId:Long):List<GridCoordinate>
+    @Query("SELECT DISTINCT baseGridX,baseGridY FROM depth_samples WHERE normalizedDepthMeters IS NOT NULL AND usable=1") suspend fun allCorrectedCells():List<GridCoordinate>
+    @Query("SELECT COUNT(*) FROM depth_samples WHERE normalizedDepthMeters IS NOT NULL AND usable=1") suspend fun correctedSampleCount():Long
+    @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId AND sourceElapsedRealtime IN (:elapsedTimestamps)") suspend fun samplesByElapsed(surveyId:Long,elapsedTimestamps:List<Long>):List<DepthSampleEntity>
+    @Query("SELECT COUNT(*) FROM depth_samples") suspend fun rawSampleCount():Long
+    @Query("SELECT COUNT(*) FROM sonar_grid_cells") suspend fun gridCellCount():Long
+    @Query("SELECT * FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId") suspend fun gridCellsNow(scopeType:String,scopeId:Long):List<SonarGridCellEntity>
+    @Query("SELECT EXISTS(SELECT 1 FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId LIMIT 1)") suspend fun hasGridCells(scopeType:String,scopeId:Long):Boolean
+    @Upsert suspend fun upsertGridCell(value:SonarGridCellEntity)
+    @Query("DELETE FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId AND gridX=:gridX AND gridY=:gridY") suspend fun deleteGridCell(scopeType:String,scopeId:Long,gridX:Long,gridY:Long)
+    @Query("DELETE FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId") suspend fun deleteGridScope(scopeType:String,scopeId:Long)
+}
+
+data class GridCoordinate(val baseGridX:Long,val baseGridY:Long)
+
+@Dao
+interface LinzDepthCacheDao {
+    @Query("SELECT * FROM linz_depth_cache WHERE cellKey=:cellKey LIMIT 1") suspend fun get(cellKey:String):LinzDepthCacheEntity?
+    @Upsert suspend fun upsert(value:LinzDepthCacheEntity)
+    @Query("DELETE FROM linz_depth_cache WHERE queriedAt<:oldestAllowed") suspend fun prune(oldestAllowed:Long)
 }
 
 @Database(
-    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class],
-    version = 7,
+    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class],
+    version = 8,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun anchorDao(): AnchorDao
     abstract fun sonarDao(): SonarDao
+    abstract fun linzDepthCacheDao():LinzDepthCacheDao
 }
