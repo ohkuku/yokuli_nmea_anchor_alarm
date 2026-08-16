@@ -29,16 +29,16 @@ class NmeaConnectionManagerTest {
         val profile = ConnectionProfile(host = "127.0.0.1", port = server.localPort)
         try {
             assertTrue(manager.connect(profile))
-            withTimeout(5_000) { manager.state.first { it == NmeaConnectionState.CONNECTED } }
+            withTimeout(5_000) { manager.state.first { it == NmeaConnectionState.CONNECTED_NO_DATA } }
             assertFalse(manager.connect(profile))
             delay(250)
             assertEquals(1, accepted.get())
-            assertEquals(NmeaConnectionState.CONNECTED, manager.state.value)
+            assertEquals(NmeaConnectionState.CONNECTED_NO_DATA, manager.state.value)
 
             manager.disconnect()
             assertEquals(NmeaConnectionState.DISCONNECTED, manager.state.value)
             assertTrue(manager.connect(profile))
-            withTimeout(5_000) { manager.state.first { it == NmeaConnectionState.CONNECTED } }
+            withTimeout(5_000) { manager.state.first { it == NmeaConnectionState.CONNECTED_NO_DATA } }
             withTimeout(5_000) { while (accepted.get() < 2) delay(20) }
             assertEquals(2, accepted.get())
         } finally {
@@ -62,12 +62,12 @@ class NmeaConnectionManagerTest {
         val manager = NmeaConnectionManager(managerScope)
         try {
             assertTrue(manager.connect(ConnectionProfile(host = "127.0.0.1", port = firstServer.localPort)))
-            withTimeout(5_000) { manager.state.first { it == NmeaConnectionState.CONNECTED } }
+            withTimeout(5_000) { manager.state.first { it == NmeaConnectionState.CONNECTED_NO_DATA } }
             assertFalse(manager.ensureConnected(ConnectionProfile(host = "127.0.0.1", port = secondServer.localPort)))
             delay(250)
             assertEquals(1, firstAccepted.get())
             assertEquals(0, secondAccepted.get())
-            assertEquals(NmeaConnectionState.CONNECTED, manager.state.value)
+            assertEquals(NmeaConnectionState.CONNECTED_NO_DATA, manager.state.value)
         } finally {
             manager.disconnect()
             managerScope.cancel()

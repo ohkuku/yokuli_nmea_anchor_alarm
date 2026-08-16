@@ -9,6 +9,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.Migration5To6
+import com.yokuli.anchorwatch.data.database.Migration6To7
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -23,7 +24,7 @@ class Migration5To6Test {
         val name="migration-v5-v6-${System.nanoTime()}.db"
         context.deleteDatabase(name)
         createV5(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7).build()
         try {
             database.openHelper.writableDatabase
             val session=database.anchorDao().sessions().first().single()
@@ -36,6 +37,13 @@ class Migration5To6Test {
                 buildSet { while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }
             }
             assertTrue(columns.containsAll(setOf("positionProvider","fixTrust","headingSource","headingEpoch")))
+            val tables=database.openHelper.writableDatabase.query("SELECT name FROM sqlite_master WHERE type='table'").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(0))}}
+            assertTrue(tables.containsAll(setOf("sonar_surveys","depth_samples")))
+            val sonarColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(depth_samples)").use{cursor->buildMap{while(cursor.moveToNext())put(cursor.getString(cursor.getColumnIndexOrThrow("name")),cursor.getInt(cursor.getColumnIndexOrThrow("notnull")))}}
+            assertTrue(sonarColumns.keys.containsAll(setOf("baseGridX","baseGridY","sourceElapsedRealtime","rawDepthMeters","measuredDepthMeters","normalizedDepthMeters","gpsSource","positionProvider","positionCorrectionApplied")))
+            assertEquals(0,sonarColumns.getValue("normalizedDepthMeters"))
+            val sonarIndices=database.openHelper.writableDatabase.query("PRAGMA index_list(depth_samples)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
+            assertTrue(sonarIndices.contains("index_depth_samples_baseGridX_baseGridY"))
         } finally {
             database.close();context.deleteDatabase(name)
         }

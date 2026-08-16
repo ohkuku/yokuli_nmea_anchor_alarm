@@ -19,9 +19,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import com.yokuli.anchorwatch.data.NavigationRepository
+import com.yokuli.anchorwatch.data.AlarmUiRepository
 import com.yokuli.anchorwatch.data.database.AnchorDao
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
+import com.yokuli.anchorwatch.data.database.DepthSampleEntity
+import com.yokuli.anchorwatch.data.database.SonarDao
+import com.yokuli.anchorwatch.data.database.SonarSurveyEntity
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
+import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
 import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
@@ -33,9 +38,16 @@ import com.yokuli.anchorwatch.domain.model.AnchorPositionMode
 import com.yokuli.anchorwatch.domain.model.CandidateDecision
 import com.yokuli.anchorwatch.domain.model.AppLanguage
 import com.yokuli.anchorwatch.domain.model.AlarmSound
+import com.yokuli.anchorwatch.domain.model.AlarmState
+import com.yokuli.anchorwatch.domain.model.AlarmType
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.model.HeadingSource
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.domain.model.NavigationFix
+import com.yokuli.anchorwatch.domain.model.PositionProvider
+import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import dagger.hilt.android.EntryPointAccessors
 import java.io.Closeable
@@ -76,16 +88,22 @@ class AnchorSafetyFlowTest {
     private lateinit var dao: AnchorDao
     private lateinit var preferences: SettingsRepository
     private lateinit var navigation: NavigationRepository
+    private lateinit var alarmUi:AlarmUiRepository
     private lateinit var sharingServer:NmeaSharingServer
+    private lateinit var sonarDao:SonarDao
+    private lateinit var acceptedPosition:AcceptedPositionRepository
 
     @Before fun prepare() = runBlocking<Unit> {
         context = InstrumentationRegistry.getInstrumentation().targetContext
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
-        dao = entry.dao(); preferences = entry.preferences(); navigation = entry.navigation();sharingServer=entry.sharingServer()
+        dao = entry.dao();sonarDao=entry.sonarDao();acceptedPosition=entry.acceptedPosition(); preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
         context.stopService(Intent(context, AnchorForegroundService::class.java))
         delay(250)
         navigation.disconnectAll()
         dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
+        sonarDao.active()?.let{sonarDao.finish(it.id,System.currentTimeMillis())}
+        acceptedPosition.unlockSource(null)
+        acceptedPosition.selectSource(GpsDataSource.SYSTEM)
         preferences.save(AppSettings(gpsDataSource = GpsDataSource.NMEA, gpsLossSeconds = 2))
     }
 
@@ -93,9 +111,10 @@ class AnchorSafetyFlowTest {
         if(::context.isInitialized)context.stopService(Intent(context, AnchorForegroundService::class.java))
         if(::navigation.isInitialized)navigation.disconnectAll()
         if(::dao.isInitialized)dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
+        if(::sonarDao.isInitialized)sonarDao.active()?.let{sonarDao.finish(it.id,System.currentTimeMillis())}
     }
 
-    @Test fun activeNmeaWatchDisconnectDialogOffersSafeSystemHotSwitch() = runBlocking<Unit> {
+    @Test fun activeNmeaWatchDisconnectDialogDoesNotOfferUnsafeHotSwitch() = runBlocking<Unit> {
         TestNmeaServer().use { server ->
             val profile = liveProfile(server, autoReconnect = true)
             connectAndAwaitFix(profile)
@@ -103,8 +122,9 @@ class AnchorSafetyFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 startServiceForRestore()
                 openDisconnectDecision()
-                compose.onNodeWithText("Anchor watch is using NMEA").assertExists()
-                compose.onNodeWithText("Switch to System GPS & disconnect").assertExists()
+                compose.onNodeWithText("Anchor watch is locked to NMEA").assertExists()
+                compose.onNodeWithText("Pause watch & disconnect").assertExists()
+                compose.onNodeWithText("Switch to System GPS & disconnect").assertDoesNotExist()
                 compose.onNodeWithText("Cancel").performClick()
                 assertEquals(sessionId, dao.active()?.id)
                 assertEquals(GpsDataSource.NMEA,preferences.settings.first().gpsDataSource)
@@ -155,7 +175,7 @@ class AnchorSafetyFlowTest {
                 startServiceForRestore()
                 openDisconnectDecision()
                 compose.onNodeWithText("Cancel").performClick()
-                compose.onNodeWithText("Anchor watch is using NMEA").assertDoesNotExist()
+                compose.onNodeWithText("Anchor watch is locked to NMEA").assertDoesNotExist()
                 assertEquals(sessionId, dao.active()?.id)
                 assertEquals(NmeaConnectionState.CONNECTED, navigation.connectionState.value)
                 assertEquals(acceptedBefore, server.accepted.get())
@@ -273,6 +293,30 @@ class AnchorSafetyFlowTest {
         preferences.save(preferences.settings.first().copy(alarmSound=AlarmSound.CUSTOM,customAlarmSoundUri=custom))
         val restored=withTimeout(15_000){preferences.settings.first{it.alarmSound==AlarmSound.CUSTOM}}
         assertEquals(custom,restored.customAlarmSoundUri)
+    }
+
+    @Test fun stoppingAlarmTestCannotBeOvertakenByAPendingStartCommand() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        repeat(4){
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.TEST_ALARM))
+            context.startService(Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_ALARM_TEST))
+        }
+        delay(1_000)
+        assertEquals(AlarmState.IDLE,alarmUi.snapshot.value.state)
+        assertTrue(alarmUi.snapshot.value.type!=AlarmType.ALARM_TEST)
+    }
+
+    @Test fun disablingPhoneHeadingDuringLearningKeepsHistoricalEvidence() = runBlocking<Unit> {
+        val sessionId=seedPhoneHeadingLearningWatch()
+        dao.insertPoint(com.yokuli.anchorwatch.data.database.TrackPointEntity(sessionId=sessionId,timestamp=System.currentTimeMillis(),latitude=-36.8485,longitude=174.7633,distanceFromAnchor=0.0,sog=0.1,cog=180.0,heading=123.0,hdop=1.0,headingMeasured=true,headingSampleSequence=17,positionSource=GpsDataSource.NMEA.name,headingSource=HeadingSource.PHONE.name,headingQuality=HeadingQuality.STABLE.name,headingEpoch=4))
+        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java))
+        delay(400)
+        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_PHONE_HEADING).putExtra("enabled",false))
+        withTimeout(5_000){dao.sessions().first{sessions->sessions.firstOrNull{it.id==sessionId}?.usePhoneHeading==false}}
+        val historical=dao.points(sessionId).first().single()
+        assertEquals(123.0,historical.heading?:Double.NaN,0.0)
+        assertEquals(HeadingSource.PHONE.name,historical.headingSource)
+        withTimeout(5_000){dao.events(sessionId).first{events->events.any{it.type=="PHONE_HEADING_DISABLED"&&it.detail=="HISTORICAL_EVIDENCE_RETAINED"}}}
     }
 
     @Test fun passiveLossKeepsWatchArmedAndRecordsImmediateAndTimedAlarms() = runBlocking<Unit> {
@@ -462,38 +506,34 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun activeSystemWatchSwitchesToFreshNmeaWithoutReplacingSession() = runBlocking<Unit> {
+    @Test fun activeSystemWatchRemainsLockedWhenFreshNmeaConnects() = runBlocking<Unit> {
         TestNmeaServer().use { server ->
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.SYSTEM));connectAndAwaitFix(profile)
             val sessionId=seedActiveWatch(positionSource=GpsDataSource.SYSTEM);ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java));delay(500)
-            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.SWITCH_WATCH_SOURCE_NMEA))
-            val events=withTimeout(5_000){dao.events(sessionId).first{rows->rows.any{it.type=="WATCH_GPS_SOURCE_CHANGED"}}}
             assertEquals(sessionId,dao.active()?.id)
-            assertEquals(GpsDataSource.NMEA,preferences.settings.first().gpsDataSource)
-            assertEquals(GpsDataSource.NMEA.name,dao.active()?.positionSource)
-            assertTrue(events.any{it.type=="WATCH_GPS_SOURCE_CHANGED"&&it.detail=="SYSTEM_TO_NMEA"})
+            assertEquals(GpsDataSource.SYSTEM,preferences.settings.first().gpsDataSource)
+            assertEquals(GpsDataSource.SYSTEM.name,dao.active()?.positionSource)
+            assertTrue(dao.events(sessionId).first().none{it.type=="WATCH_GPS_SOURCE_CHANGED"})
         }
     }
 
-    @Test fun serviceRejectsNmeaSourceSwitchWhenServerIsDisconnected() = runBlocking<Unit> {
+    @Test fun restoredSessionKeepsItsSourceWhenNmeaIsDisconnected() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM))
         navigation.disconnectAll()
         val sessionId=seedActiveWatch(positionSource=GpsDataSource.SYSTEM);ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java));delay(500)
-        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.SWITCH_WATCH_SOURCE_NMEA))
-        val events=withTimeout(5_000){dao.events(sessionId).first{rows->rows.any{it.type=="WATCH_GPS_SOURCE_CHANGE_REJECTED"}}}
-        assertTrue(events.any{it.type=="WATCH_GPS_SOURCE_CHANGE_REJECTED"})
+        assertEquals(GpsDataSource.SYSTEM.name,dao.active()?.positionSource)
         assertEquals(GpsDataSource.SYSTEM,preferences.settings.first().gpsDataSource)
     }
 
-    @Test fun rejectingEstimatedCandidateKeepsActiveCentreAndRadius() = runBlocking<Unit> {
+    @Test fun keepingCurrentCentreStopsEstimatorAndKeepsRadius() = runBlocking<Unit> {
         TestNmeaServer().use { server ->
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val candidateId=77L;val sessionId=seedCandidateWatch(candidateId);startServiceForRestore()
-            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REJECT_ESTIMATED_CENTER).putExtra("sessionId",sessionId).putExtra("candidateId",candidateId))
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.KEEP_CURRENT_CENTER).putExtra("sessionId",sessionId).putExtra("candidateId",candidateId))
             val rejected=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateDecision==CandidateDecision.REJECTED.name}}.first{it.id==sessionId}}
             assertEquals(-36.8485,rejected.anchorLatitude,0.000001)
             assertEquals(45.0,rejected.alarmRadiusMeters,0.001)
-            assertTrue(dao.events(sessionId).first().any{it.type=="ANCHOR_CENTER_CANDIDATE_REJECTED"})
+            assertTrue(dao.events(sessionId).first().any{it.type=="ANCHOR_CENTER_CURRENT_KEPT"})
         }
     }
 
@@ -524,6 +564,26 @@ class AnchorSafetyFlowTest {
         preferences.save(AppSettings(nmeaSharingEnabled=true,nmeaSharingPort=12001,linzHydroEnabled=true,linzHydroOpacity=.55,linzHydroDisclaimerAccepted=true))
         val restored=withTimeout(5_000){preferences.settings.first{it.nmeaSharingEnabled&&it.nmeaSharingPort==12001&&it.linzHydroEnabled}}
         assertEquals(.55,restored.linzHydroOpacity,.001);assertTrue(restored.linzHydroDisclaimerAccepted)
+    }
+
+    @Test fun sonarSurveyPersistsRawAndNormalizedDepthAndDeletesAsOneUnit() = runBlocking<Unit> {
+        val surveyId=sonarDao.insertSurvey(SonarSurveyEntity(name="Harbour pass",startedAt=1,endedAt=2,active=false,transducerDraftMeters=1.2))
+        sonarDao.insertSample(DepthSampleEntity(surveyId=surveyId,timestamp=2,latitude=-36.84,longitude=174.76,baseGridX=1,baseGridY=2,sourceElapsedRealtime=1,rawDepthMeters=8.0,measuredDepthMeters=9.2,normalizedDepthMeters=null,depthReference="BELOW_TRANSDUCER",sentenceType="DBT",horizontalAccuracyMeters=2.5,gpsSource="NMEA",positionProvider="NMEA",positionAgeMillis=100))
+        val sample=sonarDao.samplesNow(surveyId).single();assertEquals(8.0,sample.rawDepthMeters,.001);assertEquals(9.2,sample.measuredDepthMeters,.001);assertTrue(sample.normalizedDepthMeters==null)
+        assertEquals(1,sonarDao.deleteCompleted(surveyId));assertTrue(sonarDao.samplesNow(surveyId).isEmpty())
+    }
+
+    @Test fun sonarRuntimePairsFreshDepthOnlyWithAcceptedPosition() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.NMEA,transducerDraftMeters=1.2))
+        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name","Runtime test").putExtra("tideMode","OFF"))
+        val survey=withTimeout(5_000){while(sonarDao.active()==null)delay(25);sonarDao.active()!!}
+        delay(100)
+        val elapsed=android.os.SystemClock.elapsedRealtime();acceptedPosition.selectSource(GpsDataSource.NMEA);acceptedPosition.submit(GpsDataSource.NMEA,NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=elapsed,horizontalAccuracyMeters=2.0,positionProvider=PositionProvider.NMEA,sourceSentence="TEST_ACCEPTED",valid=true))
+        navigation.accept(NmeaChecksum.append("IIDPT,8.0,1.0"),true)
+        val sample=withTimeout(5_000){sonarDao.samples(survey.id).first{it.isNotEmpty()}.single()}
+        assertEquals(8.0,sample.rawDepthMeters,.001);assertEquals(9.0,sample.measuredDepthMeters,.001);assertTrue(sample.normalizedDepthMeters==null);assertTrue(sample.usable)
+        context.startService(Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_SONAR_SURVEY))
+        withTimeout(5_000){while(sonarDao.active()!=null)delay(25)}
     }
 
     @Test fun sharingReusesTheLiveUpstreamAndKeepsServingAfterActivityCloses() = runBlocking<Unit> {
@@ -565,6 +625,18 @@ class AnchorSafetyFlowTest {
             centerConfidence="HIGH",positionSource=GpsDataSource.NMEA.name,anchorPositionMode=AnchorPositionMode.ESTIMATE.name,
             centerSource=AnchorCenterSource.UNKNOWN.name,provisionalAnchorLatitude=-36.8484,provisionalAnchorLongitude=174.7634,
             provisionalRadiusMeters=4.0,candidateId=candidateId,candidateCreatedAt=System.currentTimeMillis(),candidateDecision=CandidateDecision.AVAILABLE.name,
+        )
+    )
+
+    private suspend fun seedPhoneHeadingLearningWatch():Long=dao.insertSession(
+        AnchorSessionEntity(
+            startedAt=System.currentTimeMillis(),anchorLatitude=-36.8485,anchorLongitude=174.7633,
+            rodeLengthMeters=45.0,waterDepthMeters=8.0,bowRollerHeightMeters=1.5,gpsAntennaOffsetMeters=0.0,
+            expectedSwingRadiusMeters=40.0,warningRadiusMeters=36.0,alarmRadiusMeters=45.0,
+            placementMode=AnchorPlacementMode.BACKDOWN.name,centerStatus=AnchorCenterStatus.LEARNING.name,
+            centerConfidence="LOW",positionSource=GpsDataSource.NMEA.name,anchorPositionMode=AnchorPositionMode.ESTIMATE.name,
+            centerSource=AnchorCenterSource.UNKNOWN.name,learningReferenceLatitude=-36.8485,learningReferenceLongitude=174.7633,
+            provisionalAnchorLatitude=-36.8485,provisionalAnchorLongitude=174.7633,provisionalRadiusMeters=45.0,usePhoneHeading=true,
         )
     )
 

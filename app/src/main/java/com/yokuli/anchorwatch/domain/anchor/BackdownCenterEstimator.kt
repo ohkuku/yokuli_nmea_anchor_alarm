@@ -2,7 +2,9 @@ package com.yokuli.anchorwatch.domain.anchor
 
 import com.yokuli.anchorwatch.domain.model.BackdownAnchorEstimate
 import com.yokuli.anchorwatch.domain.model.Confidence
+import com.yokuli.anchorwatch.domain.model.FixTrust
 import com.yokuli.anchorwatch.domain.model.NavigationFix
+import com.yokuli.anchorwatch.domain.model.PositionProvider
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -34,6 +36,9 @@ class BackdownCenterEstimator {
         val apparentWindSpeedKnots: Double? = null,
         val headingSampleSequence: Long? = null,
         val windSampleSequence: Long? = null,
+        val horizontalAccuracyMeters: Double? = null,
+        val positionProvider: PositionProvider = PositionProvider.UNKNOWN,
+        val fixTrust: FixTrust = FixTrust.TRUSTED,
     )
 
     private data class LocalPoint(val x: Double, val y: Double, val sample: Sample)
@@ -41,9 +46,10 @@ class BackdownCenterEstimator {
 
     fun estimate(fixes: List<NavigationFix>, maximumHorizontalRodeMeters: Double? = null) = estimateSamples(
         fixes.filter { it.valid }.map {
-            Sample(it.latitude, it.longitude, it.receivedElapsedRealtime, it.hdop, it.headingTrueDegrees,
-                it.cogTrueDegrees, it.sogKnots, it.windDirectionTrueDegrees, it.windSpeedKnots, it.apparentWindAngleDegrees,
-                it.trueWindAngleDegrees, it.trueWindSpeedKnots, it.apparentWindSpeedKnots,it.headingSampleSequence,it.windSampleSequence)
+            Sample(latitude=it.latitude,longitude=it.longitude,timestamp=it.receivedElapsedRealtime,hdop=it.hdop,headingTrueDegrees=it.headingTrueDegrees,
+                cogTrueDegrees=it.cogTrueDegrees,sogKnots=it.sogKnots,windDirectionTrueDegrees=it.windDirectionTrueDegrees,windSpeedKnots=it.windSpeedKnots,apparentWindAngleDegrees=it.apparentWindAngleDegrees,
+                trueWindAngleDegrees=it.trueWindAngleDegrees,trueWindSpeedKnots=it.trueWindSpeedKnots,apparentWindSpeedKnots=it.apparentWindSpeedKnots,headingSampleSequence=it.headingSampleSequence,windSampleSequence=it.windSampleSequence,
+                horizontalAccuracyMeters=it.horizontalAccuracyMeters,positionProvider=it.positionProvider,fixTrust=FixTrust.TRUSTED)
         },
         maximumHorizontalRodeMeters,
     )
@@ -59,7 +65,9 @@ class BackdownCenterEstimator {
         val directionEvidence = directionalEvidence(valid)
         val region = feasibleRegion(valid, originLatitude, originLongitude, maximumRode, directionEvidence)
         val fit = AnchorCenterEstimator(Random(0)).estimate(valid.map { AnchorCenterEstimator.Point(it.latitude, it.longitude) }, null)
-        val fitUsable = fit != null && fit.radiusMeters <= maximumRode + gpsMargin(valid) && fit.angularCoverageDegrees >= 90.0
+        val fitRegionDisagreement = fit?.let { AnchorGeometry.distanceMeters(it.latitude,it.longitude,region.latitude,region.longitude) }
+        val fitUsable = fit != null && fit.radiusMeters <= maximumRode + gpsMargin(valid) && fit.angularCoverageDegrees >= 90.0 &&
+            (fitRegionDisagreement?:Double.POSITIVE_INFINITY)<=max(20.0,maximumRode*.55)
         val centreLat = if (fitUsable) fit!!.latitude else region.latitude
         val centreLon = if (fitUsable) fit!!.longitude else region.longitude
         val bearings = valid.map { AnchorGeometry.bearingDegrees(centreLat, centreLon, it.latitude, it.longitude) }
@@ -68,11 +76,12 @@ class BackdownCenterEstimator {
         val reversals = meaningfulSwingReversals(valid, centreLat, centreLon, maximumRode)
         val fitUncertainty = fit?.takeIf { fitUsable }?.let {
             val missingArc = maximumRode * (1.0 - min(it.angularCoverageDegrees, 240.0) / 240.0) * .50
-            max(gpsMargin(valid), it.rmsErrorMeters * 2.0 + missingArc)
+            max(gpsMargin(valid), it.rmsErrorMeters * 2.0 + missingArc + (fitRegionDisagreement?:0.0)*.70)
         }
         val duration = effectiveDuration(valid)
         val directionMatch = WindAnchorEvidence.centreMatch(directionEvidence, centreLat, centreLon)
         val directionConsistent = directionEvidence.observations.isEmpty() || directionMatch.consistent
+        val degradedRatio=valid.count{it.fixTrust==FixTrust.DEGRADED}/valid.size.toDouble()
         val minimumDuration = when {
             directionEvidence.hasPhysicalEvidence && directionEvidence.hasRepeatedIndependentWindEvidence && directionMatch.consistent -> 300_000L
             (directionEvidence.hasPhysicalEvidence || directionEvidence.hasRepeatedWindEvidence) && directionMatch.consistent -> 480_000L
@@ -88,7 +97,7 @@ class BackdownCenterEstimator {
             (reversals + 1) / (requiredReversals + 1).toDouble(),
             1.0,
         ).coerceIn(0.0, 1.0)
-        val conservativeFloor = max(gpsMargin(valid), maximumRode * (1.0 - .90 * evidence))
+        val conservativeFloor = max(gpsMargin(valid)*(1.0+degradedRatio), maximumRode * (1.0 - .90 * evidence)+maximumRode*.15*degradedRatio)
         val uncertainty = max(min(region.radius, fitUncertainty ?: region.radius), conservativeFloor).coerceAtMost(maximumRode)
         val temporalConsensus = fitUsable && temporalFitConsensus(valid, maximumRode)
         // Repeated independent physical+wind agreement may accelerate a broad
@@ -159,15 +168,23 @@ class BackdownCenterEstimator {
         val limit = maximumRode + margin
         val minX = -maximumRode; val maxX = maximumRode
         val minY = -maximumRode; val maxY = maximumRode
-        val candidates = mutableListOf<Triple<Double, Double, Double>>()
-        val divisions = 42
-        for (xi in 0..divisions) for (yi in 0..divisions) {
-            val x = minX + (maxX - minX) * xi / divisions
-            val y = minY + (maxY - minY) * yi / divisions
-            if (selected.count { hypot(x - it.x, y - it.y) > limit } > max(2,selected.size/20)) continue
-            val latitude=originLat+y/110_540.0;val longitude=originLon+x/(111_320.0*cosLat)
-            candidates += Triple(x, y, exp(WindAnchorEvidence.candidateScore(directionEvidence,latitude,longitude) * 1.60))
+        fun scan(left:Double,right:Double,bottom:Double,top:Double,divisions:Int):List<Triple<Double,Double,Double>>{
+            val result=mutableListOf<Triple<Double,Double,Double>>()
+            for (xi in 0..divisions) for (yi in 0..divisions) {
+                val x = left + (right - left) * xi / divisions
+                val y = bottom + (top - bottom) * yi / divisions
+                if (selected.count { hypot(x - it.x, y - it.y) > limit } > max(2,selected.size/20)) continue
+                val latitude=originLat+y/110_540.0;val longitude=originLon+x/(111_320.0*cosLat)
+                result += Triple(x, y, exp(WindAnchorEvidence.candidateScore(directionEvidence,latitude,longitude) * 1.60))
+            }
+            return result
         }
+        val coarse=scan(minX,maxX,minY,maxY,24)
+        if(coarse.isEmpty())return Region(originLat,originLon,maximumRode)
+        val coarseStep=maximumRode*2.0/24.0
+        val fineMinX=(coarse.minOf{it.first}-coarseStep).coerceAtLeast(minX);val fineMaxX=(coarse.maxOf{it.first}+coarseStep).coerceAtMost(maxX)
+        val fineMinY=(coarse.minOf{it.second}-coarseStep).coerceAtLeast(minY);val fineMaxY=(coarse.maxOf{it.second}+coarseStep).coerceAtMost(maxY)
+        val candidates = scan(fineMinX,fineMaxX,fineMinY,fineMaxY,48)
         if (candidates.isEmpty()) return Region(originLat, originLon, maximumRode)
         val totalWeight = candidates.sumOf { it.third }.coerceAtLeast(.001)
         val centreX = candidates.sumOf { it.first * it.third } / totalWeight
@@ -228,18 +245,25 @@ class BackdownCenterEstimator {
     }
 
     private fun validSamples(samples: List<Sample>) = samples.filter {
-        it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 && (it.hdop == null || it.hdop <= 5.0)
+        it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 &&
+            it.fixTrust !in setOf(FixTrust.REJECTED,FixTrust.QUARANTINED) &&
+            (it.hdop == null || it.hdop <= 8.0) && (it.horizontalAccuracyMeters==null||it.horizontalAccuracyMeters<=100.0)
     }.sortedBy { it.timestamp }
 
-    private fun gpsMargin(samples: List<Sample>) =
-        (samples.mapNotNull { it.hdop }.let { if (it.isEmpty()) 4.0 else median(it) * 3.0 }).coerceIn(3.0, 15.0)
+    private fun gpsMargin(samples: List<Sample>):Double {
+        val reported=samples.mapNotNull{it.horizontalAccuracyMeters}.let{if(it.isEmpty())null else median(it)}
+        val derived=samples.mapNotNull { it.hdop }.let { if (it.isEmpty()) null else median(it) * 3.0 }
+        val base=max(reported?:0.0,derived?:0.0).takeIf{it>0.0}?:12.0
+        val degraded=samples.count{it.fixTrust==FixTrust.DEGRADED}/samples.size.coerceAtLeast(1).toDouble()
+        return (base*(1.0+degraded*.75)).coerceIn(3.0,30.0)
+    }
 
     private fun <T> evenlySample(values: List<T>, maximum: Int): List<T> = if (values.size <= maximum) values else
         (0 until maximum).map { values[(it.toLong() * values.lastIndex / (maximum - 1)).toInt()] }
 
     private fun median(values: List<Double>): Double { val sorted = values.sorted(); val middle = sorted.size / 2; return if (sorted.size % 2 == 0) (sorted[middle - 1] + sorted[middle]) / 2 else sorted[middle] }
     private fun effectiveDuration(samples: List<Sample>): Long = samples.zipWithNext().sumOf { (first, second) ->
-        (second.timestamp - first.timestamp).takeIf { it in 1..3_000L } ?: 0L
+        (second.timestamp - first.timestamp).takeIf { it in 1..15_000L } ?: 0L
     }
     private fun trackDiameter(samples: List<Sample>): Double {
         val selected = evenlySample(samples, 160)

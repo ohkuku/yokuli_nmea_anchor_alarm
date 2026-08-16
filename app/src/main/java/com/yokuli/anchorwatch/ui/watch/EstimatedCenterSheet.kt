@@ -74,9 +74,29 @@ import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
 
-@Composable @OptIn(ExperimentalMaterial3Api::class)
-internal fun EstimatedCenterSheet(state:MainUiState,vm:MainViewModel,session:AnchorSessionEntity){
- val candidateLat=session.provisionalAnchorLatitude?:return;val candidateLon=session.provisionalAnchorLongitude?:return
- val shift=AnchorGeometry.distanceMeters(session.anchorLatitude,session.anchorLongitude,candidateLat,candidateLon);val alarmActive=state.alarmSnapshot.state==AlarmState.ALARM;var details by remember(session.candidateId){mutableStateOf(false)}
- ModalBottomSheet(onDismissRequest={}){Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(tr("Good anchor estimate","已找到可靠锚点估算"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold);Text(tr("Candidate is ${shift.toInt()} m from the temporary alarm centre · uncertainty ±${session.provisionalRadiusMeters?.toInt()?:"--"} m.","候选锚点距临时报警中心 ${shift.toInt()} 米 · 不确定度 ±${session.provisionalRadiusMeters?.toInt()?:"--"} 米。"));Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(tr("Use this candidate to redraw the ${session.alarmRadiusMeters.toInt()} m alarm circle around the estimated anchor and leave learning mode? The radius itself will not change.","是否以该估算锚点重新绘制 ${session.alarmRadiusMeters.toInt()} 米报警圈并退出学习模式？报警半径本身不会改变。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall)};TextButton({details=!details}){Text(if(details)tr("Hide estimation details","收起估算详情") else tr("Estimation details","估算详情"))};if(details)Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.medium){Text(tr("RMS ${session.candidateRmsErrorMeters?.let{"%.1f m".format(it)}?:"—"} · coverage ${session.candidateAngularCoverageDegrees?.toInt()?:0}° · ${session.candidateAngularSectorCount} sectors · ${session.candidateSwingReversalCount} reversals · ${session.candidateEffectiveDurationMillis/60_000} effective min · temporal ${if(session.candidateTemporalFitConsistent)"OK" else "pending"}","RMS ${session.candidateRmsErrorMeters?.let{"%.1f 米".format(it)}?:"—"} · 覆盖 ${session.candidateAngularCoverageDegrees?.toInt()?:0}° · ${session.candidateAngularSectorCount} 个扇区 · ${session.candidateSwingReversalCount} 次反转 · ${session.candidateEffectiveDurationMillis/60_000} 分钟有效数据 · 时间一致性 ${if(session.candidateTemporalFitConsistent)"通过" else "等待"}"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall)};Button({vm.acceptEstimatedCenter(session)},enabled=!alarmActive,modifier=Modifier.fillMaxWidth().heightIn(min=52.dp)){Text(tr("Use centre & redraw alarm circle","使用中心并重绘报警圈"))};OutlinedButton({vm.rejectEstimatedCenter(session)},Modifier.fillMaxWidth().heightIn(min=52.dp)){Text(tr("Keep learning","继续学习"))};if(alarmActive)Text(tr("Resolve or pause the active alarm before applying a new centre.","请先处理或暂停当前警报，再应用新中心。"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall);Spacer(Modifier.height(20.dp))}}
+@Composable
+internal fun EstimatedCenterBanner(state:MainUiState,vm:MainViewModel,session:AnchorSessionEntity){
+ val candidateLat=session.provisionalAnchorLatitude?:return
+ val candidateLon=session.provisionalAnchorLongitude?:return
+ val shift=AnchorGeometry.distanceMeters(session.anchorLatitude,session.anchorLongitude,candidateLat,candidateLon)
+ val unsafe=state.alarmSnapshot.state in setOf(AlarmState.WARNING,AlarmState.ALARM,AlarmState.ACKNOWLEDGED)
+ var details by remember(session.candidateId){mutableStateOf(false)}
+ Surface(color=MaterialTheme.colorScheme.secondaryContainer,tonalElevation=4.dp){
+  Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+   Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+    Column(Modifier.weight(1f)){
+     Text(tr("Estimated centre ready","估算中心已就绪"),fontWeight=FontWeight.SemiBold)
+     Text(tr("Shift ${shift.toInt()} m · uncertainty ±${session.provisionalRadiusMeters?.toInt()?:"--"} m","移动 ${shift.toInt()} 米 · 不确定度 ±${session.provisionalRadiusMeters?.toInt()?:"--"} 米"),style=MaterialTheme.typography.bodySmall)
+    }
+    TextButton({details=!details}){Text(if(details)tr("Less","收起") else tr("Details","详情"))}
+   }
+   if(details)Text(tr("RMS ${session.candidateRmsErrorMeters?.let{"%.1f m".format(it)}?:"—"} · coverage ${session.candidateAngularCoverageDegrees?.toInt()?:0}° · ${session.candidateAngularSectorCount} sectors · ${session.candidateSwingReversalCount} reversals","RMS ${session.candidateRmsErrorMeters?.let{"%.1f 米".format(it)}?:"—"} · 覆盖 ${session.candidateAngularCoverageDegrees?.toInt()?:0}° · ${session.candidateAngularSectorCount} 扇区 · ${session.candidateSwingReversalCount} 次反转"),style=MaterialTheme.typography.bodySmall)
+   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+    Button({vm.acceptEstimatedCenter(session)},enabled=!unsafe,modifier=Modifier.weight(1f)){Text(tr("Use estimated","采用估算"))}
+    OutlinedButton({vm.keepCurrentCenter(session)},enabled=!unsafe,modifier=Modifier.weight(1f)){Text(tr("Keep current","保留当前"))}
+    TextButton({vm.continueEstimatingCenter(session)},Modifier.weight(1f)){Text(tr("Keep learning","继续估算"))}
+   }
+   if(unsafe)Text(tr("Use/Keep is locked during warning or alarm; you may continue estimating.","警告或报警期间不可采用/保留中心；仍可继续估算。"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+  }
+ }
 }

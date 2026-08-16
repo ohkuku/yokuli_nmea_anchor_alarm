@@ -15,15 +15,24 @@ val mapsApiKey = local.getProperty("MAPS_API_KEY")
     ?: providers.gradleProperty("YOKULI_MAPS_API_KEY").orNull.orEmpty()
 val linzApiKey = local.getProperty("LINZ_API_KEY")?.takeIf { it.isNotBlank() }
     ?: System.getenv("LINZ_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("LINZ_API_KEY").orNull?.takeIf { it.isNotBlank() }
     ?: providers.gradleProperty("YOKULI_LINZ_API_KEY").orNull.orEmpty()
-val linzLayerId = local.getProperty("LINZ_HYDRO_LAYER_ID")?.takeIf { it.isNotBlank() }
-    ?: System.getenv("LINZ_HYDRO_LAYER_ID")?.takeIf { it.isNotBlank() }
-    ?: providers.gradleProperty("YOKULI_LINZ_HYDRO_LAYER_ID").orNull.orEmpty()
-val linzHydroTileTemplate = local.getProperty("LINZ_HYDRO_TILE_TEMPLATE")?.takeIf { it.isNotBlank() }
+val linzHydroTileTemplateOverride = local.getProperty("LINZ_HYDRO_TILE_TEMPLATE")?.takeIf { it.isNotBlank() }
     ?: System.getenv("LINZ_HYDRO_TILE_TEMPLATE")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("LINZ_HYDRO_TILE_TEMPLATE").orNull?.takeIf { it.isNotBlank() }
     ?: providers.gradleProperty("YOKULI_LINZ_HYDRO_TILE_TEMPLATE").orNull?.takeIf { it.isNotBlank() }
-    ?: if (linzApiKey.isNotBlank() && linzLayerId.isNotBlank()) "https://tiles-a.data-cdn.linz.govt.nz/services;key=$linzApiKey/tiles/v4/layer=$linzLayerId/EPSG:3857/{z}/{x}/{y}.png" else ""
-val linzHydroConfigured = linzHydroTileTemplate.startsWith("https://") && listOf("{z}", "{x}", "{y}").all(linzHydroTileTemplate::contains)
+val linzChartSetTemplates = if (linzHydroTileTemplateOverride != null) {
+    listOf(linzHydroTileTemplateOverride)
+} else if (linzApiKey.isNotBlank()) {
+    // Official LINZ hydrographic raster-chart sets. A set id remains stable as
+    // individual chart revisions are published, unlike a single layer id.
+    listOf(4758, 4759, 4767).map { setId ->
+        "https://tiles-a.data-cdn.linz.govt.nz/services;key=$linzApiKey/tiles/v4/set=$setId/EPSG:3857/{z}/{x}/{y}.png"
+    }
+} else emptyList()
+val linzHydroConfigured = linzChartSetTemplates.isNotEmpty() && linzChartSetTemplates.all { template ->
+    template.startsWith("https://") && listOf("{z}", "{x}", "{y}").all(template::contains)
+}
 fun String.asBuildConfigString() = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
 val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
@@ -43,7 +52,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
-        buildConfigField("String", "LINZ_HYDRO_TILE_TEMPLATE", linzHydroTileTemplate.asBuildConfigString())
+        buildConfigField("String", "LINZ_HYDRO_TILE_TEMPLATES", linzChartSetTemplates.joinToString("|").asBuildConfigString())
         buildConfigField("boolean", "LINZ_HYDRO_CONFIGURED", linzHydroConfigured.toString())
     }
     signingConfigs {

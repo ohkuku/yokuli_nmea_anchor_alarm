@@ -137,13 +137,17 @@ object DemoTrajectory {
 
     private fun lingeringOffset(simulatedSeconds: Double, seed: Long): Double {
         val targets = doubleArrayOf(0.0, 1.05, 2.15, 3.25, 2.05, .78, -.52, -1.72, -2.82, -1.45, 0.0)
-        val segmentSeconds = 24.0 + seeded(seed, 94) * 9.0
+        // Real anchored boats normally dwell in a sector and sweep across it
+        // gradually. A shorter blend could move a 40–70 m swing radius by more
+        // than 5 m between one-second fixes, which looked like a GPS teleport
+        // and was the cause of the previous CI failure.
+        val segmentSeconds = 42.0 + seeded(seed, 94) * 12.0
         val index = floor(simulatedSeconds / segmentSeconds).toInt().coerceAtLeast(0)
         val local = simulatedSeconds - index * segmentSeconds
         val start=(seeded(seed,95)*targets.lastIndex).toInt().coerceIn(0,targets.lastIndex-1);val direction=if(seeded(seed,96)<.5)-1.0 else 1.0;val scale=.90+seeded(seed,97)*.20
         fun target(at:Int)=targets[(start+at)%targets.lastIndex]*direction*scale+(seeded(seed,at+100)-.5)*.16
         val current = target(index);val next = target(index+1)
-        val dwell=segmentSeconds*.32;val blend = smoothStep(((local-dwell)/(segmentSeconds-dwell)).coerceIn(0.0, 1.0))
+        val dwell=segmentSeconds*.38;val blend = smoothStep(((local-dwell)/(segmentSeconds-dwell)).coerceIn(0.0, 1.0))
         return current + (next - current) * blend
     }
 

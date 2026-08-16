@@ -58,7 +58,7 @@ class PositionIntegrityFilter(
         }
     }
 
-    fun evaluate(fix: NavigationFix): PositionIntegrityResult {
+    fun evaluate(fix: NavigationFix, motion: PhoneMotionState? = null): PositionIntegrityResult {
         if (!fix.valid || !fix.latitude.isFinite() || !fix.longitude.isFinite() ||
             fix.latitude !in -90.0..90.0 || fix.longitude !in -180.0..180.0
         ) return PositionIntegrityResult.Rejected(fix, "INVALID_POSITION")
@@ -100,7 +100,7 @@ class PositionIntegrityFilter(
 
         if (pending.isNotEmpty()) return evaluatePending(fix, baseline)
 
-        val suspiciousReason = suspiciousReason(baseline, fix, accuracy)
+        val suspiciousReason = suspiciousReason(baseline, fix, accuracy, motion)
         if (suspiciousReason != null) return quarantine(fix, suspiciousReason)
 
         lastTrusted = fix
@@ -150,7 +150,7 @@ class PositionIntegrityFilter(
         return PositionIntegrityResult.Accepted(released)
     }
 
-    private fun suspiciousReason(previous: NavigationFix, current: NavigationFix, accuracy: Double): String? {
+    private fun suspiciousReason(previous: NavigationFix, current: NavigationFix, accuracy: Double, motion: PhoneMotionState?): String? {
         if (accuracy > maximumAccuracyMeters) return "POSITION_ACCURACY_POOR"
         val previousAccuracy = effectiveAccuracy(previous)
         if (accuracy > 30.0 && accuracy > previousAccuracy * 4.0) return "POSITION_ACCURACY_COLLAPSE"
@@ -158,13 +158,14 @@ class PositionIntegrityFilter(
             .coerceAtLeast(.001)
         val step = distance(previous, current)
         val speed = step / elapsedSeconds
-        val accuracyAllowance = max(30.0, previousAccuracy + accuracy + 12.0)
+        val accuracyAllowance = max(12.0, previousAccuracy + accuracy + 5.0)
         if (step > accuracyAllowance && speed > impossibleSpeedMetersPerSecond) return "IMPOSSIBLE_POSITION_JUMP"
         val reportedSpeed = current.sogKnots?.times(.514444)
         if (step > accuracyAllowance && reportedSpeed != null && reportedSpeed < 2.0 && speed > 5.0) {
             return "GPS_SPEED_DISAGREEMENT"
         }
-        if (current.headingQuality in setOf(HeadingQuality.MOVING, HeadingQuality.DISTURBED) &&
+        if ((motion?.moving == true || motion?.disturbed == true ||
+                current.headingQuality in setOf(HeadingQuality.MOVING, HeadingQuality.DISTURBED)) &&
             current.positionProvider == PositionProvider.ANDROID_GNSS && step > max(8.0, accuracyAllowance / 2.0)
         ) return "PHONE_MOVED"
         return null

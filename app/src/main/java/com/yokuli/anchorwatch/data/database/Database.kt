@@ -113,6 +113,61 @@ data class AlarmEventEntity(
     val detail: String = "",
 )
 
+@Entity(tableName = "sonar_surveys")
+data class SonarSurveyEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val startedAt: Long,
+    val endedAt: Long? = null,
+    val active: Boolean = true,
+    @ColumnInfo(defaultValue = "'OFF'") val tideMode: String = "OFF",
+    @ColumnInfo(defaultValue = "0") val manualTideOffsetMeters: Double = 0.0,
+    @ColumnInfo(defaultValue = "0") val transducerDraftMeters: Double = 0.0,
+    @ColumnInfo(defaultValue = "0") val keelOffsetMeters: Double = 0.0,
+    @ColumnInfo(defaultValue = "0") val gpsToTransducerMeters: Double = 0.0,
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val configuredDepthReference: String = "UNKNOWN",
+    @ColumnInfo(defaultValue = "0") val sampleCount: Int = 0,
+)
+
+@Entity(
+    tableName = "depth_samples",
+    foreignKeys = [ForeignKey(
+        entity = SonarSurveyEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["surveyId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("surveyId"), Index(value = ["surveyId", "timestamp"]), Index(value = ["baseGridX", "baseGridY"])],
+)
+data class DepthSampleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val surveyId: Long,
+    val timestamp: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val baseGridX: Long,
+    val baseGridY: Long,
+    val sourceElapsedRealtime: Long,
+    val rawDepthMeters: Double,
+    val measuredDepthMeters: Double,
+    val normalizedDepthMeters: Double? = null,
+    val depthReference: String,
+    val sentenceType: String,
+    val nmeaOffsetMeters: Double? = null,
+    val horizontalAccuracyMeters: Double? = null,
+    val gpsSource: String,
+    val positionProvider: String,
+    val hdop: Double? = null,
+    val sogKnots: Double? = null,
+    @ColumnInfo(defaultValue = "'DEGRADED'") val fixTrust: String = "DEGRADED",
+    val positionAgeMillis: Long,
+    @ColumnInfo(defaultValue = "'ACCEPTED'") val disposition: String = "ACCEPTED",
+    @ColumnInfo(defaultValue = "1") val usable: Boolean = true,
+    val integrityReason: String? = null,
+    @ColumnInfo(defaultValue = "0") val positionCorrectionApplied: Boolean = false,
+    @ColumnInfo(defaultValue = "'NONE'") val positionCorrectionMethod: String = "NONE",
+)
+
 @Dao
 interface AnchorDao {
     @Insert suspend fun insertSession(value: AnchorSessionEntity): Long
@@ -130,11 +185,32 @@ interface AnchorDao {
     @Query("SELECT * FROM alarm_events ORDER BY timestamp DESC") fun allEvents(): Flow<List<AlarmEventEntity>>
 }
 
+@Dao
+interface SonarDao {
+    @Insert suspend fun insertSurvey(value: SonarSurveyEntity): Long
+    @Update suspend fun updateSurvey(value: SonarSurveyEntity)
+    @Query("SELECT * FROM sonar_surveys WHERE active=1 ORDER BY startedAt DESC LIMIT 1") suspend fun active(): SonarSurveyEntity?
+    @Query("SELECT * FROM sonar_surveys WHERE id=:surveyId LIMIT 1") suspend fun survey(surveyId:Long): SonarSurveyEntity?
+    @Query("SELECT * FROM sonar_surveys ORDER BY startedAt DESC") fun surveys(): Flow<List<SonarSurveyEntity>>
+    @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId ORDER BY timestamp") fun samples(surveyId:Long): Flow<List<DepthSampleEntity>>
+    @Query("SELECT * FROM depth_samples WHERE normalizedDepthMeters IS NOT NULL AND usable=1 ORDER BY timestamp") fun normalizedHistory(): Flow<List<DepthSampleEntity>>
+    @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId AND usable=1 ORDER BY timestamp") suspend fun usableSamples(surveyId:Long): List<DepthSampleEntity>
+    @Query("SELECT * FROM depth_samples WHERE surveyId=:surveyId ORDER BY timestamp") suspend fun samplesNow(surveyId:Long): List<DepthSampleEntity>
+    @Insert suspend fun insertSample(value: DepthSampleEntity)
+    @Update suspend fun updateSamples(values: List<DepthSampleEntity>)
+    @Query("UPDATE depth_samples SET disposition='ACCEPTED_STEEP_SLOPE', usable=1, integrityReason='Released by coherent three-point slope' WHERE surveyId=:surveyId AND sourceElapsedRealtime IN (:elapsedTimestamps)") suspend fun releaseSlopeSamples(surveyId:Long,elapsedTimestamps:List<Long>)
+    @Query("UPDATE sonar_surveys SET name=:name WHERE id=:surveyId") suspend fun rename(surveyId:Long,name:String)
+    @Query("UPDATE sonar_surveys SET active=0, endedAt=:endedAt WHERE id=:surveyId") suspend fun finish(surveyId:Long,endedAt:Long)
+    @Query("UPDATE sonar_surveys SET sampleCount=(SELECT COUNT(*) FROM depth_samples WHERE surveyId=:surveyId) WHERE id=:surveyId") suspend fun refreshSampleCount(surveyId:Long)
+    @Query("DELETE FROM sonar_surveys WHERE id=:surveyId AND active=0") suspend fun deleteCompleted(surveyId:Long):Int
+}
+
 @Database(
-    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class],
-    version = 6,
+    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class],
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun anchorDao(): AnchorDao
+    abstract fun sonarDao(): SonarDao
 }

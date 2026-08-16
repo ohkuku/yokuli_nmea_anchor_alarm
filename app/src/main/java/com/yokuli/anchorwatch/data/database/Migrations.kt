@@ -82,3 +82,13 @@ object Migration5To6 : Migration(5, 6) {
         db.execSQL("UPDATE track_points SET headingSource='NMEA_PHYSICAL', headingQuality='STABLE' WHERE headingMeasured=1")
     }
 }
+
+object Migration6To7 : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `sonar_surveys` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `active` INTEGER NOT NULL, `tideMode` TEXT NOT NULL DEFAULT 'OFF', `manualTideOffsetMeters` REAL NOT NULL DEFAULT 0, `transducerDraftMeters` REAL NOT NULL DEFAULT 0, `keelOffsetMeters` REAL NOT NULL DEFAULT 0, `gpsToTransducerMeters` REAL NOT NULL DEFAULT 0, `configuredDepthReference` TEXT NOT NULL DEFAULT 'UNKNOWN', `sampleCount` INTEGER NOT NULL DEFAULT 0)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `depth_samples` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `surveyId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `baseGridX` INTEGER NOT NULL, `baseGridY` INTEGER NOT NULL, `sourceElapsedRealtime` INTEGER NOT NULL, `rawDepthMeters` REAL NOT NULL, `measuredDepthMeters` REAL NOT NULL, `normalizedDepthMeters` REAL, `depthReference` TEXT NOT NULL, `sentenceType` TEXT NOT NULL, `nmeaOffsetMeters` REAL, `horizontalAccuracyMeters` REAL, `gpsSource` TEXT NOT NULL, `positionProvider` TEXT NOT NULL, `hdop` REAL, `sogKnots` REAL, `fixTrust` TEXT NOT NULL DEFAULT 'DEGRADED', `positionAgeMillis` INTEGER NOT NULL, `disposition` TEXT NOT NULL DEFAULT 'ACCEPTED', `usable` INTEGER NOT NULL DEFAULT 1, `integrityReason` TEXT, `positionCorrectionApplied` INTEGER NOT NULL DEFAULT 0, `positionCorrectionMethod` TEXT NOT NULL DEFAULT 'NONE', FOREIGN KEY(`surveyId`) REFERENCES `sonar_surveys`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId` ON `depth_samples` (`surveyId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId_timestamp` ON `depth_samples` (`surveyId`, `timestamp`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_depth_samples_baseGridX_baseGridY` ON `depth_samples` (`baseGridX`, `baseGridY`)")
+    }
+}

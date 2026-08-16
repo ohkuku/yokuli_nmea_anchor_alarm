@@ -29,6 +29,8 @@ class NmeaConnectionManager(private val scope:CoroutineScope) {
   startLocked(p)
  }
  fun disconnect(){synchronized(guard){generation++;profile=null;job?.cancel();job=null;closeTransportLocked();_state.value=NmeaConnectionState.DISCONNECTED}}
+ fun reportValidFix(){synchronized(guard){if(job?.isActive==true)_state.value=NmeaConnectionState.CONNECTED}}
+ fun reportStaleFix(){synchronized(guard){if(job?.isActive==true&&_state.value!=NmeaConnectionState.CONNECTED_NO_DATA)_state.value=NmeaConnectionState.STALE}}
  private fun startLocked(p:ConnectionProfile):Boolean{
   generation++;val mine=generation;job?.cancel();closeTransportLocked();profile=p
   job=scope.launch(Dispatchers.IO){runConnection(p,mine)}
@@ -42,12 +44,13 @@ class NmeaConnectionManager(private val scope:CoroutineScope) {
    catch(_:Exception){if(!currentCoroutineContext().isActive||!isCurrent(mine))break;setState(mine,NmeaConnectionState.ERROR);if(!p.autoReconnect)break;val delays=listOf(1000L,2000,5000,10000,15000);delay(delays[attempt.coerceAtMost(delays.lastIndex)]);attempt++}
   }}finally{finish(mine)}
  }
- private suspend fun tcp(p:ConnectionProfile,mine:Long){val socket=Socket();register(mine,socket);try{socket.connect(InetSocketAddress(p.host,p.port),5000);socket.soTimeout=30_000;setState(mine,NmeaConnectionState.CONNECTED);val split=NmeaStreamSplitter();val b=ByteArray(4096);while(currentCoroutineContext().isActive){val n=socket.getInputStream().read(b);if(n<0)throw EOFException("NMEA source closed");split.feed(b,n).forEach{_lines.emit(it)}}}finally{unregister(socket);runCatching{socket.close()}}}
- private suspend fun udp(p:ConnectionProfile,mine:Long){val socket=DatagramSocket(null);register(mine,socket);try{socket.reuseAddress=true;socket.bind(InetSocketAddress(p.port));setState(mine,NmeaConnectionState.CONNECTED);val split=NmeaStreamSplitter();val b=ByteArray(8192);while(currentCoroutineContext().isActive){val packet=DatagramPacket(b,b.size);socket.receive(packet);split.feed(packet.data,packet.length).forEach{_lines.emit(it)}}}finally{unregister(socket);runCatching{socket.close()}}}
+ private suspend fun tcp(p:ConnectionProfile,mine:Long){val socket=Socket();register(mine,socket);try{socket.connect(InetSocketAddress(p.host,p.port),5000);socket.soTimeout=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000;setState(mine,NmeaConnectionState.CONNECTED_NO_DATA);val split=NmeaStreamSplitter();val b=ByteArray(4096);while(currentCoroutineContext().isActive){val n=try{socket.getInputStream().read(b)}catch(timeout:SocketTimeoutException){setState(mine,NmeaConnectionState.CONNECTED_NO_DATA);throw timeout};if(n<0)throw EOFException("NMEA source closed");setDataState(mine);split.feed(b,n).forEach{_lines.emit(it)}}}finally{unregister(socket);runCatching{socket.close()}}}
+ private suspend fun udp(p:ConnectionProfile,mine:Long){val socket=DatagramSocket(null);register(mine,socket);try{socket.reuseAddress=true;socket.soTimeout=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000;socket.bind(InetSocketAddress(p.port));setState(mine,NmeaConnectionState.CONNECTED_NO_DATA);val split=NmeaStreamSplitter();val b=ByteArray(8192);while(currentCoroutineContext().isActive){val packet=DatagramPacket(b,b.size);try{socket.receive(packet)}catch(timeout:SocketTimeoutException){setState(mine,NmeaConnectionState.CONNECTED_NO_DATA);throw timeout};setDataState(mine);split.feed(packet.data,packet.length).forEach{_lines.emit(it)}}}finally{unregister(socket);runCatching{socket.close()}}}
  private fun register(mine:Long,value:Closeable){synchronized(guard){if(mine!=generation){runCatching{value.close()};throw CancellationException("Superseded NMEA connection")};transport=value}}
  private fun unregister(value:Closeable){synchronized(guard){if(transport===value)transport=null}}
  private fun closeTransportLocked(){runCatching{transport?.close()};transport=null}
  private fun isCurrent(mine:Long)=synchronized(guard){mine==generation}
  private fun setState(mine:Long,value:NmeaConnectionState){synchronized(guard){if(mine==generation)_state.value=value}}
+ private fun setDataState(mine:Long){synchronized(guard){if(mine==generation&&_state.value!=NmeaConnectionState.CONNECTED)_state.value=NmeaConnectionState.CONNECTED_NO_FIX}}
  private fun finish(mine:Long){synchronized(guard){if(mine==generation){closeTransportLocked();profile=null;job=null;_state.value=NmeaConnectionState.DISCONNECTED}}}
 }

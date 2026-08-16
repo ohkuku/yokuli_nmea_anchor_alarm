@@ -32,9 +32,16 @@ class AnchorCenterEstimator(private val random: Random = Random.Default) {
         var best: Circle? = null
         var bestInliers: List<LocalPoint> = emptyList()
         var bestScore = Double.NEGATIVE_INFINITY
-        repeat(500) {
-            val sample = local.shuffled(random).take(3)
-            val circle = circumcircle(sample[0], sample[1], sample[2]) ?: return@repeat
+        repeat(400) {
+            val firstIndex = random.nextInt(local.size)
+            var secondIndex = random.nextInt(local.size - 1)
+            if (secondIndex >= firstIndex) secondIndex++
+            var thirdIndex = random.nextInt(local.size - 2)
+            val low = minOf(firstIndex, secondIndex)
+            val high = maxOf(firstIndex, secondIndex)
+            if (thirdIndex >= low) thirdIndex++
+            if (thirdIndex >= high) thirdIndex++
+            val circle = circumcircle(local[firstIndex], local[secondIndex], local[thirdIndex]) ?: return@repeat
             if (!circle.radius.isFinite() || circle.radius < 2.0 || circle.radius > 2_000.0) return@repeat
             val tolerance = max(3.5, circle.radius * .12)
             val residuals = local.map { point -> abs(hypot(point.x - circle.x, point.y - circle.y) - circle.radius) }
@@ -50,11 +57,21 @@ class AnchorCenterEstimator(private val random: Random = Random.Default) {
         }
         val minimumInliers = max(12, (local.size * .65).toInt())
         if (best == null || bestInliers.size < minimumInliers) return null
-        val fit = leastSquares(bestInliers) ?: best!!
+        var fit = leastSquares(bestInliers) ?: best!!
+        var refinedInliers = bestInliers
+        repeat(3) {
+            val tolerance = max(3.0, fit.radius * .10)
+            val next = local.filter { point -> abs(hypot(point.x - fit.x, point.y - fit.y) - fit.radius) <= tolerance }
+            if (next.size < minimumInliers) return@repeat
+            val refined = leastSquares(next) ?: return@repeat
+            if (!refined.radius.isFinite() || refined.radius !in 2.0..2_000.0) return@repeat
+            refinedInliers = next
+            fit = refined
+        }
         val residuals = local.map { abs(hypot(it.x - fit.x, it.y - fit.y) - fit.radius) }.sorted()
         val robustResiduals = residuals.take(max(1, (residuals.size * .9).toInt()))
         val rms = sqrt(robustResiduals.map { it.pow(2) }.average())
-        val inlierAngles = bestInliers.map {
+        val inlierAngles = refinedInliers.map {
             (Math.toDegrees(atan2(it.y - fit.y, it.x - fit.x)) + 360.0) % 360.0
         }.sorted()
         val maximumGap = (inlierAngles.zipWithNext { first, second -> second - first } +

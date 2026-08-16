@@ -25,6 +25,7 @@ class NmeaEndpointPreflight @Inject constructor(private val localAddresses: Netw
 
     fun validate(profile: ConnectionProfile, sharingEnabled:Boolean=false, sharingPort:Int=10111): String? {
         if (profile.port !in 1..65535) return "Port must be between 1 and 65535."
+        if (profile.noDataTimeoutSeconds !in 3..120) return "No-data timeout must be between 3 and 120 seconds."
         if (profile.protocol == Protocol.TCP) {
             val host = profile.host
             if (host.isBlank()) return "Host or IP address is required."

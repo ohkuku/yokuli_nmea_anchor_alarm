@@ -18,10 +18,10 @@ import com.yokuli.anchorwatch.data.database.*
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
-import com.yokuli.anchorwatch.data.sharing.NetworkAddressProvider
-import com.yokuli.anchorwatch.data.sharing.NmeaSelfLoopPolicy
+import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.domain.anchor.*
 import com.yokuli.anchorwatch.domain.model.*
+import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.location.*
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.localization.usesChinese
@@ -30,12 +30,14 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class AnchorForegroundService:Service(){
- @Inject lateinit var navigation:NavigationRepository;@Inject lateinit var dao:AnchorDao;@Inject lateinit var preferences:SettingsRepository;@Inject lateinit var mockGps:GlobalMockLocationManager;@Inject lateinit var systemLocation:SystemLocationRepository;@Inject lateinit var demoLocation:DemoLocationRepository;@Inject lateinit var phoneHeading:PhoneHeadingRepository;@Inject lateinit var alarmUi:AlarmUiRepository;@Inject lateinit var sharingServer:NmeaSharingServer;@Inject lateinit var outputMux:NmeaOutputMux;@Inject lateinit var networkAddresses:NetworkAddressProvider
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val commandMutex=Mutex();private val proxyMutex=Mutex();private val stateReady=CompletableDeferred<Unit>();private var wake:PowerManager.WakeLock?=null;private var wifi:WifiManager.WifiLock?=null;private var alarmPlayer:MediaPlayer?=null;private var engine=AlarmEngine();private var session:AnchorSessionEntity?=null;private var lastSnapshot:AlarmSnapshot?=null;private var lastTrack=0L;private var proxyPolicy:MockGpsPolicy?=null;private var lowBatteryReported=false;private var lastReportedAlarm:AlarmType?=null;private var nmeaLossAnnounced=false;private var positionDegradedSince:Long?=null;private var positionDegradedReason:String?=null;private var currentGpsSource=GpsDataSource.SYSTEM;private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;private var restoredDemoElapsed=0L;private val backdownEstimator=BackdownCenterEstimator();private val candidateDriftDetector=CandidateDriftDetector();private val positionIntegrity=PositionIntegrityFilter();private val sharingPositionIntegrity=PositionIntegrityFilter(maximumAccuracyMeters=30.0);private val backdownSamples=mutableListOf<BackdownCenterEstimator.Sample>();@Volatile private var armPending=false;@Volatile private var appLanguage=AppLanguage.SYSTEM;@Volatile private var sharingEnabled=false;@Volatile private var sharingSource=GpsDataSource.SYSTEM
+ @Inject lateinit var navigation:NavigationRepository;@Inject lateinit var dao:AnchorDao;@Inject lateinit var preferences:SettingsRepository;@Inject lateinit var mockGps:GlobalMockLocationManager;@Inject lateinit var systemLocation:SystemLocationRepository;@Inject lateinit var demoLocation:DemoLocationRepository;@Inject lateinit var phoneHeading:PhoneHeadingRepository;@Inject lateinit var phoneMotion:PhoneMotionRepository;@Inject lateinit var acceptedPosition:AcceptedPositionRepository;@Inject lateinit var alarmUi:AlarmUiRepository;@Inject lateinit var sharingServer:NmeaSharingServer;@Inject lateinit var outputMux:NmeaOutputMux;@Inject lateinit var sonarRecorder:SonarSurveyRecorder
+ private var lastEstimateAt=0L;private var lastEstimateSampleCount=0
+ private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val commandMutex=Mutex();private val proxyMutex=Mutex();private val stateReady=CompletableDeferred<Unit>();private var wake:PowerManager.WakeLock?=null;private var wifi:WifiManager.WifiLock?=null;private var alarmPlayer:MediaPlayer?=null;private val alarmTestGeneration=AtomicLong(0L);private var engine=AlarmEngine();private var session:AnchorSessionEntity?=null;private var lastSnapshot:AlarmSnapshot?=null;private var lastTrack=0L;private var proxyPolicy:MockGpsPolicy?=null;private var lowBatteryReported=false;private var lastReportedAlarm:AlarmType?=null;private var nmeaLossAnnounced=false;private var positionDegradedSince:Long?=null;private var positionDegradedReason:String?=null;private var currentGpsSource=GpsDataSource.SYSTEM;private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;private var restoredDemoElapsed=0L;private val backdownEstimator=BackdownCenterEstimator();private val candidateDriftDetector=CandidateDriftDetector();private val backdownSamples=mutableListOf<BackdownCenterEstimator.Sample>();@Volatile private var armPending=false;@Volatile private var appLanguage=AppLanguage.SYSTEM;@Volatile private var sharingEnabled=false;@Volatile private var sharingSource=GpsDataSource.SYSTEM
 
  private data class SourcedFix(val source:GpsDataSource,val fix:NavigationFix)
  private data class ArmRequest(val config:AnchorConfig,val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val boatLength:Double?,val positionSource:GpsDataSource?,val centerSource:AnchorCenterSource,val usePhoneHeading:Boolean)
@@ -43,14 +45,15 @@ class AnchorForegroundService:Service(){
  override fun onCreate(){
   super.onCreate();channels();ServiceCompat.startForeground(this,ONGOING,notification(l("Starting safety monitor…","正在启动安全监控…"),false),ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
   scope.launch{commandMutex.withLock{try{restoreState()}finally{stateReady.complete(Unit)}}}
-  scope.launch{combine(preferences.settings.map{it.gpsDataSource}.distinctUntilChanged(),navigation.fix,systemLocation.fix){source,nmea,system->currentGpsSource=source;when(source){GpsDataSource.NMEA->nmea?.let{SourcedFix(source,it)};GpsDataSource.SYSTEM->system?.let{SourcedFix(source,it)};GpsDataSource.DEMO->null}}.filterNotNull().collect{value->commandMutex.withLock{handleFix(value.fix,value.source)}}}
+  scope.launch{combine(preferences.settings.map{it.gpsDataSource}.distinctUntilChanged(),navigation.fix,systemLocation.fix){source,nmea,system->currentGpsSource=session?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}?:source;when(currentGpsSource){GpsDataSource.NMEA->nmea?.let{SourcedFix(currentGpsSource,it)};GpsDataSource.SYSTEM->system?.let{SourcedFix(currentGpsSource,it)};GpsDataSource.DEMO->null}}.filterNotNull().collect{value->acceptedPosition.submit(value.source,value.fix)}}
+  scope.launch{acceptedPosition.accepted.collect{event->commandMutex.withLock{processAcceptedFix(event.accepted,event.source)};if(sharingEnabled&&sharingSource==event.source)outputMux.acceptedPosition(event.accepted.fix,SystemClock.elapsedRealtime()).forEach(sharingServer::publish)}}
+  scope.launch{acceptedPosition.state.map{Triple(it.disposition,it.reason,it.rawFix?.receivedElapsedRealtime)}.distinctUntilChanged().collect{(disposition,reason,at)->if(disposition=="REJECTED"||disposition=="QUARANTINED")commandMutex.withLock{markPositionDegraded(at?:SystemClock.elapsedRealtime(),reason?:disposition);logEvent(if(disposition=="REJECTED")"GPS_FIX_REJECTED" else "GPS_SPIKE_QUARANTINED",reason?:disposition)}}}
   scope.launch{navigation.connectionState.collect{state->commandMutex.withLock{handleNmeaState(state)}}}
   scope.launch{preferences.settings.map{it.alarmSnoozeMinutes}.distinctUntilChanged().collect{alarmSnoozeMinutes=it}}
   scope.launch{preferences.settings.map{it.alarmSound to it.customAlarmSoundUri}.distinctUntilChanged().collect{(sound,uri)->selectedAlarmSound=sound;customAlarmSoundUri=uri}}
   scope.launch{preferences.settings.map{it.appLanguage}.distinctUntilChanged().collect{appLanguage=it;channels();refreshNotification()}}
   scope.launch{preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->commandMutex.withLock{configureSharing(enabled,port,source)}}}
   scope.launch{navigation.validRawSentences.collect{line->if(sharingEnabled)outputMux.boatSentence(line,sharingSource)?.let(sharingServer::publish)}}
-  scope.launch{systemLocation.fix.filterNotNull().collect{fix->if(sharingEnabled&&sharingSource==GpsDataSource.SYSTEM)when(val result=sharingPositionIntegrity.evaluate(fix)){is PositionIntegrityResult.Accepted->result.fixes.filter{!it.wasQuarantined&&it.trust!=FixTrust.QUARANTINED&&it.trust!=FixTrust.REJECTED}.forEach{accepted->outputMux.systemPosition(accepted.fix,SystemClock.elapsedRealtime()).forEach(sharingServer::publish)};else->Unit}}}
   scope.launch{while(isActive){delay(1000);commandMutex.withLock{watchdog()}}}
   scope.launch{while(isActive){delay(30_000);batteryWatchdog()}}
  }
@@ -64,17 +67,17 @@ class AnchorForegroundService:Service(){
    LIFT_ANCHOR->launchCommand{liftAnchor()}
    UPDATE_RADIUS->launchCommand{updateWatchSettings(intent)}
    STOP_WATCH_AND_DISCONNECT->launchCommand{stopWatchAndDisconnect()}
-   SWITCH_WATCH_TO_SYSTEM->launchCommand{switchWatchToSystem(true)}
-   SWITCH_WATCH_SOURCE_SYSTEM->launchCommand{switchWatchToSystem(false)}
-   SWITCH_WATCH_SOURCE_NMEA->launchCommand{switchWatchToNmea()}
    ACCEPT_ESTIMATED_CENTER->launchCommand{acceptEstimatedCenter(intent.getLongExtra("sessionId",-1L),intent.getLongExtra("candidateId",-1L))}
-   REJECT_ESTIMATED_CENTER->launchCommand{rejectEstimatedCenter(intent.getLongExtra("sessionId",-1L),intent.getLongExtra("candidateId",-1L))}
+   KEEP_CURRENT_CENTER->launchCommand{keepCurrentCenter(intent.getLongExtra("sessionId",-1L),intent.getLongExtra("candidateId",-1L))}
+   CONTINUE_ESTIMATING_CENTER->launchCommand{continueEstimatingCenter(intent.getLongExtra("sessionId",-1L),intent.getLongExtra("candidateId",-1L))}
+   UPDATE_PHONE_HEADING->launchCommand{updatePhoneHeading(intent.getBooleanExtra("enabled",false))}
    START_PROXY->launchCommand{startProxy()}
    STOP_PROXY->launchCommand{stopProxy(l("Android GPS proxy stopped by user.","用户已关闭 Android GPS 代理。"))}
-   TEST_ALARM->launchCommand{testAlarm()}
-   STOP_ALARM_TEST->launchCommand{stopAlarmTest()}
-   DISABLE_DEMO_TO_SYSTEM->launchCommand{switchWatchToSystem(false,true)}
+   TEST_ALARM->{val generation=alarmTestGeneration.incrementAndGet();launchCommand{testAlarm(generation)}}
+   STOP_ALARM_TEST->{alarmTestGeneration.incrementAndGet();silence();launchCommand{stopAlarmTest()}}
    SET_NMEA_SHARING->launchCommand{configureSharing(intent.getBooleanExtra("enabled",false),intent.getIntExtra("port",10111),preferences.settings.first().gpsDataSource)}
+   START_SONAR_SURVEY->launchCommand{startSonarSurvey(intent)}
+   STOP_SONAR_SURVEY->launchCommand{sonarRecorder.stop();refreshNotification();releaseIfIdle()}
   }
   return START_STICKY
  }
@@ -82,11 +85,13 @@ class AnchorForegroundService:Service(){
  private fun launchCommand(action:suspend ()->Unit){scope.launch{stateReady.await();commandMutex.withLock{action()}}}
 
  private suspend fun restoreState(){
-  var settings=preferences.settings.first();session=dao.active();val lockedSource=session?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()};if(lockedSource!=null&&lockedSource!=settings.gpsDataSource){settings=settings.copy(gpsDataSource=lockedSource);preferences.save(settings)};currentGpsSource=lockedSource?:settings.gpsDataSource;alarmSnoozeMinutes=settings.alarmSnoozeMinutes;selectedAlarmSound=settings.alarmSound;customAlarmSoundUri=settings.customAlarmSoundUri;appLanguage=settings.appLanguage;channels();positionIntegrity.reset();candidateDriftDetector.reset();if(session==null)alarmUi.clear();session?.let{active->
+  var settings=preferences.settings.first();session=dao.active();val lockedSource=session?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()};if(lockedSource!=null&&lockedSource!=settings.gpsDataSource){settings=settings.copy(gpsDataSource=lockedSource);preferences.save(settings)};currentGpsSource=lockedSource?:settings.gpsDataSource;if(session==null)acceptedPosition.selectSource(currentGpsSource);alarmSnoozeMinutes=settings.alarmSnoozeMinutes;selectedAlarmSound=settings.alarmSound;customAlarmSoundUri=settings.customAlarmSoundUri;appLanguage=settings.appLanguage;channels();candidateDriftDetector.reset();if(session==null)alarmUi.clear();session?.let{active->
    engine=alarmEngine(settings);val points=dao.points(active.id).first();val events=dao.events(active.id).first();candidateDriftDetector.restore(events.filter{it.type=="ESTIMATED_CENTER_HISTORY"}.mapNotNull{CandidateCenterObservation.decode(it.detail)},events.any{it.type=="POSSIBLE_ANCHOR_DRAG_TREND"});restoredDemoElapsed=(if(active.paused)points.lastOrNull()?.timestamp?.minus(active.startedAt) else System.currentTimeMillis()-active.startedAt)?.coerceAtLeast(0L)?:0L
-   if(active.centerStatus!=AnchorCenterStatus.RESOLVED.name){backdownSamples.addAll(points.filter{it.fixTrust!=FixTrust.REJECTED.name&&it.fixTrust!=FixTrust.QUARANTINED.name}.map{BackdownCenterEstimator.Sample(latitude=it.latitude,longitude=it.longitude,timestamp=it.timestamp,hdop=it.hdop,headingTrueDegrees=it.heading.takeIf{_->it.headingSource==HeadingSource.NMEA_PHYSICAL.name||it.headingSource==HeadingSource.PHONE.name},cogTrueDegrees=it.cog,sogKnots=it.sog,windDirectionTrueDegrees=it.windDirectionTrue,windSpeedKnots=it.windSpeedKnots,apparentWindAngleDegrees=it.apparentWindAngle,trueWindAngleDegrees=it.trueWindAngle,trueWindSpeedKnots=it.trueWindSpeedKnots,apparentWindSpeedKnots=it.apparentWindSpeedKnots,headingSampleSequence=it.headingSampleSequence,windSampleSequence=it.windSampleSequence)});lastSnapshot=engine.learn(active.learningConfig(),SystemClock.elapsedRealtime())}
+   acceptedPosition.lockSource(active.id,currentGpsSource);acceptedPosition.setPhoneHeadingEvidenceEnabled(active.usePhoneHeading)
+   points.lastOrNull()?.let{point->val elapsed=(SystemClock.elapsedRealtime()-(System.currentTimeMillis()-point.timestamp).coerceAtLeast(0L)).coerceAtLeast(1L);acceptedPosition.seed(currentGpsSource,NavigationFix(latitude=point.latitude,longitude=point.longitude,timestampUtcMillis=point.timestamp,receivedElapsedRealtime=elapsed,sogKnots=point.sog,cogTrueDegrees=point.cog,headingTrueDegrees=point.heading,hdop=point.hdop,horizontalAccuracyMeters=point.horizontalAccuracyMeters,positionProvider=runCatching{PositionProvider.valueOf(point.positionProvider)}.getOrDefault(PositionProvider.UNKNOWN),sourceSentence="PERSISTED_ACCEPTED_FIX",valid=true,headingSource=runCatching{HeadingSource.valueOf(point.headingSource)}.getOrDefault(HeadingSource.NONE),headingQuality=runCatching{HeadingQuality.valueOf(point.headingQuality)}.getOrDefault(HeadingQuality.UNAVAILABLE),headingEpoch=point.headingEpoch,headingSampleSequence=point.headingSampleSequence,windDirectionTrueDegrees=point.windDirectionTrue,windSpeedKnots=point.windSpeedKnots,apparentWindAngleDegrees=point.apparentWindAngle,trueWindAngleDegrees=point.trueWindAngle,trueWindSpeedKnots=point.trueWindSpeedKnots,apparentWindSpeedKnots=point.apparentWindSpeedKnots),active.id)}
+   if(active.centerStatus!=AnchorCenterStatus.RESOLVED.name){backdownSamples.addAll(points.filter{it.fixTrust!=FixTrust.REJECTED.name&&it.fixTrust!=FixTrust.QUARANTINED.name}.map{BackdownCenterEstimator.Sample(latitude=it.latitude,longitude=it.longitude,timestamp=it.timestamp,hdop=it.hdop,horizontalAccuracyMeters=it.horizontalAccuracyMeters,positionProvider=runCatching{PositionProvider.valueOf(it.positionProvider)}.getOrDefault(PositionProvider.UNKNOWN),fixTrust=runCatching{FixTrust.valueOf(it.fixTrust)}.getOrDefault(FixTrust.DEGRADED),headingTrueDegrees=it.heading.takeIf{_->it.headingSource==HeadingSource.NMEA_PHYSICAL.name||it.headingSource==HeadingSource.PHONE.name},cogTrueDegrees=it.cog,sogKnots=it.sog,windDirectionTrueDegrees=it.windDirectionTrue,windSpeedKnots=it.windSpeedKnots,apparentWindAngleDegrees=it.apparentWindAngle,trueWindAngleDegrees=it.trueWindAngle,trueWindSpeedKnots=it.trueWindSpeedKnots,apparentWindSpeedKnots=it.apparentWindSpeedKnots,headingSampleSequence=it.headingSampleSequence,windSampleSequence=it.windSampleSequence)});lastSnapshot=engine.learn(active.learningConfig(),SystemClock.elapsedRealtime())}
    else{lastSnapshot=engine.arm(active.config(),SystemClock.elapsedRealtime())}
-   if(!active.paused){locks(settings.keepWifiAwake);if(active.usePhoneHeading)phoneHeading.start()}
+   if(!active.paused){locks(settings.keepWifiAwake);if(currentGpsSource==GpsDataSource.SYSTEM)phoneMotion.start();if(active.usePhoneHeading)phoneHeading.start()}
   }
   if(session?.paused==false){when(settings.gpsDataSource){GpsDataSource.NMEA->navigation.acquireBackgroundConnection(settings.profile);GpsDataSource.SYSTEM->enableSystemGps();GpsDataSource.DEMO->{enableSystemGps();session?.let{active->if(!demoLocation.status.value.running)demoLocation.start(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(active.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,active.alarmRadiusMeters,settings.demoSpeedMultiplier,initialElapsedMillis=restoredDemoElapsed,seed=demoSeed(active))else demoLocation.resume()}}}}
   else if(session?.paused==true&&settings.gpsDataSource==GpsDataSource.DEMO){session?.let{active->if(!demoLocation.status.value.running)demoLocation.start(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(active.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,active.alarmRadiusMeters,settings.demoSpeedMultiplier,initialElapsedMillis=restoredDemoElapsed,seed=demoSeed(active));demoLocation.pause()}}
@@ -122,7 +127,7 @@ class AnchorForegroundService:Service(){
   val horizontalRode=AnchorGeometry.expectedRadius(c.rodeLengthMeters,c.waterDepthMeters,c.bowRollerHeightMeters,c.gpsAntennaOffsetMeters)
   val entity=AnchorSessionEntity(startedAt=wallNow,anchorLatitude=c.latitude,anchorLongitude=c.longitude,rodeLengthMeters=c.rodeLengthMeters,waterDepthMeters=c.waterDepthMeters,bowRollerHeightMeters=c.bowRollerHeightMeters,gpsAntennaOffsetMeters=c.gpsAntennaOffsetMeters,expectedSwingRadiusMeters=horizontalRode,warningRadiusMeters=c.warningRadiusMeters,alarmRadiusMeters=c.alarmRadiusMeters,placementMode=request.placement.name,centerStatus=if(learning)AnchorCenterStatus.LEARNING.name else AnchorCenterStatus.RESOLVED.name,centerResolvedAt=if(learning)null else wallNow,centerConfidence=if(learning)Confidence.LOW.name else Confidence.HIGH.name,centerSampleCount=if(learning)0 else 1,boatLengthMeters=request.boatLength,rangeMode=request.rangeMode.name,safetyPreset=request.safetyPreset.name,learningReferenceLatitude=if(learning)c.latitude else null,learningReferenceLongitude=if(learning)c.longitude else null,provisionalAnchorLatitude=if(learning)c.latitude else null,provisionalAnchorLongitude=if(learning)c.longitude else null,provisionalRadiusMeters=if(learning)maxOf(horizontalRode,c.rodeLengthMeters*.85,25.0) else null,positionSource=positionSource.name,anchorPositionMode=if(learning)AnchorPositionMode.ESTIMATE.name else AnchorPositionMode.KNOWN.name,centerSource=if(learning)AnchorCenterSource.UNKNOWN.name else request.centerSource.name,usePhoneHeading=learning&&request.usePhoneHeading,candidateDecision=CandidateDecision.NONE.name)
   settings=settings.copy(gpsDataSource=positionSource);preferences.save(settings);currentGpsSource=positionSource
-  session=entity.copy(id=dao.insertSession(entity));dao.insertEvent(AlarmEventEntity(sessionId=session!!.id,timestamp=wallNow,type=if(learning)"SESSION_STARTED_CENTER_LEARNING" else "SESSION_STARTED",detail="SOURCE=${positionSource.name};CENTER=${request.centerSource.name}"));backdownSamples.clear();candidateDriftDetector.reset();positionIntegrity.reset();clearPositionDegraded();silence();lastReportedAlarm=null;engine=alarmEngine(settings);lastSnapshot=if(learning)engine.learn(c,now)else engine.arm(c,now);locks(settings.keepWifiAwake);if(positionSource==GpsDataSource.NMEA)navigation.acquireBackgroundConnection(settings.profile);if(learning&&request.usePhoneHeading)phoneHeading.start();val initialFix=if(positionSource==GpsDataSource.DEMO)demoLocation.start(c.latitude,c.longitude,request.placement,settings.demoScenario,c.alarmRadiusMeters,settings.demoSpeedMultiplier,now,seed=demoSeed(session!!))?:latestFix!! else latestFix!!;handleFix(initialFix,positionSource)
+  session=entity.copy(id=dao.insertSession(entity));acceptedPosition.lockSource(session!!.id,positionSource);acceptedPosition.setPhoneHeadingEvidenceEnabled(learning&&request.usePhoneHeading);dao.insertEvent(AlarmEventEntity(sessionId=session!!.id,timestamp=wallNow,type=if(learning)"SESSION_STARTED_CENTER_LEARNING" else "SESSION_STARTED",detail="SOURCE=${positionSource.name};CENTER=${request.centerSource.name}"));backdownSamples.clear();candidateDriftDetector.reset();clearPositionDegraded();silence();lastReportedAlarm=null;engine=alarmEngine(settings);lastSnapshot=if(learning)engine.learn(c,now)else engine.arm(c,now);locks(settings.keepWifiAwake);if(positionSource==GpsDataSource.NMEA)navigation.acquireBackgroundConnection(settings.profile);if(positionSource==GpsDataSource.SYSTEM)phoneMotion.start();if(learning&&request.usePhoneHeading)phoneHeading.start();val initialFix=if(positionSource==GpsDataSource.DEMO)demoLocation.start(c.latitude,c.longitude,request.placement,settings.demoScenario,c.alarmRadiusMeters,settings.demoSpeedMultiplier,now,seed=demoSeed(session!!))?:latestFix!! else latestFix!!;handleFix(initialFix,positionSource)
  }
 
  private suspend fun startProxy()=proxyMutex.withLock{
@@ -140,48 +145,20 @@ class AnchorForegroundService:Service(){
 
  private suspend fun stopProxy(message:String)=proxyMutex.withLock{mockGps.stop(message);preferences.setMockEnabled(false);proxyPolicy=null;notifySeparate("Android GPS restored",message,false);refreshNotification();releaseIfIdle()}
 
- private fun testAlarm(){
-  silence();sound();alarmUi.publish(AlarmSnapshot(AlarmState.ALARM,AlarmType.MOCK_GPS_FAILED));notifySeparate("Alarm test","Sound, vibration and in-app alarm UI are active. They will stop automatically after 8 seconds.",true)
-  scope.launch{delay(8_000);commandMutex.withLock{stopAlarmTest()}}
+ private fun testAlarm(generation:Long){
+  // TEST and STOP arrive as independent service commands. The generation check
+  // prevents a delayed TEST coroutine from starting after the user already
+  // pressed Stop.
+  if(generation!=alarmTestGeneration.get())return
+  if(session?.paused==false&&lastSnapshot?.state==AlarmState.ALARM){notifySeparate("Alarm test unavailable","Handle or snooze the active anchor alarm before testing the sound.",true);releaseIfIdle();return}
+  silence()
+  if(generation!=alarmTestGeneration.get())return
+  sound()
+  if(generation!=alarmTestGeneration.get()){silence();return}
+  alarmUi.publish(AlarmSnapshot(AlarmState.ALARM,AlarmType.ALARM_TEST));notifySeparate("Alarm test","Sound, vibration and in-app alarm UI are active. They will stop automatically after 8 seconds.",true)
+  scope.launch{delay(8_000);commandMutex.withLock{if(alarmTestGeneration.compareAndSet(generation,generation+1))stopAlarmTest()}}
  }
- private fun stopAlarmTest(){silence();if(session==null)alarmUi.clear()else lastSnapshot?.let(alarmUi::publish);getSystemService(NotificationManager::class.java).cancel(EVENT);refreshNotification();releaseIfIdle()}
-
- private suspend fun switchWatchToSystem(disconnectNmea:Boolean,disableDemoMode:Boolean=false){
-  val active=session;val settings=preferences.settings.first();val previousSource=settings.gpsDataSource
-  if(active!=null&&previousSource==GpsDataSource.DEMO){rejectSourceChange(active,"DEMO_TO_SYSTEM","Demo GPS remains locked for this open anchor session. Lift anchor before leaving Demo mode.");return}
-  if(settings.demoMode&&!disableDemoMode){notifySeparate("GPS source not changed","Demo mode locks this App to Demo GPS. Disable Demo mode first.",true);refreshNotification();return}
-  if(previousSource==GpsDataSource.SYSTEM){if(disableDemoMode)preferences.save(settings.copy(demoMode=false));if(disconnectNmea)navigation.disconnectAll();refreshNotification();return}
-  if(previousSource==GpsDataSource.NMEA&&GpsSourceSafety.blocksSystemGps(settings.mockEnabled,mockGps.status.value.state)){notifySeparate("GPS source not changed","Disable the global NMEA GPS proxy before selecting System GPS. Android mock mode replaces the system fused location source.",true);refreshNotification();return}
-  if(!enableSystemGps()){rejectSourceChange(active,"${previousSource.name}_TO_SYSTEM","Precise location permission and an available System GNSS provider are required before switching.");return}
-  val started=SystemClock.elapsedRealtime()
-  val systemFix=withTimeoutOrNull(12_000){systemLocation.fix.filterNotNull().first{fix->fix.valid&&!fix.isMockLocation&&fix.positionProvider==PositionProvider.ANDROID_GNSS&&(fix.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&fix.receivedElapsedRealtime>=started}}
-  if(systemFix==null){rejectSourceChange(active,"${previousSource.name}_TO_SYSTEM","NMEA stayed selected because a fresh, precise System GNSS fix was not available.");releaseIfIdle();return}
-  if(previousSource==GpsDataSource.DEMO)demoLocation.stop()
-  active?.let{current->val updated=current.copy(positionSource=GpsDataSource.SYSTEM.name);session=updated;dao.updateSession(updated);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="WATCH_GPS_SOURCE_CHANGED",detail="${previousSource.name}_TO_SYSTEM"))}
-  currentGpsSource=GpsDataSource.SYSTEM;positionIntegrity.reset();clearPositionDegraded();preferences.save(settings.copy(gpsDataSource=GpsDataSource.SYSTEM,mockEnabled=false,demoMode=if(disableDemoMode)false else settings.demoMode))
-  if(previousSource==GpsDataSource.NMEA&&!sharingEnabled){if(disconnectNmea)navigation.disconnectAll()else navigation.releaseBackgroundConnection()}
-  notifySeparate("GPS source changed","System GNSS is now monitoring the same anchor session; its centre, range and track were preserved.",false);refreshNotification();releaseIfIdle()
- }
-
- private suspend fun switchWatchToNmea(){
-  val active=session;val settings=preferences.settings.first()
-  if(settings.demoMode){notifySeparate("GPS source not changed","Demo mode locks this App to Demo GPS. Lift anchor and disable Demo mode first.",true);refreshNotification();return}
-  if(settings.gpsDataSource==GpsDataSource.NMEA){refreshNotification();return}
-  val previousSource=settings.gpsDataSource
-  val availability=NmeaSourceSelectionPolicy.availability(navigation.connectionState.value,navigation.fix.value,navigation.connectionStartedElapsed.value,SystemClock.elapsedRealtime(),settings.gpsLossSeconds*1000L)
-  if(availability!=NmeaSourceAvailability.AVAILABLE||!navigation.claimBackgroundConnectionIfConnected()){
-   rejectSourceChange(active,"${previousSource.name}_TO_NMEA_${availability.name}","Connect the NMEA source and wait for a fresh valid position before selecting NMEA GPS.");releaseIfIdle();return
-  }
-  val nmeaFix=navigation.fix.value
-  if(nmeaFix==null||!nmeaFix.valid){rejectSourceChange(active,"${previousSource.name}_TO_NMEA_NO_VALID_FIX","NMEA stayed unselected because it did not provide a valid position.");releaseIfIdle();return}
-  active?.let{current->val updated=current.copy(positionSource=GpsDataSource.NMEA.name);session=updated;dao.updateSession(updated);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="WATCH_GPS_SOURCE_CHANGED",detail="${previousSource.name}_TO_NMEA"))}
-  currentGpsSource=GpsDataSource.NMEA;nmeaLossAnnounced=false;if(previousSource==GpsDataSource.DEMO)demoLocation.stop();positionIntegrity.reset();clearPositionDegraded();preferences.save(settings.copy(gpsDataSource=GpsDataSource.NMEA));if(!sharingEnabled)systemLocation.setBackgroundEnabled(false);notifySeparate("GPS source changed","NMEA GPS is now monitoring the same anchor session; its centre, range and track were preserved.",false);refreshNotification();releaseIfIdle()
- }
-
- private suspend fun rejectSourceChange(active:AnchorSessionEntity?,detail:String,message:String){
-  active?.let{dao.insertEvent(AlarmEventEntity(sessionId=it.id,timestamp=System.currentTimeMillis(),type="WATCH_GPS_SOURCE_CHANGE_REJECTED",detail=detail))}
-  notifySeparate("GPS source not changed",message,true);refreshNotification()
- }
+ private fun stopAlarmTest(){silence();val restore=lastSnapshot;if(session==null||restore==null)alarmUi.clear()else alarmUi.publish(restore);getSystemService(NotificationManager::class.java).cancel(EVENT);refreshNotification();releaseIfIdle()}
 
  private suspend fun stopWatchAndDisconnect(){
   val wasActive=session!=null
@@ -192,7 +169,7 @@ class AnchorForegroundService:Service(){
 
  private suspend fun handleNmeaState(state:NmeaConnectionState){
   val watchingNmea=session?.paused==false&&currentGpsSource==GpsDataSource.NMEA
-  val lost=state==NmeaConnectionState.ERROR||state==NmeaConnectionState.DISCONNECTED||state==NmeaConnectionState.RECONNECTING
+  val lost=state in setOf(NmeaConnectionState.ERROR,NmeaConnectionState.DISCONNECTED,NmeaConnectionState.RECONNECTING,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
   if(watchingNmea&&lost&&!nmeaLossAnnounced){
    nmeaLossAnnounced=true
    logEvent("NMEA_CONNECTION_LOST",state.name)
@@ -205,15 +182,8 @@ class AnchorForegroundService:Service(){
  private suspend fun handleFix(rawFix:NavigationFix,source:GpsDataSource){
   val locked=session?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
   if(locked!=null&&locked!=source)return
-  phoneHeading.setPosition(rawFix.latitude,rawFix.longitude,rawFix.altitudeMeters,rawFix.timestampUtcMillis)
-  val phone=phoneHeading.sample.value
-  val usePhone=session?.usePhoneHeading==true&&rawFix.headingTrueDegrees==null
-  val fix=if(usePhone)rawFix.copy(headingTrueDegrees=phone.trueHeadingDegrees,headingSource=if(phone.trueHeadingDegrees!=null)HeadingSource.PHONE else HeadingSource.NONE,headingQuality=phone.quality,headingEpoch=phone.epoch,headingSampleSequence=phone.sequence)else rawFix
-  when(val decision=positionIntegrity.evaluate(fix)){
-   is PositionIntegrityResult.Rejected->{markPositionDegraded(decision.fix.receivedElapsedRealtime,decision.reason);logEvent("GPS_FIX_REJECTED",decision.reason);return}
-   is PositionIntegrityResult.Quarantined->{markPositionDegraded(decision.fix.receivedElapsedRealtime,decision.reason);logEvent("GPS_SPIKE_QUARANTINED",decision.reason);return}
-   is PositionIntegrityResult.Accepted->decision.fixes.forEach{processAcceptedFix(it,source)}
-  }
+  acceptedPosition.setPhoneHeadingEvidenceEnabled(session?.usePhoneHeading==true)
+  acceptedPosition.submit(source,rawFix)
  }
 
  private suspend fun processAcceptedFix(accepted:IntegrityAcceptedFix,source:GpsDataSource){
@@ -231,13 +201,20 @@ class AnchorForegroundService:Service(){
     lastTrack=pointTime
     dao.insertPoint(TrackPointEntity(sessionId=activeSession.id,timestamp=pointTime,latitude=fix.latitude,longitude=fix.longitude,distanceFromAnchor=snapshot.distanceMeters?:0.0,sog=fix.sogKnots,cog=fix.cogTrueDegrees,heading=fix.headingTrueDegrees,hdop=fix.hdop,windDirectionTrue=fix.windDirectionTrueDegrees,windSpeedKnots=fix.windSpeedKnots,apparentWindAngle=fix.apparentWindAngleDegrees,trueWindAngle=fix.trueWindAngleDegrees,trueWindSpeedKnots=fix.trueWindSpeedKnots,apparentWindSpeedKnots=fix.apparentWindSpeedKnots,headingMeasured=fix.headingTrueDegrees!=null,headingSampleSequence=fix.headingSampleSequence,windSampleSequence=fix.windSampleSequence,positionSource=source.name,positionProvider=fix.positionProvider.name,horizontalAccuracyMeters=fix.horizontalAccuracyMeters,fixTrust=accepted.trust.name,wasQuarantined=accepted.wasQuarantined,quarantineReason=accepted.reason,headingSource=fix.headingSource.name,headingQuality=fix.headingQuality.name,headingEpoch=fix.headingEpoch))
     if(activeSession.anchorPositionMode==AnchorPositionMode.ESTIMATE.name){
-     backdownSamples+=BackdownCenterEstimator.Sample(latitude=fix.latitude,longitude=fix.longitude,timestamp=pointTime,hdop=fix.hdop,headingTrueDegrees=fix.headingTrueDegrees,cogTrueDegrees=fix.cogTrueDegrees,sogKnots=fix.sogKnots,windDirectionTrueDegrees=fix.windDirectionTrueDegrees,windSpeedKnots=fix.windSpeedKnots,apparentWindAngleDegrees=fix.apparentWindAngleDegrees,trueWindAngleDegrees=fix.trueWindAngleDegrees,trueWindSpeedKnots=fix.trueWindSpeedKnots,apparentWindSpeedKnots=fix.apparentWindSpeedKnots,headingSampleSequence=fix.headingSampleSequence,windSampleSequence=fix.windSampleSequence)
-     updateEstimatedCandidate(backdownEstimator.provisionalEstimate(backdownSamples,activeSession.expectedSwingRadiusMeters))
+     backdownSamples+=BackdownCenterEstimator.Sample(latitude=fix.latitude,longitude=fix.longitude,timestamp=pointTime,hdop=fix.hdop,horizontalAccuracyMeters=fix.horizontalAccuracyMeters,positionProvider=fix.positionProvider,fixTrust=accepted.trust,headingTrueDegrees=fix.headingTrueDegrees,cogTrueDegrees=fix.cogTrueDegrees,sogKnots=fix.sogKnots,windDirectionTrueDegrees=fix.windDirectionTrueDegrees,windSpeedKnots=fix.windSpeedKnots,apparentWindAngleDegrees=fix.apparentWindAngleDegrees,trueWindAngleDegrees=fix.trueWindAngleDegrees,trueWindSpeedKnots=fix.trueWindSpeedKnots,apparentWindSpeedKnots=fix.apparentWindSpeedKnots,headingSampleSequence=fix.headingSampleSequence,windSampleSequence=fix.windSampleSequence)
+     compressBackdownHistory()
+     if(pointTime-lastEstimateAt>=10_000L&&backdownSamples.size-lastEstimateSampleCount>=5){lastEstimateAt=pointTime;lastEstimateSampleCount=backdownSamples.size;updateEstimatedCandidate(backdownEstimator.provisionalEstimate(backdownSamples,activeSession.expectedSwingRadiusMeters))}
     }
    }
    updateAlarm(snapshot)
   }
   if(source==GpsDataSource.NMEA&&mockGps.status.value.state==MockGpsState.ACTIVE){val now=SystemClock.elapsedRealtime();if(proxyPolicy?.onValidFix(now)==true){val result=mockGps.publish(fix);if(result.isFailure){logEvent("MOCK_GPS_FAILED",result.exceptionOrNull()?.message?:"");stopProxy("NMEA injection failed — Android GPS restored.")}}}
+ }
+
+ private fun compressBackdownHistory(){
+  if(backdownSamples.size<=8_000)return
+  val recent=backdownSamples.takeLast(3_600);val old=backdownSamples.dropLast(3_600).filterIndexed{index,_->index%5==0}
+  backdownSamples.clear();backdownSamples.addAll((old+recent).sortedBy{it.timestamp});lastEstimateSampleCount=lastEstimateSampleCount.coerceAtMost(backdownSamples.size)
  }
 
  private suspend fun updateEstimatedCandidate(estimate:BackdownAnchorEstimate?){
@@ -287,21 +264,42 @@ class AnchorForegroundService:Service(){
  private suspend fun acceptEstimatedCenter(sessionId:Long,candidateId:Long){
   val current=session
   if(current==null||current.id!=sessionId||current.candidateId!=candidateId||current.candidateDecision!=CandidateDecision.AVAILABLE.name||current.provisionalAnchorLatitude==null||current.provisionalAnchorLongitude==null){logEvent("ANCHOR_CENTER_ACCEPT_REJECTED","STALE_CANDIDATE");return}
-  if(lastSnapshot?.state==AlarmState.ALARM){notifySeparate("Estimated centre not applied","Handle or pause the active alarm before changing its centre.",true);return}
+  if(lastSnapshot?.state in setOf(AlarmState.WARNING,AlarmState.ALARM,AlarmState.ACKNOWLEDGED)){notifySeparate("Estimated centre not applied","Return inside the warning boundary or pause the watch before changing its centre.",true);return}
   val now=System.currentTimeMillis();val updated=current.copy(anchorLatitude=current.provisionalAnchorLatitude,anchorLongitude=current.provisionalAnchorLongitude,centerStatus=AnchorCenterStatus.RESOLVED.name,centerResolvedAt=now,centerConfidence=Confidence.HIGH.name,centerSource=AnchorCenterSource.ESTIMATED_USER_ACCEPTED.name,anchorPositionMode=AnchorPositionMode.KNOWN.name,candidateDecision=CandidateDecision.ACCEPTED.name,provisionalAnchorLatitude=null,provisionalAnchorLongitude=null,provisionalRadiusMeters=null,usePhoneHeading=false,alarmSnoozedUntil=null)
-  session=updated;dao.updateSession(updated);phoneHeading.stop();engine=alarmEngine(preferences.settings.first());lastSnapshot=engine.arm(updated.config(),SystemClock.elapsedRealtime());alarmUi.publish(lastSnapshot!!);silence();dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=now,type="ANCHOR_CENTER_ACCEPTED_BY_USER",detail="candidate=$candidateId;radius=${updated.alarmRadiusMeters}"));refreshNotification()
+  session=updated;dao.updateSession(updated);phoneHeading.stop();acceptedPosition.setPhoneHeadingEvidenceEnabled(false);engine=alarmEngine(preferences.settings.first());lastSnapshot=engine.arm(updated.config(),SystemClock.elapsedRealtime());alarmUi.publish(lastSnapshot!!);silence();dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=now,type="ANCHOR_CENTER_ACCEPTED_BY_USER",detail="candidate=$candidateId;radius=${updated.alarmRadiusMeters}"));refreshNotification()
  }
 
- private suspend fun rejectEstimatedCenter(sessionId:Long,candidateId:Long){
+ private suspend fun keepCurrentCenter(sessionId:Long,candidateId:Long){
   val current=session
-  if(current==null||current.id!=sessionId||current.candidateId!=candidateId||current.candidateDecision!=CandidateDecision.AVAILABLE.name){logEvent("ANCHOR_CENTER_REJECT_REJECTED","STALE_CANDIDATE");return}
-  val updated=current.copy(centerStatus=if(current.centerSource==AnchorCenterSource.ESTIMATED_USER_ACCEPTED.name)AnchorCenterStatus.RESOLVED.name else AnchorCenterStatus.LEARNING.name,candidateDecision=CandidateDecision.REJECTED.name)
-  session=updated;dao.updateSession(updated);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="ANCHOR_CENTER_CANDIDATE_REJECTED",detail="candidate=$candidateId"));refreshNotification()
+  if(current==null||current.id!=sessionId||current.candidateId!=candidateId||current.candidateDecision!=CandidateDecision.AVAILABLE.name){logEvent("ANCHOR_CENTER_KEEP_CURRENT_REJECTED","STALE_CANDIDATE");return}
+  if(lastSnapshot?.state in setOf(AlarmState.WARNING,AlarmState.ALARM,AlarmState.ACKNOWLEDGED)){notifySeparate("Centre decision not applied","Return inside the warning boundary or pause the watch first.",true);return}
+  val now=System.currentTimeMillis();val updated=current.copy(centerStatus=AnchorCenterStatus.RESOLVED.name,centerResolvedAt=now,centerConfidence=Confidence.LOW.name,centerSource=AnchorCenterSource.CURRENT_POSITION.name,anchorPositionMode=AnchorPositionMode.KNOWN.name,candidateDecision=CandidateDecision.REJECTED.name,provisionalAnchorLatitude=null,provisionalAnchorLongitude=null,provisionalRadiusMeters=null,usePhoneHeading=false)
+  session=updated;dao.updateSession(updated);phoneHeading.stop();acceptedPosition.setPhoneHeadingEvidenceEnabled(false);engine=alarmEngine(preferences.settings.first());lastSnapshot=engine.arm(updated.config(),SystemClock.elapsedRealtime());dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=now,type="ANCHOR_CENTER_CURRENT_KEPT",detail="candidate=$candidateId;estimator=stopped"));refreshNotification()
+ }
+
+ private suspend fun continueEstimatingCenter(sessionId:Long,candidateId:Long){
+  val current=session
+  if(current==null||current.id!=sessionId||current.candidateId!=candidateId||current.candidateDecision!=CandidateDecision.AVAILABLE.name){logEvent("ANCHOR_CENTER_CONTINUE_REJECTED","STALE_CANDIDATE");return}
+  val updated=current.copy(centerStatus=AnchorCenterStatus.LEARNING.name,candidateId=null,candidateCreatedAt=null,candidateDecision=CandidateDecision.NONE.name,candidateNotificationShown=false)
+  session=updated;dao.updateSession(updated);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="ANCHOR_CENTER_ESTIMATION_CONTINUED",detail="previousCandidate=$candidateId"));refreshNotification()
+ }
+
+ private suspend fun updatePhoneHeading(enabled:Boolean){
+  val current=session?:return
+  if(current.anchorPositionMode!=AnchorPositionMode.ESTIMATE.name||current.centerStatus==AnchorCenterStatus.RESOLVED.name){notifySeparate("Phone heading not changed","Phone heading is only estimator evidence while an anchor centre is still being learned.",false);return}
+  if(current.usePhoneHeading==enabled)return
+  if(enabled&&!phoneHeading.isAvailable()){notifySeparate("Phone heading unavailable","This device does not provide a compatible rotation sensor. GPS and wind estimation continue normally.",true);return}
+  if(enabled&&!current.paused&&!phoneHeading.start()){notifySeparate("Phone heading unavailable","Android could not start the phone orientation sensor. Existing estimator evidence was preserved.",true);return}
+  if(!enabled)phoneHeading.stop()
+  val updated=current.copy(usePhoneHeading=enabled);session=updated;dao.updateSession(updated)
+  dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type=if(enabled)"PHONE_HEADING_ENABLED" else "PHONE_HEADING_DISABLED",detail="HISTORICAL_EVIDENCE_RETAINED"))
+  notifySeparate(if(enabled)"Phone heading enabled" else "Phone heading disabled",if(enabled)"New stable phone-heading samples will assist the estimate in a new calibration epoch; existing samples remain available." else "No new phone-heading samples will be added; samples already used by this session remain available to the estimator.",false)
+  refreshNotification()
  }
 
  private suspend fun configureSharing(enabled:Boolean,port:Int,source:GpsDataSource){
-  sharingEnabled=enabled;sharingSource=source;sharingPositionIntegrity.reset()
-  if(enabled){sharingServer.start(port);val settings=preferences.settings.first();val local=networkAddresses.localAddresses();val literalLoop=NmeaSelfLoopPolicy.isLiteralLoop(settings.profile,true,port,local);val resolvedLoop=if(settings.profile.protocol==com.yokuli.anchorwatch.data.nmea.Protocol.TCP&&settings.profile.port==port)runCatching{val address=java.net.InetAddress.getByName(settings.profile.host);address.isLoopbackAddress||address.isAnyLocalAddress||local.any{it.substringBefore('%')==address.hostAddress?.substringBefore('%')}}.getOrDefault(false)else false;if(!literalLoop&&!resolvedLoop)navigation.acquireBackgroundConnection(settings.profile)else notifySeparate("NMEA input blocked",NmeaSelfLoopPolicy.MESSAGE,true);if(source==GpsDataSource.SYSTEM)enableSystemGps()else if(session?.positionSource!=GpsDataSource.SYSTEM.name)systemLocation.setBackgroundEnabled(false);locks(settings.keepWifiAwake)}
+  sharingEnabled=enabled;sharingSource=session?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}?:source
+  if(enabled){sharingServer.start(port);val settings=preferences.settings.first();if(sharingSource==GpsDataSource.SYSTEM)enableSystemGps()else if(navigation.connectionState.value!=NmeaConnectionState.CONNECTED)notifySeparate("NMEA Sharing waiting for input","Sharing will not connect a saved NMEA endpoint automatically. Open the NMEA connection when you want to publish boat data.",false);locks(settings.keepWifiAwake)}
   else{sharingServer.stop();if(currentGpsSource!=GpsDataSource.NMEA&&mockGps.status.value.state!=MockGpsState.ACTIVE)navigation.releaseBackgroundConnection();releaseIfIdle()}
   refreshNotification()
  }
@@ -313,7 +311,7 @@ class AnchorForegroundService:Service(){
  }
 
  private suspend fun batteryWatchdog(){
-  if(session?.paused!=false&&mockGps.status.value.state!=MockGpsState.ACTIVE)return
+  if(session?.paused!=false&&mockGps.status.value.state!=MockGpsState.ACTIVE&&!sharingEnabled&&sonarRecorder.status.value.activeSurvey==null)return
   val percent=getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
   if(percent in 0..15&&!lowBatteryReported){lowBatteryReported=true;notifySeparate("Low battery: $percent%","Connect this monitoring device to reliable power.",true);logEvent("LOW_BATTERY","$percent")}
   if(percent>20)lowBatteryReported=false
@@ -359,6 +357,7 @@ class AnchorForegroundService:Service(){
    active!=null->l("Watch ${snapshot?.distanceMeters?.toInt()?:"--"} m • NMEA ${navigation.connectionState.value.name}","锚警 ${snapshot?.distanceMeters?.toInt()?:"--"} 米 · NMEA ${navigation.connectionState.value.name}")
    proxy.state==MockGpsState.ACTIVE->l("NMEA → Android GPS active • ${proxy.publishedFixes} fixes","NMEA → Android GPS 已开启 · ${proxy.publishedFixes} 个定位点")
    sharingEnabled->l("NMEA Sharing • ${sharingServer.status.value.clientCount} clients • port ${sharingServer.status.value.port}","NMEA 共享 · ${sharingServer.status.value.clientCount} 个客户端 · 端口 ${sharingServer.status.value.port}")
+   sonarRecorder.status.value.activeSurvey!=null->l("Sonar survey recording • ${sonarRecorder.status.value.activeSurvey?.sampleCount?:0} samples","声呐调查记录中 · ${sonarRecorder.status.value.activeSurvey?.sampleCount?:0} 个样本")
    else->l("Safety monitor idle","安全监控待命")
   }
   val text=if(snoozed&&alarmCondition)l("$base • snoozed, remind in ${remaining}m","$base · 已暂停响铃，${remaining} 分钟后再次提醒") else base
@@ -384,7 +383,7 @@ class AnchorForegroundService:Service(){
   val player=MediaPlayer()
   return runCatching{player.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());if(uri.scheme=="file")player.setDataSource(requireNotNull(uri.path))else player.setDataSource(this,uri);player.isLooping=true;player.prepare();player.start();alarmPlayer=player;true}.getOrElse{runCatching{player.release()};false}
  }
- private fun silence(){alarmPlayer?.release();alarmPlayer=null;getSystemService(Vibrator::class.java).cancel()}
+ private fun silence(){val player=alarmPlayer;alarmPlayer=null;runCatching{if(player?.isPlaying==true)player.stop()};runCatching{player?.reset()};runCatching{player?.release()};getSystemService(Vibrator::class.java).cancel()}
  private suspend fun snoozeAlarm(){
   val current=session?:return
   if(current.paused||lastSnapshot?.type==null)return
@@ -397,7 +396,7 @@ class AnchorForegroundService:Service(){
   val current=session?:return
   if(current.paused)return
   val updated=current.copy(paused=true,alarmSnoozedUntil=null);session=updated;dao.updateSession(updated);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="SESSION_PAUSED"))
-  if(currentGpsSource==GpsDataSource.DEMO)demoLocation.pause();phoneHeading.stop()
+  if(currentGpsSource==GpsDataSource.DEMO)demoLocation.pause();phoneHeading.stop();phoneMotion.stop()
   engine.stop();lastSnapshot=AlarmSnapshot(AlarmState.STOPPED);alarmUi.clear();lastReportedAlarm=null;nmeaLossAnnounced=false;clearPositionDegraded();silence();getSystemService(NotificationManager::class.java).cancel(EVENT);refreshNotification();releaseIfIdle()
  }
  private suspend fun resumeWatch(){
@@ -411,25 +410,30 @@ class AnchorForegroundService:Service(){
    GpsDataSource.DEMO->{if(!enableSystemGps())null else demoLocation.resume()?:demoLocation.start(current.learningReferenceLatitude?:current.anchorLatitude,current.learningReferenceLongitude?:current.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(current.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,current.alarmRadiusMeters,settings.demoSpeedMultiplier,seed=demoSeed(current))}
   }
   if(fix==null){notifySeparate("Anchor watch remains paused","A fresh ${when(settings.gpsDataSource){GpsDataSource.NMEA->"NMEA";GpsDataSource.SYSTEM->"System";GpsDataSource.DEMO->"Demo"}} GPS position is required before resuming.",true);session=current;releaseIfIdle();return}
-  val resumedAt=SystemClock.elapsedRealtime();val updated=current.copy(paused=false,alarmSnoozedUntil=null);session=updated;dao.updateSession(updated);positionIntegrity.reset();clearPositionDegraded();if(updated.usePhoneHeading)phoneHeading.start();engine=alarmEngine(settings);lastSnapshot=if(updated.centerStatus!=AnchorCenterStatus.RESOLVED.name)engine.learn(updated.learningConfig(),resumedAt)else engine.arm(updated.config(),resumedAt);handleFix(fix,settings.gpsDataSource);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="SESSION_RESUMED"));notifySeparate("Anchor watch resumed","The existing anchor centre, track and alarm range were preserved.",false)
+  val resumedAt=SystemClock.elapsedRealtime();val updated=current.copy(paused=false,alarmSnoozedUntil=null);session=updated;dao.updateSession(updated);currentGpsSource=runCatching{GpsDataSource.valueOf(updated.positionSource)}.getOrDefault(settings.gpsDataSource);acceptedPosition.lockSource(updated.id,currentGpsSource);acceptedPosition.setPhoneHeadingEvidenceEnabled(updated.usePhoneHeading);clearPositionDegraded();if(currentGpsSource==GpsDataSource.SYSTEM)phoneMotion.start();if(updated.usePhoneHeading)phoneHeading.start();engine=alarmEngine(settings);lastSnapshot=if(updated.centerStatus!=AnchorCenterStatus.RESOLVED.name)engine.learn(updated.learningConfig(),resumedAt)else engine.arm(updated.config(),resumedAt);handleFix(fix,currentGpsSource);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="SESSION_RESUMED"));notifySeparate("Anchor watch resumed","The existing anchor centre, track and alarm range were preserved.",false)
  }
  private suspend fun liftAnchor(){
-  val current=session?:dao.active()?:return;val now=System.currentTimeMillis();dao.insertEvent(AlarmEventEntity(sessionId=current.id,timestamp=now,type="ANCHOR_LIFTED"));dao.updateSession(current.copy(active=false,paused=false,endedAt=now,alarmSnoozedUntil=null));if(currentGpsSource==GpsDataSource.DEMO)demoLocation.stop();phoneHeading.stop();session=null;backdownSamples.clear();candidateDriftDetector.reset();positionIntegrity.reset();clearPositionDegraded();engine.stop();lastSnapshot=null;alarmUi.clear();lastReportedAlarm=null;nmeaLossAnnounced=false;silence();getSystemService(NotificationManager::class.java).cancel(EVENT);refreshNotification();releaseIfIdle()
+  val current=session?:dao.active()?:return;val now=System.currentTimeMillis();dao.insertEvent(AlarmEventEntity(sessionId=current.id,timestamp=now,type="ANCHOR_LIFTED"));dao.updateSession(current.copy(active=false,paused=false,endedAt=now,alarmSnoozedUntil=null));if(currentGpsSource==GpsDataSource.DEMO)demoLocation.stop();phoneHeading.stop();phoneMotion.stop();acceptedPosition.unlockSource(current.id);session=null;backdownSamples.clear();candidateDriftDetector.reset();clearPositionDegraded();engine.stop();lastSnapshot=null;alarmUi.clear();lastReportedAlarm=null;nmeaLossAnnounced=false;silence();getSystemService(NotificationManager::class.java).cancel(EVENT);refreshNotification();releaseIfIdle()
  }
  private suspend fun updateWatchSettings(intent:Intent){
   val current=session?:return;val wasAlarm=lastSnapshot?.state==AlarmState.ALARM;val alarm=intent.getDoubleExtra("alarm",current.alarmRadiusMeters).takeIf{it>0}?:return;val warning=maxOf(alarm*.8,alarm-10).coerceAtMost(alarm-.1)
   val settings=preferences.settings.first();val snoozedUntil=if(wasAlarm||lastSnapshot?.state==AlarmState.ACKNOWLEDGED)AlarmReminderPolicy.snoozeUntil(System.currentTimeMillis(),settings.alarmSnoozeMinutes)else null
   val updated=current.copy(alarmRadiusMeters=alarm,warningRadiusMeters=warning,alarmSnoozedUntil=snoozedUntil)
   session=updated;dao.updateSession(updated);silence();lastReportedAlarm=null
-  if(!updated.paused){val resetAt=SystemClock.elapsedRealtime();engine=alarmEngine(settings);lastSnapshot=if(updated.centerStatus!=AnchorCenterStatus.RESOLVED.name)engine.learn(updated.learningConfig(),resetAt)else engine.arm(updated.config(),resetAt);positionIntegrity.reset();clearPositionDegraded();val fix=when(settings.gpsDataSource){GpsDataSource.NMEA->navigation.fix.value;GpsDataSource.SYSTEM->systemLocation.fix.value;GpsDataSource.DEMO->demoLocation.fix.value};val lastFix=if(settings.gpsDataSource==GpsDataSource.NMEA)navigation.diagnostics.value.lastFixElapsed else fix?.receivedElapsedRealtime;if(fix?.valid==true&&lastFix!=null&&resetAt-lastFix<settings.gpsLossSeconds*1000L)handleFix(fix,settings.gpsDataSource)}
+  if(!updated.paused){val resetAt=SystemClock.elapsedRealtime();engine=alarmEngine(settings);lastSnapshot=if(updated.centerStatus!=AnchorCenterStatus.RESOLVED.name)engine.learn(updated.learningConfig(),resetAt)else engine.arm(updated.config(),resetAt);clearPositionDegraded();acceptedPosition.state.value.acceptedFix?.let{fix->lastSnapshot=engine.onFix(fix,resetAt);updateAlarm(lastSnapshot!!)}}
   dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="ALARM_RANGE_CHANGED",detail="${current.alarmRadiusMeters.toInt()}m_TO_${alarm.toInt()}m"));if(wasAlarm&&lastSnapshot?.state!=AlarmState.ALARM)dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=System.currentTimeMillis(),type="ALARM_CLEARED_BY_RANGE_CHANGE",detail="${alarm.toInt()}m"));notifySeparate("Anchor range updated","Alarm radius is now ${alarm.toInt()} m for this session.",false);refreshNotification();releaseIfIdle()
  }
  private fun enableSystemGps():Boolean{if(ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)return false;val ready=runCatching{ServiceCompat.startForeground(this,ONGOING,notification("System GPS anchor monitoring…",false),ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)}.isSuccess;if(ready)systemLocation.setBackgroundEnabled(true);return ready}
- private fun releaseIfIdle(){if(session?.paused!=false&&mockGps.status.value.state!=MockGpsState.ACTIVE&&!sharingEnabled&&!armPending){wake?.takeIf{it.isHeld}?.release();wifi?.takeIf{it.isHeld}?.release();wake=null;wifi=null;navigation.releaseBackgroundConnection();systemLocation.setBackgroundEnabled(false);stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}}
+ private suspend fun startSonarSurvey(intent:Intent){
+  val settings=preferences.settings.first();if(settings.demoMode){notifySeparate("Sonar survey not started","Disable Demo mode before recording real personal soundings.",true);releaseIfIdle();return};locks(true);navigation.acquireBackgroundConnection(settings.profile);if(settings.gpsDataSource!=GpsDataSource.NMEA)enableSystemGps()
+  sonarRecorder.start(intent.getStringExtra("name")?:"Sonar survey",enumExtra(intent,"tideMode",TideMode.OFF),intent.getDoubleExtra("manualTideOffset",0.0),settings.transducerDraftMeters,settings.keelOffsetMeters,settings.gpsToTransducerMeters,settings.depthReference)
+  refreshNotification()
+ }
+ private fun releaseIfIdle(){if(session?.paused!=false&&mockGps.status.value.state!=MockGpsState.ACTIVE&&!sharingEnabled&&sonarRecorder.status.value.activeSurvey==null&&!armPending){wake?.takeIf{it.isHeld}?.release();wifi?.takeIf{it.isHeld}?.release();wake=null;wifi=null;navigation.releaseBackgroundConnection();systemLocation.setBackgroundEnabled(false);stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}}
  private suspend fun logEvent(type:String,detail:String){session?.let{dao.insertEvent(AlarmEventEntity(sessionId=it.id,timestamp=System.currentTimeMillis(),type=type,detail=detail))}}
  private fun alarmEngine(settings:com.yokuli.anchorwatch.data.preferences.AppSettings)=AlarmEngine(settings.alarmPersistenceSeconds*1000L,gpsLossMillis=settings.gpsLossSeconds*1000L)
- private fun cleanup(){silence();wake?.takeIf{it.isHeld}?.release();wifi?.takeIf{it.isHeld}?.release();wake=null;wifi=null}
- override fun onDestroy(){sharingServer.stop();scope.cancel();navigation.releaseBackgroundConnection();systemLocation.setBackgroundEnabled(false);phoneHeading.stop();if(mockGps.status.value.state==MockGpsState.ACTIVE||mockGps.status.value.state==MockGpsState.STARTING)runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){mockGps.stop()}};cleanup();super.onDestroy()};override fun onBind(intent:Intent?)=null
+ private fun cleanup(){alarmTestGeneration.incrementAndGet();silence();wake?.takeIf{it.isHeld}?.release();wifi?.takeIf{it.isHeld}?.release();wake=null;wifi=null}
+ override fun onDestroy(){sharingServer.stop();scope.cancel();navigation.releaseBackgroundConnection();systemLocation.setBackgroundEnabled(false);phoneHeading.stop();phoneMotion.stop();if(mockGps.status.value.state==MockGpsState.ACTIVE||mockGps.status.value.state==MockGpsState.STARTING)runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){mockGps.stop()}};cleanup();super.onDestroy()};override fun onBind(intent:Intent?)=null
  private fun channels(){getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(NotificationChannel(STATUS_CH,l("Anchor and GPS status","锚警与 GPS 状态"),NotificationManager.IMPORTANCE_LOW),NotificationChannel(EVENT_CH,l("Anchor safety events","锚泊安全事件"),NotificationManager.IMPORTANCE_DEFAULT),NotificationChannel(ALARM_CH,l("Anchor alarms with snooze","带稍后提醒的锚警"),NotificationManager.IMPORTANCE_HIGH).apply{setSound(null,null);enableVibration(false)}))}
  private fun l(english:String,chinese:String)=localized(appLanguage,english,chinese)
  private fun demoSeed(active:AnchorSessionEntity)=active.startedAt xor (active.id shl 17)
@@ -485,11 +489,20 @@ class AnchorForegroundService:Service(){
    message=="Anchor range not updated"->"锚警范围未更新"
    message.startsWith("The selected setup still requires valid water depth")->"当前设置仍需要有效的水深、锚链、船艏高度和船长。"
    message.startsWith("Alarm radius is now ")->message.replace("Alarm radius is now ","本次会话的报警半径现为 ").replace(" m for this session."," 米。")
+   message=="Phone heading enabled"->"手机船首向证据已开启"
+   message=="Phone heading disabled"->"手机船首向证据已关闭"
+   message=="Phone heading unavailable"->"手机船首向不可用"
+   message=="Phone heading not changed"->"手机船首向设置未改变"
+   message.startsWith("New stable phone-heading samples")->"新的稳定手机船首向样本会在新的校准批次中辅助估算；已有样本会继续保留。"
+   message.startsWith("No new phone-heading samples")->"不会再加入新的手机船首向样本；本会话已使用的样本仍保留在估算器中。"
+   message.startsWith("This device does not provide a compatible rotation sensor")->"此设备没有兼容的旋转传感器；GPS 与风向估算会继续正常工作。"
+   message.startsWith("Android could not start the phone orientation sensor")->"Android 无法启动手机方向传感器；已有估算证据已保留。"
+   message.startsWith("Phone heading is only estimator evidence")->"手机船首向只在锚点中心仍处于学习阶段时作为估算辅助证据。"
    else->message
   }
  }
  private fun AnchorSessionEntity.config()=AnchorConfig(anchorLatitude,anchorLongitude,rodeLengthMeters,waterDepthMeters,bowRollerHeightMeters,gpsAntennaOffsetMeters,warningRadiusMeters,alarmRadiusMeters)
  private fun AnchorSessionEntity.learningConfig()=AnchorConfig(learningReferenceLatitude?:anchorLatitude,learningReferenceLongitude?:anchorLongitude,rodeLengthMeters,waterDepthMeters,bowRollerHeightMeters,gpsAntennaOffsetMeters,warningRadiusMeters,alarmRadiusMeters)
  private inline fun <reified T:Enum<T>>enumExtra(intent:Intent,key:String,default:T)=runCatching{enumValueOf<T>(intent.getStringExtra(key)?:default.name)}.getOrDefault(default)
- companion object{const val ARM="com.yokuli.anchorwatch.ARM";const val ACK="com.yokuli.anchorwatch.ACK";const val SNOOZE="com.yokuli.anchorwatch.SNOOZE";const val STOP_WATCH="com.yokuli.anchorwatch.STOP_WATCH";const val PAUSE_WATCH="com.yokuli.anchorwatch.PAUSE_WATCH";const val RESUME_WATCH="com.yokuli.anchorwatch.RESUME_WATCH";const val LIFT_ANCHOR="com.yokuli.anchorwatch.LIFT_ANCHOR";const val UPDATE_RADIUS="com.yokuli.anchorwatch.UPDATE_RADIUS";const val STOP_WATCH_AND_DISCONNECT="com.yokuli.anchorwatch.STOP_WATCH_AND_DISCONNECT";const val SWITCH_WATCH_TO_SYSTEM="com.yokuli.anchorwatch.SWITCH_WATCH_TO_SYSTEM";const val SWITCH_WATCH_SOURCE_SYSTEM="com.yokuli.anchorwatch.SWITCH_WATCH_SOURCE_SYSTEM";const val SWITCH_WATCH_SOURCE_NMEA="com.yokuli.anchorwatch.SWITCH_WATCH_SOURCE_NMEA";const val ACCEPT_ESTIMATED_CENTER="com.yokuli.anchorwatch.ACCEPT_ESTIMATED_CENTER";const val REJECT_ESTIMATED_CENTER="com.yokuli.anchorwatch.REJECT_ESTIMATED_CENTER";const val DISABLE_DEMO_TO_SYSTEM="com.yokuli.anchorwatch.DISABLE_DEMO_TO_SYSTEM";const val START_PROXY="com.yokuli.anchorwatch.START_PROXY";const val STOP_PROXY="com.yokuli.anchorwatch.STOP_PROXY";const val TEST_ALARM="com.yokuli.anchorwatch.TEST_ALARM";const val STOP_ALARM_TEST="com.yokuli.anchorwatch.STOP_ALARM_TEST";const val SET_NMEA_SHARING="com.yokuli.anchorwatch.SET_NMEA_SHARING";const val STATUS_CH="anchor_status";const val EVENT_CH="anchor_events_v2";const val ALARM_CH="anchor_alarm_selectable_v2";const val ONGOING=42;const val EVENT=43}
+ companion object{const val ARM="com.yokuli.anchorwatch.ARM";const val ACK="com.yokuli.anchorwatch.ACK";const val SNOOZE="com.yokuli.anchorwatch.SNOOZE";const val STOP_WATCH="com.yokuli.anchorwatch.STOP_WATCH";const val PAUSE_WATCH="com.yokuli.anchorwatch.PAUSE_WATCH";const val RESUME_WATCH="com.yokuli.anchorwatch.RESUME_WATCH";const val LIFT_ANCHOR="com.yokuli.anchorwatch.LIFT_ANCHOR";const val UPDATE_RADIUS="com.yokuli.anchorwatch.UPDATE_RADIUS";const val STOP_WATCH_AND_DISCONNECT="com.yokuli.anchorwatch.STOP_WATCH_AND_DISCONNECT";const val ACCEPT_ESTIMATED_CENTER="com.yokuli.anchorwatch.ACCEPT_ESTIMATED_CENTER";const val KEEP_CURRENT_CENTER="com.yokuli.anchorwatch.KEEP_CURRENT_CENTER";const val CONTINUE_ESTIMATING_CENTER="com.yokuli.anchorwatch.CONTINUE_ESTIMATING_CENTER";const val UPDATE_PHONE_HEADING="com.yokuli.anchorwatch.UPDATE_PHONE_HEADING";const val START_PROXY="com.yokuli.anchorwatch.START_PROXY";const val STOP_PROXY="com.yokuli.anchorwatch.STOP_PROXY";const val TEST_ALARM="com.yokuli.anchorwatch.TEST_ALARM";const val STOP_ALARM_TEST="com.yokuli.anchorwatch.STOP_ALARM_TEST";const val SET_NMEA_SHARING="com.yokuli.anchorwatch.SET_NMEA_SHARING";const val START_SONAR_SURVEY="com.yokuli.anchorwatch.START_SONAR_SURVEY";const val STOP_SONAR_SURVEY="com.yokuli.anchorwatch.STOP_SONAR_SURVEY";const val STATUS_CH="anchor_status";const val EVENT_CH="anchor_events_v2";const val ALARM_CH="anchor_alarm_selectable_v2";const val ONGOING=42;const val EVENT=43}
 }

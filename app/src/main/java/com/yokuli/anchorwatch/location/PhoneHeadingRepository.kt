@@ -30,7 +30,7 @@ class PhoneHeadingRepository @Inject constructor(
     private val sensors = context.getSystemService(SensorManager::class.java)
     private val monitor = PhoneHeadingIntegrityMonitor()
     private val rotation = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        ?: sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+        ?: sensors.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
     private val accelerometer = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     private val gyroscope = sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val _sample = MutableStateFlow(PhoneHeadingSample())
@@ -44,7 +44,10 @@ class PhoneHeadingRepository @Inject constructor(
     private var longitude = 0.0
     private var altitude = 0.0
     private var wallTime = System.currentTimeMillis()
-    private var sequence = 0L
+    private var sequence = System.currentTimeMillis() * 1_000L
+    private var activationEpoch = System.currentTimeMillis()
+
+    fun isAvailable(): Boolean = rotation != null
 
     fun setPosition(latitude: Double, longitude: Double, altitudeMeters: Double?, wallTimeMillis: Long?) {
         this.latitude = latitude
@@ -56,10 +59,15 @@ class PhoneHeadingRepository @Inject constructor(
     fun start(): Boolean {
         if (running) return rotation != null
         val orientation = rotation ?: return false
+        activationEpoch = maxOf(activationEpoch + 1L, System.currentTimeMillis())
         monitor.reset()
         running = sensors.registerListener(this, orientation, SensorManager.SENSOR_DELAY_NORMAL)
-        accelerometer?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
-        gyroscope?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        if (running) {
+            accelerometer?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+            gyroscope?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        } else {
+            sensors.unregisterListener(this)
+        }
         return running
     }
 
@@ -74,7 +82,7 @@ class PhoneHeadingRepository @Inject constructor(
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> acceleration = magnitude(event.values)
             Sensor.TYPE_GYROSCOPE -> angularVelocity = magnitude(event.values)
-            Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GAME_ROTATION_VECTOR -> publishRotation(event.values)
+            Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> publishRotation(event.values)
         }
     }
 
@@ -95,8 +103,14 @@ class PhoneHeadingRepository @Inject constructor(
             accelerationMetersPerSecondSquared = acceleration,
             sensorAccuracy = accuracy,
         )
-        sequence++
-        _sample.value = PhoneHeadingSample(observation.headingTrueDegrees, observation.quality, observation.headingEpoch, sequence)
+        // Keep sequence IDs unique across service/process restarts so persisted
+        // evidence from an earlier activation never deduplicates newer samples.
+        sequence = maxOf(sequence + 1L, System.currentTimeMillis() * 1_000L)
+        // A user can disable and later re-enable phone heading after physically
+        // moving the handset. Keep those activations in separate epochs so old
+        // and new calibration evidence can coexist without being blended.
+        val epoch = activationEpoch * 1_000L + observation.headingEpoch
+        _sample.value = PhoneHeadingSample(observation.headingTrueDegrees, observation.quality, epoch, sequence)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {

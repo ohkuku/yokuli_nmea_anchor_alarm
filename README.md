@@ -34,7 +34,7 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 - 支持 RMC、GGA、GLL、VTG、ZDA、HDG、HDM、HDT、DPT、DBT、MWD、MWV，以及 GP/GN/GL/GA/BD 等 talker ID；TWD、TWA、TWS、AWA、AWS 分开保存，不会互相覆盖。
 - 地图底图仅提供默认图与卫星图；可在地图页选择独立的 LINZ 水文海图影像叠加层与透明度。Google 地图工具栏、导航入口、室内与缩放按钮均隐藏。
 - 船形标记随真艏向或 COG 旋转，确认前不显示锚图标；地图保留最近 24 小时的 breadcrumb，最新至少 600 米保持清晰，随后才按距离渐隐。渲染只抽稀，不删除计算点。
-- 正常模式可选系统 GPS 或 NMEA GPS；只有服务器已连接并持续提供新鲜有效定位时才能选择 NMEA，成功连接后它会自动成为默认数据源。活动或暂停会话可在验证新来源后安全切换 System/NMEA，且不会丢失中心、范围或轨迹；断线不会静默切换。演示模式会单独锁定演示 GPS。
+- 正常模式可选系统 GPS 或 NMEA GPS；只有服务器已连接并持续提供新鲜有效定位时才能选择 NMEA，成功连接后它会自动成为默认数据源。会话一旦开始（包括暂停期间）就锁定该来源直到起锚；断线不会静默切换。演示模式会单独锁定演示 GPS。
 - 锚点可使用当前定位、手动十进制度坐标或地图长按选点；不知道锚点时可选自动估算。高置信度结果只作为候选显示，用户确认前绝不会移动生效中的报警圈，确认后也只移动圆心、不改半径。
 - GPS 异常点先隔离；单点跳点不会进入报警或圆心学习，连续一致的真实位移会从第一个可疑点恢复进入计算。System GPS 的 bearing 始终按 COG 处理，绝不冒充船首向。
 - 锚泊会话支持暂停、原会话继续、活动中调整范围和永久起锚；暂停不会清除中心、轨迹、范围或样本。
@@ -48,13 +48,13 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 
 1. 首次启动时授予精确位置与通知权限。在“设置”中检查后台可靠性，并为夜间值守关闭厂商电池限制。
 2. 打开“数据”，选择 TCP 客户端或 UDP 监听，填写地址和端口，再点“测试、保存并连接”。无效地址、无法访问的端点或没有有效 NMEA 数据都不会进入已连接状态。
-3. 在“数据 → 诊断”确认原始语句和解析坐标持续更新。成功连接后，GPS 数据源默认切换为 NMEA。
+3. 在“数据 → 原始数据”确认原始语句和解析坐标持续更新。成功连接后，GPS 数据源默认切换为 NMEA。
 4. 回到“锚警”页，在地图右上角打开“图层”选择默认图、卫星图或 LINZ 海图叠加层，然后点“设置锚点”。
 5. 先选本次会话的 System/NMEA 数据源，再选择锚点方式和范围：
    - **我知道锚点：** 使用当前定位、粘贴 `纬度, 经度`，或打开独立的全屏地图拖动锚标选点；锚点立即固定且不会运行自动学习。
    - **自动估算：** 没有“高级模式”。直接设置报警半径，并填写水深、锚链和船艏高度作为中心可行域约束。橙色临时边界立即承担告警；蓝色区域随多角度可信轨迹逐步缩小。达到高置信度后才显示候选锚图标，并询问是否围绕该点重画报警圈并退出学习模式。
 6. 监控中可随时“调整范围”。“暂停”会保留整次会话，“继续”会在确认所选 GPS 的新鲜定位后恢复；只有“起锚”会永久关闭本次会话。
-7. 活动或暂停会话都可安全切换 System/NMEA；应用会先验证新鲜可信定位，再原子保留原 session、中心、范围与轨迹。全局 NMEA GPS 代理开启时禁止切 System，避免自注入回环。主动断开 NMEA 时可选择“切换到系统 GPS 并断开”或“暂停锚警并断开”；被动断线不会静默切源，而是保留布防、通知并尝试恢复，超时后升级为 GPS 数据丢失报警。
+7. 活动和暂停会话的 GPS 来源均不可切换；需要更换来源时先起锚结束 session，再选择新的 System/NMEA 来源重新开始。主动断开当前 NMEA 锚警前必须先暂停或起锚；被动断线不会静默切源，而是保留 session、通知并尝试恢复，超时后升级为 GPS 数据丢失报警。
 8. 圆心确认后可点“在 Google 地图中打开锚点”，直接用 Google Maps App（未安装时使用浏览器）显示精确坐标，便于查看和复制。
 
 ### 报警范围
@@ -62,6 +62,8 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 已知锚点时，基础模式由用户直接填写报警半径，高级模式可根据几何参数与严格、均衡或宽容档位计算半径。**自动估算锚点不存在基础/高级二选一**：报警半径始终由用户直接设置，水深、放出的锚缆/锚链和船艏滚轮离水面高度只用于约束可能圆心；收到 DPT/DBT 时水深会自动预填。水平锚缆按 `sqrt(rode² - (depth + bowHeight)²)` 计算。
 
 自动估算开始时，蓝色圈代表锚可能存在的可行域，其初始尺度约为水平锚缆长度，而不是几米 GPS 散布。每个可信 GPS 点都会与该可行域做允许少量离群点的鲁棒求交。真实 NMEA 艏向、固定手机的可选真艏向、TWD−TWA、低 SOG 时经过 AWS/TWS 与 AWA/TWA 重复匹配的 TWD−AWA，以及航速至少 0.8 节时由 COG 反推的低权重运动方向，都会作为不同权重的辅助证据；它们不能单独确定中心。
+
+自动估算期间可在锚警主面板随时开关“手机船首向证据”。关闭仅停止加入新样本，不删除本会话已经使用或保存的手机船首向；重新打开会建立新的校准 epoch 后继续累计。手机方向来自旋转传感器与磁偏角修正，不会把 GPS COG 冒充船首向。
 
 时间门槛会随证据自适应：重复的真实艏向和风证据都与 GPS 几何一致时最快 5 分钟；只有其中一种方向证据时至少 8 分钟；只有 GPS 轨迹时至少 15 分钟。所有路径仍需至少 200° 覆盖、8 个稳健方位扇区和前后时间段独立拟合一致；快速路径至少一次完整往返反转，普通/GPS-only 路径至少两次。直线倒车、单向小弧、暂停时间、GPS 中断或不一致风向都不会被拿来提前确认。
 
@@ -77,9 +79,9 @@ Android anchor watch and NMEA 0183 navigation tool with live TCP/UDP input, raw-
 
 ### NMEA Sharing
 
-“数据 → 连接与数据 → NMEA Sharing”可启动本机 TCP 服务器（默认端口 `10111`），把应用已经接收的同一条上游 NMEA 流共享给海图仪、平板或其他船载设备；不会为了共享再创建第二套解析链路。服务器绑定所有本地网络接口，显示可连接地址、每个客户端地址/连接时长/发送量与输出状态，至少支持 5 个客户端。每个客户端都有有界队列，过慢客户端会被断开，不能拖住报警与其他客户端；监听异常时会自动尝试重绑。
+“数据 → 连接 → NMEA Sharing”可启动本机 TCP 服务器（默认端口 `10111`），把应用已经接收的同一条上游 NMEA 流共享给海图仪、平板或其他船载设备；不会为了共享再创建第二套解析链路。服务器绑定所有本地网络接口，显示可连接地址、每个客户端地址/连接时长/发送量与输出状态，至少支持 5 个客户端。每个客户端都有有界队列，过慢客户端会被断开，不能拖住报警与其他客户端；监听异常时会自动尝试重绑。
 
-- App 使用 **NMEA GPS** 时：透传所有校验有效的船载语句。
+- App 使用 **NMEA GPS** 时：定位语句由唯一的 Accepted Position 重新编码，非定位仪表语句继续透传；被拒绝或隔离的原始定位绝不会共享出去。
 - App 使用 **System GPS** 时：按语句类型屏蔽任意 talker 的船载 RMC/GGA/GLL/VTG，保留艏向、风、深度、时间等仪表语句，再输出由可信新鲜系统 GNSS 编码的 `GNRMC`、`GNGGA`、`GNVTG`。不会把 COG 伪装为 HDT。
 - 即使没有船载 NMEA 连接，System GPS 的 GN 定位输出仍可独立工作。
 
@@ -91,9 +93,17 @@ System GGA 不会捏造卫星数或高度：Android 未提供时字段留空；H
 
 ### LINZ 水文海图
 
-地图“图层”面板可把 LINZ 水文海图影像 XYZ tiles 叠加在默认图或卫星图上，透明度为 30–100%。密钥与 layer ID/完整模板只能在编译阶段配置；未配置、离线或服务报错时地图和锚警继续工作，不会崩溃。该层位于 Yokuli 船位、轨迹、锚圈和报警覆盖物下方，不实现离线缓存或水深计算。
+地图“图层”面板可把 LINZ 官方北岛、南岛和离岛水文海图 chart sets 叠加在默认图或卫星图上，透明度为 30–100%。只需在编译阶段配置 LINZ data-access key，也可用完整 XYZ 模板覆盖默认服务；未配置、离线或服务报错时地图和锚警继续工作，不会崩溃。该层位于 Yokuli 船位、轨迹、锚圈和报警覆盖物下方。
 
 首次启用会显示航行安全免责声明。启用时地图显示强制署名：`Contains data sourced from the LINZ Data Service licensed for reuse under CC BY 4.0`。该影像仅供辅助，不能替代官方海图、航海通告、测深仪与正规航行计划。
+
+### 个人声呐测绘
+
+“数据 → 声呐”可以单独开始、停止、重命名、重建、删除和导出一次 survey；它与锚警 session 完全独立。DPT/DBT 会保留原始深度、句型、offset 和参考面，且只与相差不超过 2 秒的 Accepted Position 配对。记录频率最多 1 Hz，并要求船位移动至少 1.5 米或深度变化至少 0.2 米。孤立深度跳变先隔离，连续三个同向变化才按真实陡坡放行。
+
+调查同时保存原始深度与参考面修正后的实测深度；潮汐修正关闭时 `normalizedDepth` 明确为空，只有输入手动潮高后才生成海图基准归一化深度并允许跨 survey 合并。船舶资料可设置测深仪参考面、探头吃水、探头到龙骨和 GPS 天线到探头距离；天线位置修正只使用物理船首向，不会用 COG 猜测。地图使用稳健的 5 米 Web‑Mercator 网格与透明瓦片，不会为每个测深点创建 Marker；仅在 15 米内有至少三个邻近单元时提供更透明的 IDW 插值。点击地图会明确显示“实测/插值”、参考面、潮汐模式、时间、深度、不确定度和样本数。个人测深仅供观察，不能当作认证海图或替代安全航行判断。
+
+手机重启后，未结束的声呐调查会尝试恢复 NMEA/定位前台服务并发出提示；锚警不会假装在重启间隙持续受保护，系统会明确要求用户打开 App 检查并恢复锚泊监控。每次重启后都应人工确认船位、水深、网络、报警音量和供电。
 
 ### NMEA 全局 GPS 代理
 
@@ -119,10 +129,11 @@ System GGA 不会捏造卫星数或高度：Android 未提供时字段留空；H
 sdk.dir=/path/to/Android/sdk
 MAPS_API_KEY=your_android_maps_key
 LINZ_API_KEY=your_linz_data_service_key
-LINZ_HYDRO_LAYER_ID=your_hydro_chart_image_layer_id
-# 或直接提供带 {z}/{x}/{y} 的 HTTPS 模板：
+# 可选：用带 {z}/{x}/{y} 的 HTTPS 模板覆盖官方 chart sets：
 LINZ_HYDRO_TILE_TEMPLATE=https://.../{z}/{x}/{y}.png
 ```
+
+LINZ 与 Google Maps 使用不同的凭据。LDS 瓦片服务本身免费但要求单独注册并创建“Data access only” API key；Google Maps key 不能读取 LINZ 海图。没有 LINZ key 的 APK 会明确显示“当前编译版本未配置”，基础地图与锚警仍正常工作。
 
 Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `com.yokuli.anchorwatch` 和签名证书 SHA 指纹。本应用不调用 Places、Routes、Geocoding、Street View 或 Map Tiles API。建议同时设置配额与预算提醒。
 
@@ -134,7 +145,7 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 
 ### 测试与 GitHub Actions 下载
 
-单元测试覆盖 NMEA 解析、共享输出复用/系统 GN 语句编码、自回环、TCP 广播、LINZ 模板、连接预检、报警状态机、异常定位隔离、圆心估算、轨迹可见度、演示风/艏向证据和代理策略。设备测试使用真实 TCP、前台服务、Room 和 Compose，覆盖断线恢复、候选中心接受/拒绝、迁移、暂停/继续、起锚、范围、报警弹窗、历史级联删除、演示模式和双语 UI。
+单元测试覆盖 NMEA/水深解析、共享输出、LINZ 模板、报警滞回、异常定位、圆心估算、5 米声呐网格/短距插值、深度跳变隔离、轨迹可见度、演示证据和代理策略。设备测试使用真实 TCP、前台服务、Room 和 Compose，覆盖断线恢复、来源锁、候选中心操作、v5→v7 迁移、暂停/继续、范围、报警弹窗、历史级联删除、声呐 survey 配对/删除和双语 UI。
 
 `.github/workflows/android.yml` 会自动：
 
@@ -143,14 +154,14 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 3. 将 Android 14 设备测试分成 3 个独立 shard 并行运行，每个 job 有明确超时，避免单个模拟器卡住整条流水线；
 4. 每次 push 上传可安装的 Debug APK，并上传测试和 Lint 报告。
 
-在 GitHub Actions 运行详情的 **Artifacts** 下载 `anchor-by-yokuli-debug-<commit SHA>`；其中 `app-debug.apk` 可直接安装。报告名包含 commit SHA，设备报告还包含 shard 编号。`MAPS_API_KEY` Secret 可覆盖仓库内的 Debug 构建密钥。
+在 GitHub Actions 运行详情的 **Artifacts** 下载 `anchor-by-yokuli-debug-<commit SHA>`；其中 `app-debug.apk` 可直接安装。报告名包含 commit SHA，设备报告还包含 shard 编号。`MAPS_API_KEY` Secret 可覆盖仓库内的 Debug 构建密钥；要让 CI 产出的 APK 同时包含 LINZ 海图，请在仓库 Actions Secrets 中配置 `LINZ_API_KEY`（或完整 `LINZ_HYDRO_TILE_TEMPLATE`）。
 
 真正的版本发布使用独立的 `.github/workflows/release.yml`，只允许在 Actions 页面手动运行。先配置以下 GitHub Actions Secrets：
 
 - `ANDROID_SIGNING_KEY_BASE64`：发布 keystore 文件的 Base64 内容；
 - `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`；
 - `MAPS_API_KEY`；
-- 可选：`LINZ_API_KEY` 与 `LINZ_HYDRO_LAYER_ID`，或 `LINZ_HYDRO_TILE_TEMPLATE`。
+- 可选：`LINZ_API_KEY`，或完整的 `LINZ_HYDRO_TILE_TEMPLATE`。
 
 然后运行 **Publish Anchor by Yokuli Release**，填写唯一的 Git tag、版本名和递增的 version code。Action 会验证签名，并创建 GitHub Release，附带已签名的 APK、可提交商店的 AAB 和 SHA-256 校验文件。签名 keystore 必须长期安全备份；丢失后无法为同一安装渠道发布可升级版本。
 
@@ -164,7 +175,7 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 - RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT, DBT, MWD and MWV support across common talker IDs, with TWD/TWA/TWS/AWA/AWS stored independently.
 - Normal and satellite base maps plus an independent LINZ hydrographic chart-image overlay and opacity control, all selected on the map. Google toolbar, directions, indoor and zoom controls are disabled.
 - A heading-aware boat marker, no premature anchor icon, and a 24-hour breadcrumb whose newest 600 m remains strongly visible before distance-based fading. Calculation/history points remain retained.
-- System and NMEA GPS in normal mode, with NMEA disabled until a connected source supplies a fresh valid fix. Open sessions may switch between them only after the replacement supplies a trusted fresh fix; the centre, range and track remain intact, with no silent failover. Developer Demo mode separately locks the App to Demo GPS.
+- System and NMEA GPS in normal mode, with NMEA disabled until a connected source supplies a fresh valid fix. An open session, including while paused, locks its selected source until Lift anchor; there is no silent failover. Developer Demo mode separately locks the App to Demo GPS.
 - Known anchors support current position, pasted decimal coordinates and map picking. Unknown anchors can be estimated, but a high-confidence result remains a candidate until the user accepts it; acceptance moves only the centre and never changes the radius.
 - One-off GPS jumps are quarantined before both alarm and estimation. Sustained coherent displacement is released from its first suspicious fix. Android bearing is COG only and is never presented as heading.
 - Persistent anchoring sessions with Pause, safe Resume, live range adjustment, and permanent Lift anchor actions.
@@ -178,13 +189,13 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 
 1. Grant precise-location and notification permissions. Review Background reliability in Settings and remove manufacturer battery restrictions for overnight use.
 2. Open Data, choose TCP or UDP, enter the endpoint, and tap **Test, save & connect**. Invalid endpoints and sources that provide no valid NMEA are rejected.
-3. Confirm live raw sentences and parsed coordinates under **Data → Diagnostics**. A verified connection automatically selects NMEA GPS.
+3. Confirm live sentences and parsed coordinates under **Data → Raw data**. A verified connection automatically selects NMEA GPS.
 4. Return to Watch, open **Layers** to choose Normal, Satellite or the optional LINZ overlay, and tap **Set anchor**.
 5. Choose this session's System/NMEA source, then the anchor mode and range:
    - **I know it:** use the selected source's current position, paste decimal coordinates, or drag the marker in a dedicated full-screen picker. The centre is authoritative and never auto-refined.
    - **Estimate it:** there is no Advanced mode. Set the alarm radius directly and enter depth, rode and bow height only as centre constraints. A temporary working boundary arms immediately while the possible-anchor region tightens. The anchor icon appears only for a high-confidence candidate; accepting redraws the unchanged-radius circle around it and leaves learning mode.
 6. Adjust the radius at any time. Pause preserves the session, centre, samples, range and track; Resume waits for a fresh selected-source fix. Lift anchor permanently ends the session.
-7. Active and paused sessions may switch safely between System and NMEA without losing the session, centre, range or track. The new source must first provide a fresh trusted fix. System is blocked while the global NMEA GPS proxy is active, preventing injected-location feedback. Passive NMEA loss keeps the session, warns immediately, reconnects, and escalates to GPS-data-loss if positions remain stale.
+7. Active and paused sessions cannot change GPS source. Lift anchor to close the session before selecting another System/NMEA source. Disconnecting the NMEA source used by an open watch first requires Pause or Lift; passive loss preserves the session, warns immediately, reconnects, and escalates to GPS-data-loss if positions remain stale.
 8. After centre resolution, tap **Open anchor in Google Maps** to display the precise coordinate in the Google Maps app, or a browser fallback, for inspection and copying.
 
 ### Range and centre estimation
@@ -192,6 +203,8 @@ Google Cloud 密钥只需启用 **Maps SDK for Android**，并限制到包名 `c
 For a known anchor, Basic accepts a manual radius and Advanced can calculate one from geometry and a Strict/Balanced/Tolerant preset. Automatic centre estimation has no Basic/Advanced choice: its radius is always set directly, while water depth, rode/chain and actual bow-roller height constrain the possible centre. DPT/DBT depth is prefilled when available. Horizontal rode is `sqrt(rode² - (depth + bowHeight)²)`.
 
 The initial possible-anchor region is approximately one horizontal-rode radius, not a tiny GPS-scatter circle. Trusted GPS discs are intersected robustly with a small outlier allowance. Physical NMEA heading, optional fixed-phone true heading, TWD−TWA, repeatedly matched low-SOG TWD−AWA, and reverse COG above 0.8 kn become separately weighted evidence. Direction evidence changes likelihood but can never resolve the centre alone.
+
+Phone-heading evidence can be toggled at any time from the active Watch panel while the centre is being estimated. Turning it off stops only new samples; evidence already persisted for the session remains available. Turning it back on starts a new calibration epoch. The source is the phone orientation sensors with declination correction, never GPS COG masquerading as bow heading.
 
 The minimum time adapts to evidence: five minutes only when repeated physical-heading and wind evidence agree with GPS geometry; eight minutes with one reliable direction channel; fifteen minutes for GPS-only learning. Every path still needs at least 200° coverage, eight robust bearing sectors and independently agreeing early/late fits. The fastest corroborated path requires a full out-and-back reversal; ordinary and GPS-only paths require at least two. Pauses and GPS gaps do not count as evidence time.
 
@@ -207,9 +220,9 @@ Enable **Settings → Developer settings → Demo mode** to lock the App to Demo
 
 ### NMEA Sharing
 
-Open **Data → Connection & data → NMEA Sharing** to run an on-device TCP server (default `10111`) for chartplotters, tablets and other boat devices. It reuses the App's single upstream stream and parser rather than opening a duplicate input. The server binds all local interfaces, shows each client address, connection duration and sent count, supports at least five clients, automatically rebinds after an abnormal listener failure, and uses bounded per-client queues so a slow consumer is dropped instead of blocking alarms or peers.
+Open **Data → NMEA → NMEA Sharing** to run an on-device TCP server (default `10111`) for chartplotters, tablets and other boat devices. It reuses the App's single upstream stream and parser rather than opening a duplicate input. The server binds all local interfaces, shows each client address, connection duration and sent count, supports at least five clients, automatically rebinds after an abnormal listener failure, and uses bounded per-client queues so a slow consumer is dropped instead of blocking alarms or peers.
 
-- With **NMEA GPS**, all checksum-valid boat sentences pass through.
+- With **NMEA GPS**, position sentences are regenerated from the single Accepted Position pipeline while checksum-valid non-position instrument sentences pass through. Rejected or quarantined raw positions are never shared.
 - With **System GPS**, boat RMC/GGA/GLL/VTG are suppressed by sentence type regardless of talker, instrument heading/wind/depth/time sentences remain, and accepted fresh System GNSS is encoded as `GNRMC`, `GNGGA` and, when motion is available, `GNVTG`. COG is never invented as HDT.
 - System-only position output works even without a boat NMEA connection.
 
@@ -221,9 +234,17 @@ The remote side uses the same APK. For example, if the boat phone shows VPN addr
 
 ### LINZ hydrographic charts
 
-The on-map Layers panel can overlay LINZ hydrographic chart-image XYZ tiles above Normal or Satellite with 30–100% opacity. Keys and the layer ID/full template are build-time only. Missing configuration, offline use and service errors degrade to the base map without affecting alarms. The chart stays below Yokuli boat, track, anchor and alarm overlays; there is no offline chart cache or bathymetry engine.
+The on-map Layers panel overlays the official LINZ North Island, South Island and offshore hydrographic chart sets above Normal or Satellite with 30–100% opacity. A build-time LINZ data-access key is sufficient; a complete XYZ template may override the default sets. Missing configuration, offline use and service errors degrade to the base map without affecting alarms. The chart stays below Yokuli boat, track, anchor and alarm overlays.
 
 First enablement shows a safety disclaimer. While enabled, the map displays: `Contains data sourced from the LINZ Data Service licensed for reuse under CC BY 4.0`. The imagery is an aid only and does not replace official charts, Notices to Mariners, depth instruments or a proper passage plan.
+
+### Personal sonar mapping
+
+**Data → Sonar** starts, stops, renames, rebuilds, deletes and exports independent surveys; sonar recording does not own an anchor session. DPT/DBT raw depth, sentence type, offset and reference are retained and paired only with Accepted Position fixes within two seconds. Recording is capped at 1 Hz and also requires at least 1.5 m of movement or 0.2 m of depth change. An isolated spike is quarantined; three coherent changes can confirm a real steep slope.
+
+Surveys retain raw depth, reference-adjusted measured depth and their vessel-geometry snapshot. With tide correction Off, `normalizedDepth` is explicitly null; Manual tide height is required before a chart-datum-normalized sample can join the cross-survey corrected-history layer. GPS-to-transducer correction uses physical heading only and never guesses from COG. The map renders a robust 5 m Web‑Mercator grid as transparent raster tiles rather than thousands of markers. IDW interpolation is limited to 15 m with at least three neighbours and is drawn more transparently than measured cells. Map inspection labels measured versus interpolated depth, reference, tide mode, survey time, uncertainty and sample count. Personal soundings are observational only and are not a certified chart.
+
+After a phone reboot, an unfinished sonar survey attempts to restore its NMEA/location foreground runtime and raises a recovery notice. Anchor watch never pretends the reboot interval remained protected: the user is explicitly asked to open the app, verify position, depth, network, alarm volume and power, and resume safety monitoring.
 
 ### Global NMEA GPS proxy
 
@@ -242,16 +263,18 @@ Choose 🇨🇳 or 🇬🇧 under Settings → Language. The launcher name is al
 
 ### Build, test and download
 
-JDK 17 and Android SDK 35 are required. The Debug build has a bundled Android Maps build key; `MAPS_API_KEY` in untracked `local.properties` or CI can override it. Restrict it to the Android package/signing SHA and enable only Maps SDK for Android. LINZ is optional: set `LINZ_API_KEY` plus `LINZ_HYDRO_LAYER_ID`, or a complete HTTPS `LINZ_HYDRO_TILE_TEMPLATE` containing `{z}`, `{x}` and `{y}`.
+JDK 17 and Android SDK 35 are required. The repository includes the requested restricted Debug Maps fallback; an untracked `local.properties` value or CI `MAPS_API_KEY` can override it. Restrict the key to the Android package/signing SHA and enable only Maps SDK for Android. LINZ is optional: set `LINZ_API_KEY`, or a complete HTTPS `LINZ_HYDRO_TILE_TEMPLATE` containing `{z}`, `{x}` and `{y}`. Add the same value as a repository Actions Secret when CI-built APKs must include the LINZ overlay.
+
+LINZ credentials are separate from Google Maps. LDS tile access is free but requires a registered “Data access only” key; a Google Maps key cannot load LINZ charts. A build without LINZ configuration explains that state in the Layers sheet and continues with the base map and alarms.
 
 ```bash
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
 ./gradlew connectedDebugAndroidTest
 ```
 
-GitHub Actions runs unit tests (including NMEA output mux/server, self-loop, LINZ template, demo evidence and trail policy), lint and the Debug build, then executes the Android 14 suite in three parallel shards with per-job timeouts. Every push publishes `anchor-by-yokuli-debug-<commit SHA>`; build and per-shard integration reports also include the commit SHA.
+GitHub Actions runs unit tests (including Accepted Position policies, NMEA/depth parsing, alarm hysteresis, LINZ, sonar integrity/grid, demo evidence and trail policy), lint and the Debug build, then executes the Android 14 suite in three parallel shards with per-job timeouts. Every push publishes `anchor-by-yokuli-debug-<commit SHA>`; build and per-shard integration reports also include the commit SHA.
 
-Production publishing is intentionally separate. Configure `ANDROID_SIGNING_KEY_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `MAPS_API_KEY`; optionally add `LINZ_API_KEY`/`LINZ_HYDRO_LAYER_ID` or `LINZ_HYDRO_TILE_TEMPLATE`. Then manually run **Publish Anchor by Yokuli Release** with a unique tag, version name and increasing version code. It creates a GitHub Release containing the verified signed APK, Play-ready AAB and SHA-256 checksums.
+Production publishing is intentionally separate. Configure `ANDROID_SIGNING_KEY_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `MAPS_API_KEY`; optionally add `LINZ_API_KEY` or `LINZ_HYDRO_TILE_TEMPLATE`. Then manually run **Publish Anchor by Yokuli Release** with a unique tag, version name and increasing version code. It creates a GitHub Release containing the verified signed APK, Play-ready AAB and SHA-256 checksums.
 
 ## Privacy and permissions
 

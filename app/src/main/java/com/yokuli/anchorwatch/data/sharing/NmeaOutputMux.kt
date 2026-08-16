@@ -20,15 +20,24 @@ class NmeaOutputMux @Inject constructor() {
         val normalized = line.trim()
         if (!NmeaChecksum.validate(normalized, required = false)) return null
         val type = sentenceType(normalized) ?: return null
-        if (selectedSource != GpsDataSource.NMEA && type in positionTypes) return null
+        // Position sentences are regenerated only after the unique integrity
+        // gate accepts a fix. Forwarding the boat's raw RMC/GGA/GLL/VTG here
+        // would let a quarantined spike escape through NMEA Sharing.
+        if (type in positionTypes) return null
         val withChecksum = if ('*' in normalized) normalized else NmeaChecksum.append(normalized.removePrefix("$"))
         return "$withChecksum\r\n"
     }
 
-    fun systemPosition(fix: NavigationFix, nowElapsed: Long): List<String> {
-        if (!fix.valid || fix.latitude !in -90.0..90.0 || fix.longitude !in -180.0..180.0 || fix.positionProvider != PositionProvider.ANDROID_GNSS || fix.isMockLocation) return emptyList()
+    fun acceptedPosition(fix: NavigationFix, nowElapsed: Long): List<String> {
+        if (!fix.valid || fix.latitude !in -90.0..90.0 || fix.longitude !in -180.0..180.0 ||
+            fix.positionProvider !in setOf(PositionProvider.ANDROID_GNSS, PositionProvider.NMEA, PositionProvider.DEMO) ||
+            (fix.isMockLocation && fix.positionProvider != PositionProvider.DEMO)
+        ) return emptyList()
         if (nowElapsed - fix.receivedElapsedRealtime !in 0..3_000L) return emptyList()
-        if ((fix.horizontalAccuracyMeters ?: Double.POSITIVE_INFINITY) > 30.0) return emptyList()
+        // A missing accuracy does not become permission to invent one, but the
+        // Accepted Position gate has already validated this event. Reject only
+        // an explicitly poor accuracy value here.
+        if (fix.horizontalAccuracyMeters?.let { it > 30.0 } == true) return emptyList()
         val instant = Instant.ofEpochMilli(fix.timestampUtcMillis ?: System.currentTimeMillis()).atZone(ZoneOffset.UTC)
         val time = instant.format(DateTimeFormatter.ofPattern("HHmmss.SS", Locale.US))
         val date = instant.format(DateTimeFormatter.ofPattern("ddMMyy", Locale.US))
@@ -48,6 +57,9 @@ class NmeaOutputMux @Inject constructor() {
             if (sog != null && cog != null) add(sentence("GNVTG,${f(cog, 2)},T,,M,${f(sog, 2)},N,${f(sog * 1.852, 2)},K,A"))
         }
     }
+
+    @Deprecated("Use acceptedPosition after AcceptedPositionRepository")
+    fun systemPosition(fix: NavigationFix, nowElapsed: Long): List<String> = acceptedPosition(fix, nowElapsed)
 
     fun sentenceType(line: String): String? = line.trim().removePrefix("$").substringBefore('*').substringBefore(',')
         .takeIf { it.length >= 3 }?.takeLast(3)?.uppercase(Locale.US)
