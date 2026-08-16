@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch.di
 import com.yokuli.anchorwatch.data.NavigationRepository
 import com.yokuli.anchorwatch.data.database.AnchorDao
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
+import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
@@ -17,4 +18,5 @@ interface AnchorWatchEntryPoint {
     fun dao(): AnchorDao
     fun preferences(): SettingsRepository
     fun navigation(): NavigationRepository
+    fun sharingServer(): NmeaSharingServer
 }

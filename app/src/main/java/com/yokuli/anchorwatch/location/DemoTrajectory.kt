@@ -3,8 +3,12 @@ package com.yokuli.anchorwatch.location
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import kotlin.math.PI
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class DemoTrajectoryPoint(
     val northMeters: Double,
@@ -12,10 +16,30 @@ data class DemoTrajectoryPoint(
     val headingDegrees: Double,
     val speedMetersPerSecond: Double,
     val signalAvailable: Boolean = true,
+    val anchorNorthMeters: Double = 0.0,
+    val anchorEastMeters: Double = 0.0,
+    val headingToAnchorDegrees: Double? = null,
+    val trueWindDirectionDegrees: Double? = null,
+    val trueWindAngleDegrees: Double? = null,
+    val apparentWindAngleDegrees: Double? = null,
+    val windSpeedKnots: Double? = null,
+    val evidenceSequence: Long? = null,
 )
 
-/** Smooth, seeded demo motion. Every scenario starts at the supplied origin. */
+/**
+ * Seeded, continuous anchoring simulation. The fresh System-GNSS coordinate is
+ * always the boat's first position, never the hidden centre. The vessel pays
+ * out smoothly, dwells in one sector, then turns gradually into another.
+ */
 object DemoTrajectory {
+    private data class Geometry(
+        val radius: Double,
+        val downwind: Double,
+        val centreNorth: Double,
+        val centreEast: Double,
+        val payoutSpeed: Double,
+    )
+
     fun point(
         elapsedMillis: Long,
         placement: AnchorPlacementMode,
@@ -26,113 +50,153 @@ object DemoTrajectory {
     ): DemoTrajectoryPoint {
         val seconds = elapsedMillis.coerceAtLeast(0L) / 1_000.0
         val speed = speedMultiplier.takeIf { it in listOf(1, 2, 5) }?.toDouble() ?: 1.0
-        return when (scenario) {
-            DemoScenario.SAFE_SWING -> safeSwing(seconds, placement, alarmRadiusMeters, speed, seed)
-            DemoScenario.ANCHOR_DRAG -> anchorDrag(seconds, placement, alarmRadiusMeters, speed, seed)
-            DemoScenario.WIND_SHIFT -> windShift(seconds, placement, alarmRadiusMeters, speed, seed)
+        val geometry = geometry(alarmRadiusMeters, seed)
+        val raw = when (scenario) {
+            DemoScenario.SAFE_SWING -> safeSwing(seconds, placement, geometry, speed, seed)
+            DemoScenario.WIND_SHIFT -> windShift(seconds, placement, geometry, speed, seed)
+            DemoScenario.ANCHOR_DRAG -> anchorDrag(seconds, placement, geometry, speed, seed)
             DemoScenario.GPS_DROPOUT -> {
-                val cutoff = 35.0 + seeded(seed, 91) * 15.0
-                val base = safeSwing(seconds.coerceAtMost(cutoff), placement, alarmRadiusMeters, speed, seed)
-                base.copy(signalAvailable = seconds < cutoff || ((seconds - cutoff) % 45.0) > 12.0)
+                val cutoff = 42.0 + seeded(seed, 91) * 18.0
+                safeSwing(seconds, placement, geometry, speed, seed).copy(
+                    signalAvailable = seconds < cutoff || ((seconds - cutoff) % 48.0) > 14.0,
+                )
             }
         }
+        return withEvidence(raw, geometry, seconds, seed)
     }
 
-    private fun safeSwing(seconds: Double, placement: AnchorPlacementMode, alarmRadius: Double, speed: Double, seed: Long): DemoTrajectoryPoint {
-        val targetRadius = (alarmRadius * (0.48 + seeded(seed, 1) * 0.17)).coerceIn(12.0, 75.0)
-        backdownPayout(seconds, placement, targetRadius, speed, seed)?.let { return it }
-        val afterPayout = seconds - payoutDuration(placement, targetRadius, speed, seed)
-        val baseAngle = seeded(seed, 32) * 2.0 * PI
-        val sweep = 1.10 + seeded(seed, 3) * 0.55
-        val phase = afterPayout * (0.020 + seeded(seed, 4) * 0.012) * speed
-        val angle = baseAngle + sin(phase) * sweep + smoothNoise(afterPayout / 18.0, seed + 5) * 0.09
-        val radius = targetRadius * (0.84 + 0.12 * smoothNoise(afterPayout / 24.0, seed + 6))
-        return polar(radius, angle, targetRadius * 0.025 * speed)
+    private fun safeSwing(seconds: Double, placement: AnchorPlacementMode, geometry: Geometry, speed: Double, seed: Long): DemoTrajectoryPoint {
+        payout(seconds, placement, geometry, speed, seed)?.let { return it }
+        val after = seconds - payoutDuration(placement, geometry, speed)
+        val simulated = after * simulationRate(speed)
+        val transition = smoothStep((after / 18.0).coerceIn(0.0, 1.0))
+        val angle = geometry.downwind + lingeringOffset(simulated, seed) * transition + smoothNoise(simulated / 13.0, seed + 8) * .055
+        val targetRadius = geometry.radius * (.90 + .055 * smoothNoise(simulated / 21.0, seed + 9))
+        val radius = geometry.radius + (targetRadius - geometry.radius) * transition
+        return orbit(geometry, radius, angle, geometry.radius * .028 * simulationRate(speed))
     }
 
-    private fun windShift(seconds: Double, placement: AnchorPlacementMode, alarmRadius: Double, speed: Double, seed: Long): DemoTrajectoryPoint {
-        val targetRadius = (alarmRadius * (0.55 + seeded(seed, 11) * 0.15)).coerceIn(15.0, 80.0)
-        backdownPayout(seconds, placement, targetRadius, speed, seed)?.let { return it }
-        val afterPayout = seconds - payoutDuration(placement, targetRadius, speed, seed)
-        val firstDirection = seeded(seed, 32) * 2.0 * PI
-        val shiftStart = 45.0 + seeded(seed, 13) * 35.0
-        val progress = smoothStep(((afterPayout - shiftStart) / 45.0).coerceIn(0.0, 1.0))
-        val directionChange = (1.65 + seeded(seed, 14) * 0.65) * progress
-        val swing = sin(afterPayout * 0.027 * speed) * (0.75 + 0.30 * progress)
-        val angle = firstDirection + directionChange + swing + smoothNoise(afterPayout / 20.0, seed + 15) * 0.08
-        val radius = targetRadius * (0.78 + 0.16 * sin(afterPayout * 0.013 + seeded(seed, 16) * PI))
-        return polar(radius, angle, targetRadius * 0.03 * speed)
+    private fun windShift(seconds: Double, placement: AnchorPlacementMode, geometry: Geometry, speed: Double, seed: Long): DemoTrajectoryPoint {
+        payout(seconds, placement, geometry, speed, seed)?.let { return it }
+        val after = seconds - payoutDuration(placement, geometry, speed)
+        val simulated = after * simulationRate(speed)
+        val transition = smoothStep((after / 18.0).coerceIn(0.0, 1.0))
+        val veer = smoothStep(((simulated - 70.0) / 85.0).coerceIn(0.0, 1.0)) * (1.25 + seeded(seed, 71) * .55)
+        val angle = geometry.downwind + (lingeringOffset(simulated, seed + 70) + veer) * transition + smoothNoise(simulated / 15.0, seed + 72) * .06
+        val targetRadius = geometry.radius * (.88 + .07 * smoothNoise(simulated / 24.0, seed + 73))
+        val radius = geometry.radius + (targetRadius - geometry.radius) * transition
+        return orbit(geometry, radius, angle, geometry.radius * .032 * simulationRate(speed))
     }
 
-    private fun anchorDrag(seconds: Double, placement: AnchorPlacementMode, alarmRadius: Double, speed: Double, seed: Long): DemoTrajectoryPoint {
-        val settleRadius = (alarmRadius * 0.52).coerceIn(12.0, 55.0)
-        backdownPayout(seconds, placement, settleRadius, speed, seed)?.let { return it }
-        val afterPayout = seconds - payoutDuration(placement, settleRadius, speed, seed)
-        val settleSeconds = 25.0 + seeded(seed, 21) * 20.0
-        val baseBearing = seeded(seed, 32) * 2.0 * PI
-        fun settledPoint(time:Double):DemoTrajectoryPoint {
-            val angle=baseBearing+sin(time*.025*speed)*.38+smoothNoise(time/20.0,seed+26)*.05
-            return polar(settleRadius*(.90+.06*sin(time*.017)),angle,settleRadius*.018*speed)
+    private fun anchorDrag(seconds: Double, placement: AnchorPlacementMode, geometry: Geometry, speed: Double, seed: Long): DemoTrajectoryPoint {
+        payout(seconds, placement, geometry, speed, seed)?.let { return it }
+        val after = seconds - payoutDuration(placement, geometry, speed)
+        val settleSeconds = 14.0 + seeded(seed, 21) * 5.0
+        fun settled(time: Double): DemoTrajectoryPoint {
+            val angle = geometry.downwind + lingeringOffset(time * simulationRate(speed), seed + 20) * .24
+            return orbit(geometry, geometry.radius * (.91 + .025 * smoothNoise(time / 10.0, seed + 22)), angle, geometry.radius * .02 * simulationRate(speed))
         }
-        if (afterPayout < settleSeconds) return settledPoint(afterPayout)
-        val start = settledPoint(settleSeconds)
-        val dragSeconds = afterPayout - settleSeconds
-        val bearing = seeded(seed, 22) * 2.0 * PI
-        val dragSpeed = (0.35 + seeded(seed, 23) * 0.45) * speed
+        if (after < settleSeconds) return settled(after)
+        val start = settled(settleSeconds)
+        val dragSeconds = after - settleSeconds
+        val bearing = geometry.downwind + (seeded(seed, 23) - .5) * PI / 5.0
+        val dragSpeed = (1.10 + seeded(seed, 24) * .40) * speed
         val drift = dragSeconds * dragSpeed
         return DemoTrajectoryPoint(
-            northMeters = start.northMeters + drift * cos(bearing) + smoothNoise(dragSeconds / 9.0, seed + 24),
-            eastMeters = start.eastMeters + drift * sin(bearing) + smoothNoise(dragSeconds / 11.0, seed + 25),
+            northMeters = start.northMeters + drift * cos(bearing) + smoothNoise(dragSeconds / 8.0, seed + 25) * .8,
+            eastMeters = start.eastMeters + drift * sin(bearing) + smoothNoise(dragSeconds / 10.0, seed + 26) * .8,
             headingDegrees = degrees(bearing),
             speedMetersPerSecond = dragSpeed,
         )
     }
 
-    private fun backdownPayout(seconds: Double, placement: AnchorPlacementMode, targetRadius: Double, speed: Double, seed: Long): DemoTrajectoryPoint? {
+    private fun payout(seconds: Double, placement: AnchorPlacementMode, geometry: Geometry, speed: Double, seed: Long): DemoTrajectoryPoint? {
+        if (seconds == 0.0) return origin()
         val holdSeconds = if (placement == AnchorPlacementMode.BACKDOWN) 8.0 else 0.0
-        if (seconds <= holdSeconds) return if (seconds == 0.0) origin() else stableDrop(seconds, seed)
-        val payoutSpeed = (0.65 + seeded(seed, 31) * 0.35) * speed
-        val travelSeconds = targetRadius / payoutSpeed
+        if (seconds <= holdSeconds) return stableDrop(seconds, seed)
         val moving = seconds - holdSeconds
-        if (moving >= travelSeconds) return null
-        val progress = smoothStep((moving / travelSeconds).coerceIn(0.0, 1.0))
-        val bearing = seeded(seed, 32) * 2.0 * PI
-        val distance = targetRadius * progress
-        val crossTrack = smoothNoise(moving / 7.0, seed + 33) * minOf(1.8, targetRadius * 0.035) * progress
+        val duration = payoutDuration(placement, geometry, speed) - holdSeconds
+        if (moving >= duration) return null
+        val progress = smoothStep((moving / duration).coerceIn(0.0, 1.0))
+        val endNorth = geometry.centreNorth + geometry.radius * cos(geometry.downwind)
+        val endEast = geometry.centreEast + geometry.radius * sin(geometry.downwind)
+        val crossTrack = smoothNoise(moving / 7.0, seed + 33) * minOf(1.6, geometry.radius * .03) * progress * (1.0 - progress)
         return DemoTrajectoryPoint(
-            northMeters = distance * cos(bearing) - crossTrack * sin(bearing),
-            eastMeters = distance * sin(bearing) + crossTrack * cos(bearing),
-            headingDegrees = degrees(bearing + PI),
-            speedMetersPerSecond = payoutSpeed,
+            northMeters = endNorth * progress - crossTrack * sin(geometry.downwind),
+            eastMeters = endEast * progress + crossTrack * cos(geometry.downwind),
+            headingDegrees = degrees(geometry.downwind),
+            speedMetersPerSecond = geometry.payoutSpeed * speed,
         )
     }
 
-    private fun payoutDuration(placement: AnchorPlacementMode, radius: Double, speed: Double, seed: Long): Double {
+    private fun payoutDuration(placement: AnchorPlacementMode, geometry: Geometry, speed: Double): Double {
         val hold = if (placement == AnchorPlacementMode.BACKDOWN) 8.0 else 0.0
-        val payoutSpeed = (0.65 + seeded(seed, 31) * 0.35) * speed
-        return hold + radius / payoutSpeed
+        val travel = hypot(geometry.centreNorth + geometry.radius * cos(geometry.downwind), geometry.centreEast + geometry.radius * sin(geometry.downwind))
+        return hold + travel / (geometry.payoutSpeed * speed)
     }
 
-    private fun stableDrop(seconds: Double, seed: Long) = DemoTrajectoryPoint(
-        northMeters = sin(seconds * 0.83 + seeded(seed, 41) * PI) * 0.28,
-        eastMeters = sin(seconds * 1.13 + seeded(seed, 42) * PI) * 0.28,
-        headingDegrees = seeded(seed, 43) * 360.0,
-        speedMetersPerSecond = 0.04,
-    )
+    private fun lingeringOffset(simulatedSeconds: Double, seed: Long): Double {
+        val targets = doubleArrayOf(0.0, 1.05, 2.15, 3.25, 2.05, .78, -.52, -1.72, -2.82, -1.45, 0.0)
+        val segmentSeconds = 24.0 + seeded(seed, 94) * 9.0
+        val index = floor(simulatedSeconds / segmentSeconds).toInt().coerceAtLeast(0)
+        val local = simulatedSeconds - index * segmentSeconds
+        val start=(seeded(seed,95)*targets.lastIndex).toInt().coerceIn(0,targets.lastIndex-1);val direction=if(seeded(seed,96)<.5)-1.0 else 1.0;val scale=.90+seeded(seed,97)*.20
+        fun target(at:Int)=targets[(start+at)%targets.lastIndex]*direction*scale+(seeded(seed,at+100)-.5)*.16
+        val current = target(index);val next = target(index+1)
+        val dwell=segmentSeconds*.32;val blend = smoothStep(((local-dwell)/(segmentSeconds-dwell)).coerceIn(0.0, 1.0))
+        return current + (next - current) * blend
+    }
 
-    private fun origin() = DemoTrajectoryPoint(0.0, 0.0, 0.0, 0.0)
+    private fun geometry(alarmRadius: Double, seed: Long): Geometry {
+        val radius = (alarmRadius * (.52 + seeded(seed, 1) * .13)).coerceIn(15.0, 78.0)
+        val downwind = seeded(seed, 32) * 2.0 * PI
+        val centreOffset = (5.0 + seeded(seed, 2) * 8.0).coerceAtMost(radius * .28)
+        return Geometry(
+            radius = radius,
+            downwind = downwind,
+            centreNorth = -centreOffset * cos(downwind),
+            centreEast = -centreOffset * sin(downwind),
+            payoutSpeed = .62 + seeded(seed, 31) * .30,
+        )
+    }
 
-    private fun polar(radius: Double, angle: Double, speed: Double) = DemoTrajectoryPoint(
-        northMeters = radius * cos(angle),
-        eastMeters = radius * sin(angle),
+    private fun orbit(geometry: Geometry, radius: Double, angle: Double, speed: Double) = DemoTrajectoryPoint(
+        northMeters = geometry.centreNorth + radius * cos(angle),
+        eastMeters = geometry.centreEast + radius * sin(angle),
         headingDegrees = degrees(angle + PI),
         speedMetersPerSecond = speed,
     )
 
+    private fun withEvidence(point: DemoTrajectoryPoint, geometry: Geometry, seconds: Double, seed: Long): DemoTrajectoryPoint {
+        val toAnchor = degrees(atan2(geometry.centreEast - point.eastMeters, geometry.centreNorth - point.northMeters))
+        val windAngle = 8.0 + smoothNoise(seconds / 22.0, seed + 81) * 4.0
+        val windDirection = (toAnchor + windAngle + 360.0) % 360.0
+        val windSpeed = 10.0 + smoothNoise(seconds / 31.0, seed + 82) * 2.0
+        return point.copy(
+            anchorNorthMeters = geometry.centreNorth,
+            anchorEastMeters = geometry.centreEast,
+            headingToAnchorDegrees = toAnchor,
+            trueWindDirectionDegrees = windDirection,
+            trueWindAngleDegrees = windAngle,
+            apparentWindAngleDegrees = windAngle + smoothNoise(seconds / 17.0, seed + 83) * 2.0,
+            windSpeedKnots = windSpeed,
+            evidenceSequence = seconds.toLong(),
+        )
+    }
+
+    private fun stableDrop(seconds: Double, seed: Long) = DemoTrajectoryPoint(
+        northMeters = sin(seconds * .83 + seeded(seed, 41) * PI) * .24,
+        eastMeters = sin(seconds * 1.13 + seeded(seed, 42) * PI) * .24,
+        headingDegrees = seeded(seed, 43) * 360.0,
+        speedMetersPerSecond = .04,
+    )
+
+    private fun origin() = DemoTrajectoryPoint(0.0, 0.0, 0.0, 0.0)
+    private fun simulationRate(speed:Double)=sqrt(speed)
     private fun smoothStep(value: Double) = value * value * (3.0 - 2.0 * value)
 
     private fun smoothNoise(value: Double, seed: Long): Double {
-        val whole = kotlin.math.floor(value).toLong()
+        val whole = floor(value).toLong()
         val fraction = smoothStep(value - whole)
         val first = seeded(seed, whole.toInt()) * 2.0 - 1.0
         val second = seeded(seed, (whole + 1).toInt()) * 2.0 - 1.0

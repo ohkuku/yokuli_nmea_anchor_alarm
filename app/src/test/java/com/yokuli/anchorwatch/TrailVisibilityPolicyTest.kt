@@ -7,6 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TrailVisibilityPolicyTest {
+    @Test fun newestSixHundredMetersRemainStronglyVisible(){
+        assertTrue(TrailVisibilityPolicy.alphaForDistanceFromNewest(0.0)>=.95f)
+        assertTrue(TrailVisibilityPolicy.alphaForDistanceFromNewest(600.0)>=.75f)
+        assertTrue(TrailVisibilityPolicy.alphaForDistanceFromNewest(1_500.0)<TrailVisibilityPolicy.alphaForDistanceFromNewest(600.0))
+    }
     private fun point(index: Int, timestamp: Long) = TrackPointEntity(
         sessionId = 1,
         timestamp = timestamp,

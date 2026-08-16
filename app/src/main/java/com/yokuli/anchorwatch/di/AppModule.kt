@@ -10,7 +10,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 @Module @InstallIn(SingletonComponent::class)object AppModule{
- @Provides @Singleton fun db(@ApplicationContext c:Context)=Room.databaseBuilder(c,AppDatabase::class.java,"anchor-watch.db").addMigrations(Migration1To2,Migration2To3,Migration3To4,Migration4To5).build()
+ @Provides @Singleton fun db(@ApplicationContext c:Context)=Room.databaseBuilder(c,AppDatabase::class.java,"anchor-watch.db").addMigrations(Migration1To2,Migration2To3,Migration3To4,Migration4To5,Migration5To6).build()
  @Provides fun dao(db:AppDatabase)=db.anchorDao()
  @Provides @Singleton fun settings(@ApplicationContext c:Context)=SettingsRepository(c)
 }

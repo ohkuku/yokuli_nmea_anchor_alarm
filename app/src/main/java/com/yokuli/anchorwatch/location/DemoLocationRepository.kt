@@ -5,6 +5,7 @@ import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.NavigationFix
+import com.yokuli.anchorwatch.domain.model.PositionProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
@@ -79,6 +80,6 @@ class DemoLocationRepository @Inject constructor(){
         val distance=hypot(point.northMeters,point.eastMeters)
         val bearing=(Math.toDegrees(atan2(point.eastMeters,point.northMeters))+360.0)%360.0
         val coordinate=if(distance<.001)current.originLatitude to current.originLongitude else AnchorGeometry.project(current.originLatitude,current.originLongitude,bearing,distance)
-        return NavigationFix(latitude=coordinate.first,longitude=coordinate.second,timestampUtcMillis=System.currentTimeMillis(),receivedElapsedRealtime=nowElapsed,sogKnots=point.speedMetersPerSecond*1.943844,cogTrueDegrees=point.headingDegrees,headingTrueDegrees=point.headingDegrees,hdop=.8,fixQuality=1,satellites=12,sourceSentence="DEMO:${current.scenario.name}",valid=true).also{_fix.value=it}
+        return NavigationFix(latitude=coordinate.first,longitude=coordinate.second,timestampUtcMillis=System.currentTimeMillis(),receivedElapsedRealtime=nowElapsed,sogKnots=point.speedMetersPerSecond*1.943844,cogTrueDegrees=point.headingDegrees,headingTrueDegrees=point.headingToAnchorDegrees,hdop=.8,fixQuality=1,satellites=12,horizontalAccuracyMeters=2.5,positionProvider=PositionProvider.DEMO,sourceSentence="DEMO:${current.scenario.name}",valid=true,windDirectionTrueDegrees=point.trueWindDirectionDegrees,windSpeedKnots=point.windSpeedKnots,trueWindAngleDegrees=point.trueWindAngleDegrees,apparentWindAngleDegrees=point.apparentWindAngleDegrees,trueWindSpeedKnots=point.windSpeedKnots,apparentWindSpeedKnots=point.windSpeedKnots?.times(.98),headingSource=com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL,headingQuality=com.yokuli.anchorwatch.domain.model.HeadingQuality.STABLE,headingSampleSequence=point.evidenceSequence,windSampleSequence=point.evidenceSequence).also{_fix.value=it}
     }
 }

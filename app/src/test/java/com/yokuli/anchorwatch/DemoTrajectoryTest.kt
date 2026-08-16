@@ -18,6 +18,12 @@ class DemoTrajectoryTest {
         }
     }
 
+    @Test fun automaticDemoKeepsTheTrueCentreOffsetFromTheDropCoordinate(){
+        val point=DemoTrajectory.point(0,AnchorPlacementMode.BACKDOWN,DemoScenario.SAFE_SWING,70.0,1,1234)
+        assertTrue(hypot(point.anchorNorthMeters,point.anchorEastMeters)>4.0)
+        assertTrue(point.headingToAnchorDegrees!=null&&point.trueWindDirectionDegrees!=null&&point.windSpeedKnots!!>3.5)
+    }
+
     @Test fun centerDropStartsSwingingWhileBackdownKeepsAStableDropCluster() {
         val center=DemoTrajectory.point(6_000,AnchorPlacementMode.CENTER_DROP,DemoScenario.SAFE_SWING,70.0,1)
         val backdown=DemoTrajectory.point(6_000,AnchorPlacementMode.BACKDOWN,DemoScenario.SAFE_SWING,70.0,1)
@@ -48,6 +54,13 @@ class DemoTrajectoryTest {
         }
         val estimate=BackdownCenterEstimator().estimateSamples(samples,45.0)!!
         assertTrue(estimate.confidence!=Confidence.HIGH)
+    }
+
+    @Test fun repeatedDemoSwingAndWindEvidenceCanProduceACandidateAfterFiveMinutes(){
+        val points=(0..360).map{second->DemoTrajectory.point(second*1_000L,AnchorPlacementMode.BACKDOWN,DemoScenario.WIND_SHIFT,80.0,5,991)}
+        val samples=points.mapIndexed{second,point->BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8,point.headingToAnchorDegrees,point.headingDegrees,point.speedMetersPerSecond*1.943844,point.trueWindDirectionDegrees,point.windSpeedKnots,point.apparentWindAngleDegrees,point.trueWindAngleDegrees,point.windSpeedKnots,point.windSpeedKnots,point.evidenceSequence,point.evidenceSequence)}
+        val estimate=BackdownCenterEstimator().estimateSamples(samples,60.0)!!
+        assertTrue(estimate.angularCoverageDegrees>=200.0);assertTrue(estimate.angularSectorCount>=8);assertTrue(estimate.confidence==Confidence.HIGH)
     }
 
     @Test fun differentSessionsKeepTheScenarioButChangeItsNaturalMotion() {

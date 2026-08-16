@@ -13,3 +13,11 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 AndroidX, Jetpack Compose, Google Maps SDK, Google Play services, Kotlin, Kotlin Coroutines, Hilt and Room retain their respective licenses and copyrights.
+
+## LINZ Data Service
+
+When a build is configured to display the optional hydrographic chart-image overlay, the tiles are requested from a user-configured LINZ Data Service layer and are not bundled in this repository.
+
+Contains data sourced from the LINZ Data Service licensed for reuse under CC BY 4.0.
+
+Attribution guidance: https://www.linz.govt.nz/products-services/data/licensing-and-using-data/attributing-linz-data

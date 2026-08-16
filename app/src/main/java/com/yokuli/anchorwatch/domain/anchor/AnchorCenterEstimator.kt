@@ -1,30 +1,137 @@
 package com.yokuli.anchorwatch.domain.anchor
 
-import com.yokuli.anchorwatch.domain.model.*
-import kotlin.math.*
+import com.yokuli.anchorwatch.domain.model.AnchorEstimate
+import com.yokuli.anchorwatch.domain.model.Confidence
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.pow
+import kotlin.math.sqrt
 import kotlin.random.Random
 
-class AnchorCenterEstimator(private val random:Random=Random.Default){
- data class Point(val latitude:Double,val longitude:Double)
- fun estimate(points:List<Point>,expectedRadius:Double?=null):AnchorEstimate?{
-  if(points.size<20)return null
-  val oLat=points.map{it.latitude}.average();val oLon=points.map{it.longitude}.average();val cosLat=cos(Math.toRadians(oLat));val xy=points.map{P((it.longitude-oLon)*111320*cosLat,(it.latitude-oLat)*110540)}
-  val hull=hull(xy);if(hull.size<3)return null
-  var best:Circle?=null;var bestIn=emptyList<P>();repeat(300){val s=hull.shuffled(random).take(3);val c=circumcircle(s[0],s[1],s[2])?:return@repeat;val tolerance=max(3.5,c.r*.12);val inside=hull.filter{abs(hypot(it.x-c.x,it.y-c.y)-c.r)<=tolerance};if(inside.size>bestIn.size){best=c;bestIn=inside}}
-  if(bestIn.size<3)return null;val fit=leastSquares(bestIn)?:best!!;val residual=sqrt(hull.map{(hypot(it.x-fit.x,it.y-fit.y)-fit.r).pow(2)}.average());val angles=hull.map{(Math.toDegrees(atan2(it.y-fit.y,it.x-fit.x))+360)%360}.sorted();val maxGap=(angles.zipWithNext{a,b->b-a}+((angles.first()+360)-angles.last())).maxOrNull()?:360.0;val coverage=360-maxGap
-  val priorPenalty=expectedRadius?.let{abs(fit.r-it)/max(it,1.0)}?:0.0
-  val sectorCount=angles.map{(it/30.0).toInt().coerceIn(0,11)}.distinct().size
-  val confidence=when{points.size>=120&&coverage>=200&&sectorCount>=8&&residual<=max(4.0,fit.r*.12)&&priorPenalty<.35->Confidence.HIGH;coverage>=90&&sectorCount>=4&&residual<=8->Confidence.MEDIUM;else->Confidence.LOW}
-  return AnchorEstimate(oLat+fit.y/110540,oLon+fit.x/(111320*cosLat),fit.r,confidence,residual,coverage,points.size)
- }
- private data class P(val x:Double,val y:Double);private data class Circle(val x:Double,val y:Double,val r:Double)
- private fun hull(p:List<P>):List<P>{
-  val s=p.distinct().sortedWith(compareBy<P>{it.x}.thenBy{it.y});if(s.size<=2)return s
-  fun cross(a:P,b:P,c:P):Double{return (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)}
-  val lo=mutableListOf<P>();for(x in s){while(lo.size>=2&&cross(lo[lo.size-2],lo.last(),x)<=0)lo.removeAt(lo.lastIndex);lo+=x}
-  val hi=mutableListOf<P>();for(x in s.asReversed()){while(hi.size>=2&&cross(hi[hi.size-2],hi.last(),x)<=0)hi.removeAt(hi.lastIndex);hi+=x}
-  return lo.dropLast(1)+hi.dropLast(1)
- }
- private fun circumcircle(a:P,b:P,c:P):Circle?{val d=2*(a.x*(b.y-c.y)+b.x*(c.y-a.y)+c.x*(a.y-b.y));if(abs(d)<1e-8)return null;val aa=a.x*a.x+a.y*a.y;val bb=b.x*b.x+b.y*b.y;val cc=c.x*c.x+c.y*c.y;val x=(aa*(b.y-c.y)+bb*(c.y-a.y)+cc*(a.y-b.y))/d;val y=(aa*(c.x-b.x)+bb*(a.x-c.x)+cc*(b.x-a.x))/d;return Circle(x,y,hypot(a.x-x,a.y-y))}
- private fun leastSquares(p:List<P>):Circle?{var sx=0.0;var sy=0.0;var sxx=0.0;var syy=0.0;var sxy=0.0;var sxz=0.0;var syz=0.0;var sz=0.0;p.forEach{val z=it.x*it.x+it.y*it.y;sx+=it.x;sy+=it.y;sxx+=it.x*it.x;syy+=it.y*it.y;sxy+=it.x*it.y;sxz+=it.x*z;syz+=it.y*z;sz+=z};val n=p.size.toDouble();val a=arrayOf(doubleArrayOf(sxx,sxy,sx),doubleArrayOf(sxy,syy,sy),doubleArrayOf(sx,sy,n));val b=doubleArrayOf(-sxz,-syz,-sz);for(i in 0..2){val pivot=(i..2).maxBy{abs(a[it][i])};val tr=a[i];a[i]=a[pivot];a[pivot]=tr;val tv=b[i];b[i]=b[pivot];b[pivot]=tv;if(abs(a[i][i])<1e-9)return null;for(j in i+1..2){val q=a[j][i]/a[i][i];for(k in i..2)a[j][k]-=q*a[i][k];b[j]-=q*b[i]}};val v=DoubleArray(3);for(i in 2 downTo 0){v[i]=(b[i]-(i+1..2).sumOf{a[i][it]*v[it]})/a[i][i]};val x=-v[0]/2;val y=-v[1]/2;return Circle(x,y,sqrt(max(0.0,x*x+y*y-v[2])))}
+/** Robust partial-circle fit. Outliers are scored, not placed on a convex hull. */
+class AnchorCenterEstimator(private val random: Random = Random.Default) {
+    data class Point(val latitude: Double, val longitude: Double)
+    private data class LocalPoint(val x: Double, val y: Double)
+    private data class Circle(val x: Double, val y: Double, val radius: Double)
+
+    fun estimate(points: List<Point>, expectedRadius: Double? = null): AnchorEstimate? {
+        if (points.size < 20) return null
+        val originLatitude = points.map { it.latitude }.average()
+        val originLongitude = points.map { it.longitude }.average()
+        val cosLatitude = cos(Math.toRadians(originLatitude)).coerceAtLeast(.01)
+        val local = evenlySample(points, 800).map {
+            LocalPoint(
+                (it.longitude - originLongitude) * 111_320.0 * cosLatitude,
+                (it.latitude - originLatitude) * 110_540.0,
+            )
+        }
+
+        var best: Circle? = null
+        var bestInliers: List<LocalPoint> = emptyList()
+        var bestScore = Double.NEGATIVE_INFINITY
+        repeat(500) {
+            val sample = local.shuffled(random).take(3)
+            val circle = circumcircle(sample[0], sample[1], sample[2]) ?: return@repeat
+            if (!circle.radius.isFinite() || circle.radius < 2.0 || circle.radius > 2_000.0) return@repeat
+            val tolerance = max(3.5, circle.radius * .12)
+            val residuals = local.map { point -> abs(hypot(point.x - circle.x, point.y - circle.y) - circle.radius) }
+            val inliers = local.filterIndexed { index, _ -> residuals[index] <= tolerance }
+            val medianResidual = median(residuals)
+            val priorPenalty = expectedRadius?.let { abs(circle.radius - it) / max(it, 1.0) } ?: 0.0
+            val score = inliers.size - medianResidual * .15 - priorPenalty * local.size * .08
+            if (score > bestScore) {
+                bestScore = score
+                best = circle
+                bestInliers = inliers
+            }
+        }
+        val minimumInliers = max(12, (local.size * .65).toInt())
+        if (best == null || bestInliers.size < minimumInliers) return null
+        val fit = leastSquares(bestInliers) ?: best!!
+        val residuals = local.map { abs(hypot(it.x - fit.x, it.y - fit.y) - fit.radius) }.sorted()
+        val robustResiduals = residuals.take(max(1, (residuals.size * .9).toInt()))
+        val rms = sqrt(robustResiduals.map { it.pow(2) }.average())
+        val inlierAngles = bestInliers.map {
+            (Math.toDegrees(atan2(it.y - fit.y, it.x - fit.x)) + 360.0) % 360.0
+        }.sorted()
+        val maximumGap = (inlierAngles.zipWithNext { first, second -> second - first } +
+            (inlierAngles.first() + 360.0 - inlierAngles.last())).maxOrNull() ?: 360.0
+        val coverage = 360.0 - maximumGap
+        // Evaluate a few bin rotations so a sample at 29.999999° does not lose
+        // an entire sector because of floating-point boundary placement.
+        val sectors = (0 until 30 step 5).maxOf { offset ->
+            inlierAngles.map { (((it + offset) % 360.0) / 30.0).toInt() }.distinct().size
+        }
+        val priorPenalty = expectedRadius?.let { abs(fit.radius - it) / max(it, 1.0) } ?: 0.0
+        val confidence = when {
+            points.size >= 120 && coverage >= 200.0 && sectors >= 8 &&
+                rms <= max(4.0, fit.radius * .12) && priorPenalty < .35 -> Confidence.HIGH
+            coverage >= 90.0 && sectors >= 4 && rms <= max(8.0, fit.radius * .2) -> Confidence.MEDIUM
+            else -> Confidence.LOW
+        }
+        return AnchorEstimate(
+            latitude = originLatitude + fit.y / 110_540.0,
+            longitude = originLongitude + fit.x / (111_320.0 * cosLatitude),
+            radiusMeters = fit.radius,
+            confidence = confidence,
+            rmsErrorMeters = rms,
+            angularCoverageDegrees = coverage,
+            sampleCount = points.size,
+        )
+    }
+
+    private fun circumcircle(first: LocalPoint, second: LocalPoint, third: LocalPoint): Circle? {
+        val denominator = 2 * (first.x * (second.y - third.y) + second.x * (third.y - first.y) + third.x * (first.y - second.y))
+        if (abs(denominator) < 1e-8) return null
+        val aa = first.x * first.x + first.y * first.y
+        val bb = second.x * second.x + second.y * second.y
+        val cc = third.x * third.x + third.y * third.y
+        val x = (aa * (second.y - third.y) + bb * (third.y - first.y) + cc * (first.y - second.y)) / denominator
+        val y = (aa * (third.x - second.x) + bb * (first.x - third.x) + cc * (second.x - first.x)) / denominator
+        return Circle(x, y, hypot(first.x - x, first.y - y))
+    }
+
+    private fun leastSquares(points: List<LocalPoint>): Circle? {
+        var sx = 0.0; var sy = 0.0; var sxx = 0.0; var syy = 0.0; var sxy = 0.0
+        var sxz = 0.0; var syz = 0.0; var sz = 0.0
+        points.forEach {
+            val z = it.x * it.x + it.y * it.y
+            sx += it.x; sy += it.y; sxx += it.x * it.x; syy += it.y * it.y; sxy += it.x * it.y
+            sxz += it.x * z; syz += it.y * z; sz += z
+        }
+        val count = points.size.toDouble()
+        val matrix = arrayOf(doubleArrayOf(sxx, sxy, sx), doubleArrayOf(sxy, syy, sy), doubleArrayOf(sx, sy, count))
+        val values = doubleArrayOf(-sxz, -syz, -sz)
+        for (row in 0..2) {
+            val pivot = (row..2).maxBy { abs(matrix[it][row]) }
+            val swap = matrix[row]; matrix[row] = matrix[pivot]; matrix[pivot] = swap
+            val valueSwap = values[row]; values[row] = values[pivot]; values[pivot] = valueSwap
+            if (abs(matrix[row][row]) < 1e-9) return null
+            for (other in row + 1..2) {
+                val factor = matrix[other][row] / matrix[row][row]
+                for (column in row..2) matrix[other][column] -= factor * matrix[row][column]
+                values[other] -= factor * values[row]
+            }
+        }
+        val solved = DoubleArray(3)
+        for (row in 2 downTo 0) solved[row] =
+            (values[row] - (row + 1..2).sumOf { matrix[row][it] * solved[it] }) / matrix[row][row]
+        val x = -solved[0] / 2
+        val y = -solved[1] / 2
+        return Circle(x, y, sqrt(max(0.0, x * x + y * y - solved[2])))
+    }
+
+    private fun <T> evenlySample(values: List<T>, maximum: Int): List<T> =
+        if (values.size <= maximum) values else (0 until maximum).map {
+            values[(it.toLong() * values.lastIndex / (maximum - 1)).toInt()]
+        }
+
+    private fun median(values: List<Double>): Double {
+        val sorted = values.sorted()
+        val middle = sorted.size / 2
+        return if (sorted.size % 2 == 0) (sorted[middle - 1] + sorted[middle]) / 2.0 else sorted[middle]
+    }
 }

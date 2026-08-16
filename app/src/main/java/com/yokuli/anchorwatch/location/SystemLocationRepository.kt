@@ -12,6 +12,7 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationCompat
 import com.yokuli.anchorwatch.domain.model.NavigationFix
+import com.yokuli.anchorwatch.domain.model.PositionProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,8 +46,17 @@ class SystemLocationRepository @Inject constructor(
             receivedElapsedRealtime = received,
             sogKnots = location.speed.takeIf { location.hasSpeed() }?.times(1.943844),
             cogTrueDegrees = location.bearing.takeIf { location.hasBearing() }?.toDouble(),
-            headingTrueDegrees = location.bearing.takeIf { location.hasBearing() }?.toDouble(),
+            // Android bearing is course over ground. It is not bow heading,
+            // especially at anchor where tiny GPS motion makes it unstable.
+            headingTrueDegrees = null,
             altitudeMeters = location.altitude.takeIf { location.hasAltitude() },
+            horizontalAccuracyMeters = location.accuracy.takeIf { location.hasAccuracy() }?.toDouble(),
+            positionProvider = if (location.provider == LocationManager.GPS_PROVIDER) {
+                PositionProvider.ANDROID_GNSS
+            } else {
+                PositionProvider.ANDROID_NETWORK
+            },
+            isMockLocation = LocationCompat.isMock(location),
             hdop = null,
             sourceSentence = "SYSTEM_GPS:${location.provider}",
             valid = location.latitude in -90.0..90.0 && location.longitude in -180.0..180.0,

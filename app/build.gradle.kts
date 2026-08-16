@@ -11,7 +11,20 @@ plugins {
 val local = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load) }
 val mapsApiKey = local.getProperty("MAPS_API_KEY")
     ?.takeIf { it.isNotBlank() }
-    ?: System.getenv("MAPS_API_KEY").orEmpty()
+    ?: System.getenv("MAPS_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("YOKULI_MAPS_API_KEY").orNull.orEmpty()
+val linzApiKey = local.getProperty("LINZ_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: System.getenv("LINZ_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("YOKULI_LINZ_API_KEY").orNull.orEmpty()
+val linzLayerId = local.getProperty("LINZ_HYDRO_LAYER_ID")?.takeIf { it.isNotBlank() }
+    ?: System.getenv("LINZ_HYDRO_LAYER_ID")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("YOKULI_LINZ_HYDRO_LAYER_ID").orNull.orEmpty()
+val linzHydroTileTemplate = local.getProperty("LINZ_HYDRO_TILE_TEMPLATE")?.takeIf { it.isNotBlank() }
+    ?: System.getenv("LINZ_HYDRO_TILE_TEMPLATE")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("YOKULI_LINZ_HYDRO_TILE_TEMPLATE").orNull?.takeIf { it.isNotBlank() }
+    ?: if (linzApiKey.isNotBlank() && linzLayerId.isNotBlank()) "https://tiles-a.data-cdn.linz.govt.nz/services;key=$linzApiKey/tiles/v4/layer=$linzLayerId/EPSG:3857/{z}/{x}/{y}.png" else ""
+val linzHydroConfigured = linzHydroTileTemplate.startsWith("https://") && listOf("{z}", "{x}", "{y}").all(linzHydroTileTemplate::contains)
+fun String.asBuildConfigString() = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
 val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
@@ -30,6 +43,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
+        buildConfigField("String", "LINZ_HYDRO_TILE_TEMPLATE", linzHydroTileTemplate.asBuildConfigString())
+        buildConfigField("boolean", "LINZ_HYDRO_CONFIGURED", linzHydroConfigured.toString())
     }
     signingConfigs {
         if (releaseSigningAvailable) {

@@ -1,60 +1,116 @@
 name: Anchor by Yokuli Android CI
+
 on:
   push:
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Unit tests, lint and Debug APK
     runs-on: ubuntu-latest
-    permissions: { contents: read }
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '17', cache: gradle }
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests, lint and Debug APK
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Unit tests, lint and build
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --stacktrace
-      - name: Upload Debug APK
-        if: github.event_name == 'push'
+          LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
+          LINZ_HYDRO_LAYER_ID: ${{ secrets.LINZ_HYDRO_LAYER_ID }}
+          LINZ_HYDRO_TILE_TEMPLATE: ${{ secrets.LINZ_HYDRO_TILE_TEMPLATE }}
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug --stacktrace
+      - name: Upload installable Debug APK
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: anchor-by-yokuli-debug
+          name: anchor-by-yokuli-debug-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 30
       - name: Upload unit-test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: anchor-by-yokuli-build-reports
+          name: anchor-by-yokuli-build-reports-${{ github.sha }}
           path: |
-            app/build/reports/**
+            app/build/reports/tests/**
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+          if-no-files-found: warn
+          retention-days: 14
+
   integration:
+    name: Device integration tests (${{ matrix.shard }}/3)
+    needs: build
     runs-on: ubuntu-latest
-    permissions: { contents: read }
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            shard_index: 0
+          - shard: 2
+            shard_index: 1
+          - shard: 3
+            shard_index: 2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '17', cache: gradle }
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
       - name: Instrumented integration tests
         uses: reactivecircus/android-emulator-runner@v2
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
+          LINZ_HYDRO_LAYER_ID: ${{ secrets.LINZ_HYDRO_LAYER_ID }}
+          LINZ_HYDRO_TILE_TEMPLATE: ${{ secrets.LINZ_HYDRO_TILE_TEMPLATE }}
         with:
           api-level: 34
           arch: x86_64
+          target: google_apis
           profile: pixel_2
           disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
+            adb wait-for-device
+            adb shell settings put global window_animation_scale 0
+            adb shell settings put global transition_animation_scale 0
+            adb shell settings put global animator_duration_scale 0
             adb emu geo fix 174.7633 -36.8485
-            ./gradlew connectedDebugAndroidTest --stacktrace
+            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace \
+              -Pandroid.testInstrumentationRunnerArguments.numShards=3 \
+              -Pandroid.testInstrumentationRunnerArguments.shardIndex=${{ matrix.shard_index }}
       - name: Upload integration reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: anchor-by-yokuli-integration-reports
-          path: app/build/reports/androidTests/**
+          name: anchor-by-yokuli-integration-shard-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
           if-no-files-found: warn
+          retention-days: 14

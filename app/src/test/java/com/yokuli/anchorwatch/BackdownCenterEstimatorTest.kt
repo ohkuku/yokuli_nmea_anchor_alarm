@@ -32,7 +32,7 @@ class BackdownCenterEstimatorTest {
             fix(radius*kotlin.math.cos(angle),radius*kotlin.math.sin(angle),index*1_000L)
         }
         val estimate=BackdownCenterEstimator().estimate(stable+swings,40.0)!!
-        assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+        assertEquals("$estimate",com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
         assertTrue(kotlin.math.abs(estimate.latitude)<3.0/110_540.0)
         assertTrue(kotlin.math.abs(estimate.longitude)<3.0/111_320.0)
         assertTrue(estimate.angularCoverageDegrees>=200.0)
@@ -50,7 +50,7 @@ class BackdownCenterEstimatorTest {
             BackdownCenterEstimator.Sample(latitude=25.0*kotlin.math.cos(angle)/110_540.0,longitude=25.0*kotlin.math.sin(angle)/111_320.0,timestamp=index*1_000L,hdop=.8,headingTrueDegrees=heading,sogKnots=.15,windDirectionTrueDegrees=(heading+12.0)%360.0,apparentWindAngleDegrees=12.5,trueWindAngleDegrees=12.0,trueWindSpeedKnots=12.0,apparentWindSpeedKnots=12.4)
         }
         val estimate=BackdownCenterEstimator().estimateSamples(stable+swings,40.0)!!
-        assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+        assertEquals("$estimate",com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
     }
 
     @Test fun stableButGeometricallyWrongWindEvidenceCannotAccelerateResolution(){
@@ -104,5 +104,28 @@ class BackdownCenterEstimatorTest {
     @Test fun anImmediatelyMovingStartStillCannotResolveFromOneLine(){
         val estimate=BackdownCenterEstimator().estimate((0..70).map{index->fix(index.coerceAtMost(35).toDouble(),time=index*1_000L)},40.0)!!
         assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.MEDIUM,estimate.confidence)
+    }
+
+    @Test fun pausedWallClockGapDoesNotCountAsGpsOnlyLearningTime(){
+        val fixes=(0..700).map{index->
+            val angle=Math.toRadians((index*7.0)%360.0)
+            val timestamp=index*1_000L+if(index>350)30*60_000L else 0L
+            fix(25.0*kotlin.math.cos(angle),25.0*kotlin.math.sin(angle),timestamp)
+        }
+        val estimate=BackdownCenterEstimator().estimate(fixes,40.0)!!
+        assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.MEDIUM,estimate.confidence)
+    }
+
+    @Test fun lateStartAwayFromTheAnchorStillConvergesWithoutUsingStartAsAPrior(){
+        val first=fix(42.0,0.0,0L)
+        val swing=(1..960).map{index->
+            val angle=Math.toRadians(105.0+115.0*kotlin.math.sin(2.0*Math.PI*index/180.0))
+            val radius=27.0+.5*kotlin.math.sin(index*.31)
+            fix(radius*kotlin.math.cos(angle),radius*kotlin.math.sin(angle),index*1_000L)
+        }
+        val estimate=BackdownCenterEstimator().estimate(listOf(first)+swing,45.0)!!
+        assertEquals("$estimate",com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+        assertTrue(kotlin.math.abs(estimate.latitude)<3.0/110_540.0)
+        assertTrue(kotlin.math.abs(estimate.longitude)<3.0/111_320.0)
     }
 }

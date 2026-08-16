@@ -1,5 +1,7 @@
 package com.yokuli.anchorwatch.data.nmea
 
+import com.yokuli.anchorwatch.data.sharing.NetworkAddressProvider
+import com.yokuli.anchorwatch.data.sharing.NmeaSelfLoopPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
@@ -10,22 +12,25 @@ import java.net.SocketTimeoutException
 import java.net.Socket
 import javax.inject.Inject
 
-class NmeaEndpointPreflight @Inject constructor() {
-    suspend fun check(profile: ConnectionProfile): Result<Unit> = withContext(Dispatchers.IO) {
+class NmeaEndpointPreflight @Inject constructor(private val localAddresses: NetworkAddressProvider) {
+    constructor() : this(NetworkAddressProvider())
+    suspend fun check(profile: ConnectionProfile, sharingEnabled:Boolean=false, sharingPort:Int=10111): Result<Unit> = withContext(Dispatchers.IO) {
         val result=runCatching {
-            validate(profile)?.let { error(it) }
+            validate(profile,sharingEnabled,sharingPort)?.let { error(it) }
+            if(profile.protocol==Protocol.TCP&&sharingEnabled&&profile.port==sharingPort){val resolved=InetAddress.getByName(profile.host);if(resolved.isLoopbackAddress||resolved.isAnyLocalAddress||localAddresses.localAddresses().any{it.substringBefore('%')==resolved.hostAddress?.substringBefore('%')})error(NmeaSelfLoopPolicy.MESSAGE)}
             if (profile.protocol == Protocol.TCP) checkTcp(profile) else checkUdp(profile)
         }
         result.fold(onSuccess={Result.success(Unit)},onFailure={error->Result.failure(IllegalStateException(when(error){is SocketTimeoutException->"The endpoint responded, but no valid NMEA sentence arrived within 4 seconds.";else->error.message?.takeIf{it.isNotBlank()}?:"The NMEA endpoint test failed."},error))})
     }
 
-    fun validate(profile: ConnectionProfile): String? {
+    fun validate(profile: ConnectionProfile, sharingEnabled:Boolean=false, sharingPort:Int=10111): String? {
         if (profile.port !in 1..65535) return "Port must be between 1 and 65535."
         if (profile.protocol == Protocol.TCP) {
             val host = profile.host
             if (host.isBlank()) return "Host or IP address is required."
             if (host != host.trim() || host.any(Char::isWhitespace) || "://" in host || '/' in host) return "Enter a host name or IP address, not a URL."
             if (host.length > 253) return "Host name is too long."
+            if(NmeaSelfLoopPolicy.isLiteralLoop(profile,sharingEnabled,sharingPort,localAddresses.localAddresses()))return NmeaSelfLoopPolicy.MESSAGE
         }
         return null
     }

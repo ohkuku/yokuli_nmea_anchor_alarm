@@ -48,3 +48,37 @@ object Migration4To5 : Migration(4, 5) {
         db.execSQL("ALTER TABLE track_points ADD COLUMN windSampleSequence INTEGER")
     }
 }
+
+object Migration5To6 : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN positionSource TEXT NOT NULL DEFAULT 'UNKNOWN'")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN anchorPositionMode TEXT NOT NULL DEFAULT 'KNOWN'")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN centerSource TEXT NOT NULL DEFAULT 'UNKNOWN'")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN usePhoneHeading INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateId INTEGER")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateCreatedAt INTEGER")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateDecision TEXT NOT NULL DEFAULT 'NONE'")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateNotificationShown INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateRmsErrorMeters REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateAngularCoverageDegrees REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateAngularSectorCount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateSwingReversalCount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateTemporalFitConsistent INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateEffectiveDurationMillis INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateDirectionEvidenceConsistent INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN maxDistanceMeters REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN alarmCount INTEGER NOT NULL DEFAULT 0")
+
+        db.execSQL("ALTER TABLE track_points ADD COLUMN positionSource TEXT NOT NULL DEFAULT 'UNKNOWN'")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN positionProvider TEXT NOT NULL DEFAULT 'UNKNOWN'")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN horizontalAccuracyMeters REAL")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN fixTrust TEXT NOT NULL DEFAULT 'TRUSTED'")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN wasQuarantined INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN quarantineReason TEXT")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN headingSource TEXT NOT NULL DEFAULT 'NONE'")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN headingQuality TEXT NOT NULL DEFAULT 'UNAVAILABLE'")
+        db.execSQL("ALTER TABLE track_points ADD COLUMN headingEpoch INTEGER")
+        // Old rows cannot safely reveal the session source or heading origin.
+        db.execSQL("UPDATE track_points SET headingSource='NMEA_PHYSICAL', headingQuality='STABLE' WHERE headingMeasured=1")
+    }
+}

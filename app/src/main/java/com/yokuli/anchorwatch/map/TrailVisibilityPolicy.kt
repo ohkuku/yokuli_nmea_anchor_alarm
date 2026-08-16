@@ -6,6 +6,13 @@ import com.yokuli.anchorwatch.data.database.TrackPointEntity
 object TrailVisibilityPolicy {
     const val VISIBLE_WINDOW_MILLIS = 24L * 60L * 60L * 1_000L
     const val MAX_RENDER_POINTS = 4_800
+    const val STRONG_VISIBILITY_METERS = 600.0
+
+    fun alphaForDistanceFromNewest(distanceMeters:Double):Float=when{
+        distanceMeters<=STRONG_VISIBILITY_METERS->(.96-distanceMeters.coerceAtLeast(0.0)/STRONG_VISIBILITY_METERS*.20).toFloat()
+        distanceMeters<=2_000.0->(.76-(distanceMeters-STRONG_VISIBILITY_METERS)/1_400.0*.50).toFloat()
+        else->.14f
+    }
 
     fun visiblePoints(points: List<TrackPointEntity>): List<TrackPointEntity> {
         if (points.size <= 2) return points

@@ -1,0 +1,131 @@
+package com.yokuli.anchorwatch
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.os.PowerManager
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.*
+import com.google.maps.android.compose.*
+import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
+import com.yokuli.anchorwatch.data.nmea.Protocol
+import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
+import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
+import com.yokuli.anchorwatch.domain.anchor.AnchorRangeCalculator
+import com.yokuli.anchorwatch.domain.anchor.CoordinateParser
+import com.yokuli.anchorwatch.domain.anchor.WindAnchorEvidence
+import com.yokuli.anchorwatch.domain.model.AppLanguage
+import com.yokuli.anchorwatch.domain.model.AlarmSound
+import com.yokuli.anchorwatch.domain.model.AlarmState
+import com.yokuli.anchorwatch.domain.model.AlarmType
+import com.yokuli.anchorwatch.domain.model.AnchorCenterStatus
+import com.yokuli.anchorwatch.domain.model.AnchorCenterSource
+import com.yokuli.anchorwatch.domain.model.AnchorPositionMode
+import com.yokuli.anchorwatch.domain.model.CandidateDecision
+import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
+import com.yokuli.anchorwatch.domain.model.AnchorRangeMode
+import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
+import com.yokuli.anchorwatch.domain.model.DemoScenario
+import com.yokuli.anchorwatch.domain.model.GpsDataSource
+import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.location.MockGpsState
+import com.yokuli.anchorwatch.location.GpsSourceSafety
+import com.yokuli.anchorwatch.location.NmeaSourceAvailability
+import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
+import com.yokuli.anchorwatch.localization.localized
+import com.yokuli.anchorwatch.localization.usesChinese
+import com.yokuli.anchorwatch.map.FollowCameraMove
+import com.yokuli.anchorwatch.map.MapCameraPolicy
+import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
+import com.yokuli.anchorwatch.ui.theme.YokuliTheme
+import java.text.DateFormat
+
+@Composable @OptIn(ExperimentalMaterial3Api::class)
+internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,start:(Double,Double,AnchorWatchInput)->Unit){
+ val now=android.os.SystemClock.elapsedRealtime();val proxyActive=GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state)
+ val nmeaReady=NmeaSourceSelectionPolicy.availability(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1000L)==NmeaSourceAvailability.AVAILABLE
+ val systemReady=state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&now-it.receivedElapsedRealtime<state.settings.gpsLossSeconds*1000L&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}==true&&!proxyActive
+ var source by remember{mutableStateOf(if(state.settings.demoMode)GpsDataSource.DEMO else state.settings.gpsDataSource)}
+ var estimate by remember{mutableStateOf(false)};var knownMethod by remember{mutableStateOf(AnchorCenterSource.CURRENT_POSITION)}
+ var coordinates by remember{mutableStateOf("")};var picked by remember{mutableStateOf<LatLng?>(null)};var showMapPicker by remember{mutableStateOf(false)}
+ var rangeMode by remember{mutableStateOf(AnchorRangeMode.BASIC)};var preset by remember{mutableStateOf(AnchorSafetyPreset.BALANCED)}
+ var depth by remember{mutableStateOf(state.nmeaFix?.depthMeters?.let{"%.1f".format(it)}?:"")};var rode by remember{mutableStateOf("40")};var bow by remember{mutableStateOf("%.1f".format(state.settings.bowRollerHeightMeters))};var boat by remember{mutableStateOf("%.1f".format(state.settings.boatLengthMeters))};var radius by remember{mutableStateOf("%.0f".format(state.settings.preferredAlarmRadiusMeters))};var usePhoneHeading by remember{mutableStateOf(false)}
+ fun numeric(value:String)=value.filter{it.isDigit()||it=='.'}
+ val sourceFix=when(source){GpsDataSource.NMEA->state.nmeaFix;GpsDataSource.SYSTEM->state.systemFix;GpsDataSource.DEMO->state.systemFix}
+ val sourceReady=when(source){GpsDataSource.NMEA->nmeaReady;GpsDataSource.SYSTEM->systemReady;GpsDataSource.DEMO->systemReady}
+ val parsed=CoordinateParser.parse(coordinates).getOrNull();val selectedCoordinate=when{estimate||knownMethod==AnchorCenterSource.CURRENT_POSITION->sourceFix?.let{LatLng(it.latitude,it.longitude)};knownMethod==AnchorCenterSource.MANUAL_COORDINATES->parsed?.let{LatLng(it.latitude,it.longitude)};else->picked}
+ val depthValue=depth.toDoubleOrNull();val rodeValue=rode.toDoubleOrNull();val bowValue=bow.toDoubleOrNull();val boatValue=boat.toDoubleOrNull();val enteredRadius=radius.toDoubleOrNull()
+ val effectiveRangeMode=if(estimate)AnchorRangeMode.BASIC else rangeMode
+ val geometryNeeded=estimate||effectiveRangeMode==AnchorRangeMode.ADVANCED;val geometryValid=!geometryNeeded||(depthValue!=null&&depthValue>=0&&rodeValue!=null&&rodeValue>0&&bowValue!=null&&bowValue>0&&rodeValue>depthValue+bowValue)
+ val placement=if(estimate)AnchorPlacementMode.BACKDOWN else AnchorPlacementMode.CENTER_DROP
+ val suggestion=if(effectiveRangeMode==AnchorRangeMode.ADVANCED&&geometryValid&&depthValue!=null&&rodeValue!=null&&bowValue!=null&&boatValue!=null&&boatValue>0)AnchorRangeCalculator.advanced(depthValue,rodeValue,boatValue,placement,preset,bowValue)else null
+ val finalRadius=if(effectiveRangeMode==AnchorRangeMode.ADVANCED)suggestion?.radiusMeters else enteredRadius
+ val notificationsReady=android.os.Build.VERSION.SDK_INT<33||ContextCompat.checkSelfPermission(androidx.compose.ui.platform.LocalContext.current,Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED
+ val valid=sourceReady&&selectedCoordinate!=null&&geometryValid&&finalRadius!=null&&finalRadius>0&&(effectiveRangeMode!=AnchorRangeMode.ADVANCED||suggestion!=null)
+ ModalBottomSheet(onDismissRequest=dismiss,dragHandle={BottomSheetDefaults.DragHandle()}){Column(Modifier.fillMaxWidth().fillMaxHeight(.94f).verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
+  Text(tr("Set anchor watch","设置锚警"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
+  Text(tr("Position source","定位数据源"),style=MaterialTheme.typography.titleMedium)
+  if(state.settings.demoMode)GpsSourceRow(tr("Demo GPS · locked","演示 GPS · 已锁定"),tr("Each session first captures the current real System GNSS position.","每次会话都会先获取当前真实系统 GNSS 位置。"),true,false,"setup_source_demo"){}
+  else{GpsSourceRow(tr("Phone GPS","手机 GPS"),if(proxyActive)tr("Unavailable while Android GPS Proxy is active.","Android GPS 代理开启时不可使用。")else if(systemReady)tr("GNSS ready · ±${state.systemFix?.horizontalAccuracyMeters?.toInt()?:"--"} m","GNSS 就绪 · ±${state.systemFix?.horizontalAccuracyMeters?.toInt()?:"--"} 米")else tr("Waiting for precise GNSS; network location is not accepted.","正在等待精确 GNSS；不接受网络粗略定位。"),source==GpsDataSource.SYSTEM,!proxyActive,"setup_source_system"){source=GpsDataSource.SYSTEM};HorizontalDivider();GpsSourceRow("NMEA GPS",if(nmeaReady)tr("Connected · HDOP ${state.nmeaFix?.hdop?.let{"%.1f".format(it)}?:"—"}","已连接 · HDOP ${state.nmeaFix?.hdop?.let{"%.1f".format(it)}?:"—"}")else tr("Connect NMEA and wait for a fresh valid fix first.","请先连接 NMEA 并等待新鲜有效定位。"),source==GpsDataSource.NMEA,nmeaReady,"setup_source_nmea"){source=GpsDataSource.NMEA}}
+  Text(tr("Anchor position","锚点位置"),style=MaterialTheme.typography.titleMedium)
+  Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(!estimate,{estimate=false},label={Text(tr("I know it","我知道锚点"))},modifier=Modifier.weight(1f));FilterChip(estimate,{estimate=true},label={Text(tr("Estimate it","自动估算"))},modifier=Modifier.weight(1f))}
+  if(!estimate){Column(verticalArrangement=Arrangement.spacedBy(8.dp)){GpsSourceRow(tr("Use current position","使用当前位置"),tr("The selected source position becomes authoritative.","所选数据源当前位置将作为权威锚点。"),knownMethod==AnchorCenterSource.CURRENT_POSITION,true,"known_current"){knownMethod=AnchorCenterSource.CURRENT_POSITION};GpsSourceRow(tr("Enter coordinates","输入坐标"),tr("Decimal degrees, comma or space separated.","十进制度，可用逗号或空格分隔。"),knownMethod==AnchorCenterSource.MANUAL_COORDINATES,true,"known_manual"){knownMethod=AnchorCenterSource.MANUAL_COORDINATES};GpsSourceRow(tr("Pick on map","地图选点"),tr("Open a full-screen map and drag the anchor marker.","打开全屏地图并拖动锚点图标。"),knownMethod==AnchorCenterSource.MAP_PICK,true,"known_map"){knownMethod=AnchorCenterSource.MAP_PICK}}
+   if(knownMethod==AnchorCenterSource.MANUAL_COORDINATES){OutlinedTextField(coordinates,{coordinates=it},label={Text(tr("Latitude, longitude","纬度，经度"))},placeholder={Text("-36.812345, 174.712345")},isError=coordinates.isNotBlank()&&parsed==null,supportingText={if(coordinates.isNotBlank()&&parsed==null)Text(tr("Latitude [-90,90], longitude [-180,180].","纬度范围 [-90,90]，经度范围 [-180,180]。"))},modifier=Modifier.fillMaxWidth());if(parsed!=null&&sourceFix!=null){val distance=AnchorGeometry.distanceMeters(sourceFix.latitude,sourceFix.longitude,parsed.latitude,parsed.longitude);Text(tr("Current boat distance to this point: ${distance.toInt()} m","当前船位距此点：${distance.toInt()} 米"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};if(parsed!=null&&BuildConfig.MAPS_CONFIGURED){val preview=LatLng(parsed.latitude,parsed.longitude);val previewCamera=rememberCameraPositionState{position=CameraPosition.fromLatLngZoom(preview,16f)};LaunchedEffect(preview){previewCamera.move(CameraUpdateFactory.newLatLng(preview))};GoogleMap(Modifier.fillMaxWidth().height(180.dp),cameraPositionState=previewCamera,uiSettings=MapUiSettings(compassEnabled=false,mapToolbarEnabled=false,myLocationButtonEnabled=false,zoomControlsEnabled=false)){Marker(state=remember(preview){MarkerState(preview)},title=tr("Entered anchor","输入的锚点"))}}}
+   if(knownMethod==AnchorCenterSource.MAP_PICK&&BuildConfig.MAPS_CONFIGURED){OutlinedButton({showMapPicker=true},Modifier.fillMaxWidth().heightIn(min=52.dp)){Icon(Icons.Default.EditLocationAlt,null);Spacer(Modifier.width(8.dp));Text(if(picked==null)tr("Open full-screen map picker","打开全屏地图选点")else tr("Edit anchor on map","在地图上编辑锚点"))};Text(picked?.let{tr("Selected ${"%.6f, %.6f".format(it.latitude,it.longitude)}","已选择 ${"%.6f, %.6f".format(it.latitude,it.longitude)}")}?:tr("No point selected yet. The full-screen picker prevents the setup sheet from stealing map drags.","尚未选点。全屏选点不会被设置面板的滑动手势抢占。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+  }else{Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(tr("Start does not assume the boat is over the anchor. The current position only centres the temporary alarm boundary; GPS swing geometry estimates a candidate and waits for your approval.","开始时不会假设船就在锚点上。当前位置只用于临时报警边界；GPS 摆动几何会推算候选锚点，并等待你确认。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall)};SettingSwitch(tr("Use phone heading","使用手机船首向"),tr("Optional. Fix the phone in place with its top pointing to the bow; movement automatically suspends this evidence.","可选。请固定手机并让顶部指向船首；拿起或移动时会自动停止采信。"),usePhoneHeading){usePhoneHeading=it}}
+  Text(tr("Alarm range","报警范围"),style=MaterialTheme.typography.titleMedium);if(!estimate)Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(rangeMode==AnchorRangeMode.BASIC,{rangeMode=AnchorRangeMode.BASIC},label={Text(tr("Basic","基础"))});FilterChip(rangeMode==AnchorRangeMode.ADVANCED,{rangeMode=AnchorRangeMode.ADVANCED},label={Text(tr("Advanced","高级"))})}else Text(tr("Automatic estimation always uses the radius you set below; geometry only constrains the possible centre.","自动估算始终使用下方手动设置的报警半径；几何参数只约束可能的锚点范围。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  if(effectiveRangeMode==AnchorRangeMode.BASIC)OutlinedTextField(radius,{radius=numeric(it)},label={Text(tr("Alarm radius","报警半径"))},suffix={Text(tr("m","米"))},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.fillMaxWidth())
+  if(geometryNeeded){Text(if(estimate)tr("Estimation geometry · required","估算几何参数 · 必填")else tr("Range geometry","范围几何参数"),style=MaterialTheme.typography.labelLarge);OutlinedTextField(depth,{depth=numeric(it)},label={Text(if(state.nmeaFix?.depthMeters!=null)tr("Water depth · NMEA prefilled","水深 · 已用 NMEA 预填")else tr("Water depth","水深"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(rode,{rode=numeric(it)},label={Text(tr("Rode / chain paid out","放出的锚缆 / 锚链"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());OutlinedTextField(bow,{bow=numeric(it)},label={Text(tr("Bow roller height above water","船艏滚轮离水面高度"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());if(effectiveRangeMode==AnchorRangeMode.ADVANCED){OutlinedTextField(boat,{boat=numeric(it)},label={Text(tr("Boat length","船长"))},suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){AnchorSafetyPreset.entries.forEach{value->FilterChip(preset==value,{preset=value},label={Text(when(value){AnchorSafetyPreset.STRICT->tr("Strict","严格");AnchorSafetyPreset.BALANCED->tr("Balanced","均衡");AnchorSafetyPreset.TOLERANT->tr("Tolerant","宽容")})})}};suggestion?.let{Text(tr("Suggested radius ${it.radiusMeters.toInt()} m","建议半径 ${it.radiusMeters.toInt()} 米"),fontWeight=FontWeight.SemiBold)}}}
+  HorizontalDivider();Text(tr("Safety check","安全检查"),style=MaterialTheme.typography.titleMedium);PreflightRow(tr("Selected position source","所选定位源"),sourceReady,if(sourceReady)tr("Ready","就绪")else tr("Not ready","未就绪"));PreflightRow(tr("Notifications","通知"),notificationsReady,if(notificationsReady)tr("Ready","就绪")else tr("Permission required","需要权限"));PreflightRow(tr("Anchor coordinate","锚点坐标"),selectedCoordinate!=null,selectedCoordinate?.let{"%.5f, %.5f".format(it.latitude,it.longitude)}?:tr("Missing","缺失"))
+  Button({val coordinate=selectedCoordinate?:return@Button;start(coordinate.latitude,coordinate.longitude,AnchorWatchInput(placement,effectiveRangeMode,preset,depthValue,if(geometryNeeded)rodeValue?:0.0 else 0.0,if(geometryNeeded)bowValue?:0.0 else 0.0,if(effectiveRangeMode==AnchorRangeMode.ADVANCED)boatValue else null,finalRadius!!,source,if(estimate)AnchorCenterSource.UNKNOWN else knownMethod,usePhoneHeading))},enabled=valid,modifier=Modifier.fillMaxWidth().padding(bottom=24.dp)){Text(tr("Start anchor watch","启动锚警"))}
+ }}
+ if(showMapPicker&&BuildConfig.MAPS_CONFIGURED){val initial=picked?:sourceFix?.let{LatLng(it.latitude,it.longitude)}?:LatLng(-36.8485,174.7633);FullScreenAnchorMapPicker(initial,{showMapPicker=false}){picked=it;showMapPicker=false}}
+}
+
+@Composable
+private fun FullScreenAnchorMapPicker(initial:LatLng,dismiss:()->Unit,confirm:(LatLng)->Unit){
+ val marker=remember{MarkerState(initial)};val camera=rememberCameraPositionState{position=CameraPosition.fromLatLngZoom(initial,17f)}
+ Dialog(onDismissRequest=dismiss,properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
+  Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.surface){Box(Modifier.fillMaxSize()){
+   GoogleMap(Modifier.fillMaxSize(),cameraPositionState=camera,uiSettings=MapUiSettings(compassEnabled=false,mapToolbarEnabled=false,myLocationButtonEnabled=false,zoomControlsEnabled=false),onMapClick={marker.position=it},onMapLongClick={marker.position=it}){Marker(state=marker,title=tr("Drag anchor","拖动锚点"),draggable=true)}
+   Surface(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp),shape=MaterialTheme.shapes.medium,tonalElevation=4.dp){Text(tr("Drag the anchor marker or tap the map","拖动锚点图标，或点击地图选点"),Modifier.padding(horizontal=14.dp,vertical=10.dp),fontWeight=FontWeight.Medium)}
+   Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().fillMaxWidth().padding(16.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(dismiss,Modifier.weight(1f).heightIn(min=52.dp)){Text(tr("Cancel","取消"))};Button({confirm(marker.position)},Modifier.weight(1f).heightIn(min=52.dp)){Text(tr("Use this point","使用此位置"))}}
+  }}
+ }
+}
