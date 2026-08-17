@@ -1,9 +1,11 @@
 package com.yokuli.anchorwatch
 
 import android.content.pm.ActivityInfo
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
@@ -15,16 +17,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccessibilityLayoutTest{
-    @get:Rule val compose=createAndroidComposeRule<MainActivity>()
+    @get:Rule val compose=createEmptyComposeRule()
 
-    @Before fun prepare(){MapRuntimePolicy.renderGoogleEngine=false;shell("settings put system font_scale 2.0")}
+    @Before fun prepare(){
+        MapRuntimePolicy.renderGoogleEngine=false
+        shell("pm grant com.yokuli.anchorwatch android.permission.ACCESS_COARSE_LOCATION")
+        shell("pm grant com.yokuli.anchorwatch android.permission.ACCESS_FINE_LOCATION")
+        shell("pm grant com.yokuli.anchorwatch android.permission.POST_NOTIFICATIONS")
+        shell("settings put system font_scale 2.0")
+    }
     @After fun restore(){shell("settings put system font_scale 1.0");MapRuntimePolicy.renderGoogleEngine=true}
 
     @Test fun twoHundredPercentTextAndLandscapeKeepPrimaryNavigationReachable(){
-        compose.activityRule.scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
-        compose.waitForIdle()
-        compose.onNodeWithText("Data").performClick();compose.onNodeWithText("Personal sonar mapping").assertExists()
-        compose.onNodeWithText("Settings").performClick();compose.onNodeWithText("Alarm & notifications").assertExists()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity{it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
+            compose.waitUntil(15_000){runCatching{compose.onAllNodesWithTag("nav_data").fetchSemanticsNodes().isNotEmpty()}.getOrDefault(false)}
+            compose.onNodeWithTag("nav_data").performClick();compose.onNodeWithTag("data_page").assertExists()
+            compose.onNodeWithTag("nav_settings").performClick();compose.onNodeWithTag("settings_list").assertExists()
+        }
     }
 
     private fun shell(command:String){InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command).close()}

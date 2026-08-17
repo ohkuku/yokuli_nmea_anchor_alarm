@@ -25,7 +25,11 @@ import java.util.zip.ZipOutputStream
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,6 +37,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BackupRestoreStoryTest{
+    @Test fun activeWritesDuringExportStillProduceARestoreValidSnapshot()=runBlocking{
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val file=File(context.cacheDir,"active-export-${System.nanoTime()}.yokuli-backup")
+        try{
+            anchor.importSessions(listOf(session(41,"CURRENT_POSITION")))
+            anchor.importPoints((1L..5_000L).map{id->TrackPointEntity(id=id,sessionId=41,timestamp=id,latitude=-36.8485,longitude=174.7633,distanceFromAnchor=0.0,sog=null,cog=null,heading=null,hdop=null)})
+            val exporting=async(Dispatchers.IO){manager.export(Uri.fromFile(file))}
+            withTimeout(5_000){while(!manager.state.value.running&&!exporting.isCompleted)yield()}
+            repeat(1_000){offset->anchor.insertPoint(TrackPointEntity(sessionId=41,timestamp=10_000L+offset,latitude=-36.8485,longitude=174.7633,distanceFromAnchor=0.0,sog=null,cog=null,heading=null,hdop=null))}
+            val manifest=exporting.await().getOrThrow()
+            anchor.clearEvents();anchor.clearPoints();anchor.clearSessions()
+            assertTrue(manager.restore(Uri.fromFile(file)).isSuccess)
+            assertEquals(manifest.recordCounts.getValue(YokuliBackupArchive.POINTS),anchor.pointCount())
+        }finally{preferences.save(original);database.close();file.delete()}
+    }
+
     @Test fun settingsAnchorTrackAlarmAndSonarRoundTripAsOneUserStory()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()

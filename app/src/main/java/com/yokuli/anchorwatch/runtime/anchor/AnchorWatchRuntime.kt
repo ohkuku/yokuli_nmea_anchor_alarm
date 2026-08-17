@@ -42,6 +42,7 @@ import com.yokuli.anchorwatch.location.DemoSonarGenerator
 import com.yokuli.anchorwatch.location.GlobalMockLocationManager
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.location.IntegrityAcceptedFix
+import com.yokuli.anchorwatch.location.NmeaFixQualityPolicy
 import com.yokuli.anchorwatch.location.PhoneHeadingRepository
 import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.runtime.MonotonicClock
@@ -187,7 +188,7 @@ class AnchorWatchRuntime(
         val latestFix=when(positionSource){GpsDataSource.NMEA->navigation.fix.value;GpsDataSource.SYSTEM,GpsDataSource.DEMO->systemLocation.fix.value}
         val lastFix=if(positionSource==GpsDataSource.NMEA)navigation.diagnostics.value.lastFixElapsed else latestFix?.receivedElapsedRealtime
         val preciseProvider=positionSource==GpsDataSource.NMEA||latestFix?.positionProvider==PositionProvider.ANDROID_GNSS
-        val sourceQualityReady=when(positionSource){GpsDataSource.NMEA->(latestFix?.hdop?:0.0)<=5.0&&(latestFix?.fixQuality?:1)>0;GpsDataSource.SYSTEM,GpsDataSource.DEMO->(latestFix?.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}
+        val sourceQualityReady=when(positionSource){GpsDataSource.NMEA->NmeaFixQualityPolicy.allowsContinuation(latestFix);GpsDataSource.SYSTEM,GpsDataSource.DEMO->(latestFix?.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}
         val freshFix=sourceReady&&latestFix?.valid==true&&preciseProvider&&sourceQualityReady&&lastFix!=null&&now-lastFix<settings.gpsLossSeconds*1_000L
         if(!freshFix){val label=when(positionSource){GpsDataSource.NMEA->"NMEA";GpsDataSource.SYSTEM->"system GNSS (not coarse network location)";GpsDataSource.DEMO->"system GNSS origin for Demo"};host.notify("Anchor watch not started","A live, current $label GPS fix is required. Existing connections were left unchanged.",false);host.refresh();host.releaseIfIdle();return}
         val learning=request.placement==AnchorPlacementMode.BACKDOWN

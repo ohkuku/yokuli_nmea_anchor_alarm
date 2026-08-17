@@ -39,10 +39,7 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthDiagnostics
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarGrid
 import com.yokuli.anchorwatch.domain.sonar.DepthUiState
-import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartPolicy
 import com.yokuli.anchorwatch.data.sonar.SonarGridScope
-import com.yokuli.anchorwatch.domain.anchor.AnchorCenterEstimator
-import com.yokuli.anchorwatch.domain.model.AnchorEstimate
 import com.yokuli.anchorwatch.domain.model.AnchorCenterSource
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.AnchorRangeMode
@@ -106,7 +103,6 @@ data class MainUiState(
     val sessions:List<AnchorSessionEntity> = emptyList(),
     val active:AnchorSessionEntity?=null,
     val points:List<TrackPointEntity> = emptyList(),
-    val estimate:AnchorEstimate?=null,
     val follow:Boolean=true,
     val page:Int=0,
     val mockGps:MockGpsStatus=MockGpsStatus(),
@@ -172,7 +168,6 @@ class MainViewModel @Inject constructor(
     private var observedSessionId:Long?=null
     private var sonarSamplesJob:Job?=null
     private var observedSonarSurveyId:Long?=null
-    private val estimator=AnchorCenterEstimator()
 
     init{
         // Safety and recording repositories consume the full provider rate. Compose/map only
@@ -212,7 +207,6 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{systemLocation.setAppEnabled(it==GpsDataSource.SYSTEM||it==GpsDataSource.DEMO)}}
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
-        viewModelScope.launch{dao.allEvents().collect{events->_ui.update{it.copy(eventsBySession=events.groupBy{event->event.sessionId})}}}
         viewModelScope.launch{sharingServer.status.collect{status->_ui.update{it.copy(nmeaSharing=status)}}}
         viewModelScope.launch{sonarDao.surveys().collect{surveys->
             val selected=_ui.value.selectedSonarSurveyId?.takeIf{selectedId->selectedId==CORRECTED_SONAR_HISTORY_ID||surveys.any{it.id==selectedId}}?:surveys.firstOrNull()?.id
@@ -232,26 +226,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{incidentLogger.recent.collect{value->_ui.update{it.copy(incidents=value)}}}
         viewModelScope.launch{supportBundleManager.state.collect{value->_ui.update{it.copy(supportBundle=value)}}}
         viewModelScope.launch{offlineMapRepository.state.collect{value->_ui.update{it.copy(offlineMap=value)}}}
-        viewModelScope.launch{
-            combine(
-                prefs.settings.map{it.sonarLayerEnabled to it.demoMode}.distinctUntilChanged(),
-                nav.connectionState,
-            ){setting,connection->Triple(setting.first,setting.second,connection)}.distinctUntilChanged().collect{(enabled,demoMode,connection)->
-                // Persisted/restored settings cannot bypass the same rule enforced by
-                // the switch. Disconnecting a real NMEA source removes the live layer.
-                if(enabled&&!SonarSurveyStartPolicy.canEnableLayer(demoMode,connection)){
-                    val current=prefs.settings.first()
-                    if(current.sonarLayerEnabled) prefs.save(current.copy(sonarLayerEnabled=false))
-                }
-            }
-        }
         viewModelScope.launch{combine(acceptedPosition.state.map{it.acceptedFix}.distinctUntilChanged(),prefs.settings.map{it.showLinzDepthReference}.distinctUntilChanged()){fix,enabled->fix to enabled}.conflate().collect{(fix,enabled)->delay(2_000);if(enabled&&fix?.valid==true)linzDepthRepository.refresh(fix.latitude,fix.longitude)}}
         viewModelScope.launch{while(true){refreshDepthUi();refreshWatchSafety();delay(1_000)}}
         viewModelScope.launch{while(true){refreshStorageHealth();delay(30_000)}}
         incidentLogger.record("app","UI_STARTED")
     }
 
-    private companion object { const val UI_POSITION_FRAME_MILLIS=250L }
+    private companion object { const val UI_POSITION_FRAME_MILLIS=250L;const val MAX_ACTIVE_TRAIL_POINTS=4_800 }
 
     private fun refreshWatchSafety(){
         val state=_ui.value
@@ -270,12 +251,10 @@ class MainViewModel @Inject constructor(
         if(pointsJob?.isActive==true&&observedSessionId==session?.id)return
         pointsJob?.cancel()
         observedSessionId=session?.id
-        if(session==null){_ui.update{it.copy(points=emptyList(),estimate=null)};return}
-        pointsJob=viewModelScope.launch{dao.points(session.id).collect{points->
-            val expected=session.expectedSwingRadiusMeters.takeIf{session.rodeLengthMeters>0}
-            val estimate=estimator.estimate(points.filter{it.hdop==null||it.hdop<=5}.map{AnchorCenterEstimator.Point(it.latitude,it.longitude)},expected)
-            _ui.update{it.copy(points=points,estimate=estimate)}
-        }}
+        if(session==null){_ui.update{it.copy(points=emptyList())};return}
+        // AnchorWatchRuntime owns centre estimation. Compose observes only the
+        // bounded render trail, avoiding an all-session query and refit per insert.
+        pointsJob=viewModelScope.launch{dao.recentPoints(session.id,MAX_ACTIVE_TRAIL_POINTS).collect{points->_ui.update{it.copy(points=points)}}}
     }
 
     private fun observeSonarSamples(surveyId:Long?){
@@ -355,10 +334,6 @@ class MainViewModel @Inject constructor(
     fun updateSettings(settings:AppSettings){_ui.update{it.copy(settings=settings)};viewModelScope.launch{prefs.save(settings)}}
     fun setSonarLayerEnabled(enabled:Boolean,acceptDisclaimer:Boolean=false){
         val state=_ui.value
-        if(enabled&&!SonarSurveyStartPolicy.canEnableLayer(state.settings.demoMode,state.connection)){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Connect the NMEA server before enabling the sonar chart layer. Demo mode is the only offline exception."))}
-            return
-        }
         updateSettings(state.settings.copy(sonarLayerEnabled=enabled,sonarDisclaimerAccepted=state.settings.sonarDisclaimerAccepted||acceptDisclaimer))
     }
     fun exportBackup(uri:Uri)=viewModelScope.launch{backupManager.export(uri)}
@@ -482,6 +457,10 @@ class MainViewModel @Inject constructor(
     fun openDeveloperOptions(){runCatching{app.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure{app.startActivity(Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}}
     fun openAlarmNotificationSettings(){val channelReady=android.os.Build.VERSION.SDK_INT>=26&&app.getSystemService(android.app.NotificationManager::class.java).getNotificationChannel(AnchorForegroundService.ALARM_CH)!=null;val intent=when{channelReady->Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,app.packageName).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,AnchorForegroundService.ALARM_CH);android.os.Build.VERSION.SDK_INT>=26->Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,app.packageName);else->Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:${app.packageName}"))};app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}
     fun openBatteryOptimization(){app.startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}
+    fun openFullScreenAlarmSettings(){
+        val intent=if(android.os.Build.VERSION.SDK_INT>=34)Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,Uri.parse("package:${app.packageName}")) else Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,app.packageName)
+        runCatching{app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure{openAlarmNotificationSettings()}
+    }
     fun openAnchorInGoogleMaps(session:AnchorSessionEntity){
         if(session.centerStatus!=com.yokuli.anchorwatch.domain.model.AnchorCenterStatus.RESOLVED.name)return
         val coordinates="${"%.7f".format(java.util.Locale.US,session.anchorLatitude)},${"%.7f".format(java.util.Locale.US,session.anchorLongitude)}"
@@ -494,6 +473,7 @@ class MainViewModel @Inject constructor(
     fun follow(value:Boolean)=_ui.update{it.copy(follow=value)}
     fun requestRangeEditor()=_ui.update{it.copy(page=0,rangeEditorRequested=true)}
     fun consumeRangeEditorRequest()=_ui.update{it.copy(rangeEditorRequested=false)}
+    fun loadHistoryEvents(sessionId:Long)=viewModelScope.launch{val events=dao.recentEvents(sessionId,30);_ui.update{it.copy(eventsBySession=mapOf(sessionId to events))}}
     fun exportCsv(session:AnchorSessionEntity)=viewModelScope.launch{
         val points=dao.points(session.id).first()
         val file=java.io.File(app.cacheDir,"anchor-${session.id}.csv")

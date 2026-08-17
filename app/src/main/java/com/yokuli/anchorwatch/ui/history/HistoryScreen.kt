@@ -47,7 +47,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
         if(state.sessions.isEmpty())item{Text(tr("No anchor sessions recorded.","还没有锚泊记录。"),color=MaterialTheme.colorScheme.onSurfaceVariant)}
         items(state.sessions,key={it.id}){session->
             val events=state.eventsBySession[session.id].orEmpty()
-            Card(Modifier.fillMaxWidth().clickable{expanded=if(expanded==session.id)null else session.id}){
+            Card(Modifier.fillMaxWidth().clickable{val next=if(expanded==session.id)null else session.id;expanded=next;if(next!=null)vm.loadHistoryEvents(next)}){
                 Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                     Row(verticalAlignment=Alignment.CenterVertically){
                         Column(Modifier.weight(1f)){

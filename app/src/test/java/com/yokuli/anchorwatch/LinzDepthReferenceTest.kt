@@ -11,6 +11,7 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthStatus
 import com.yokuli.anchorwatch.data.linz.LinzHydroFeatureParser
 import com.yokuli.anchorwatch.data.linz.LinzHydroSelector
 import com.yokuli.anchorwatch.data.linz.LinzQueryThrottle
+import com.yokuli.anchorwatch.data.linz.LinzFinalResultCachePolicy
 import com.yokuli.anchorwatch.data.linz.LinzWfsClient
 import com.yokuli.anchorwatch.data.linz.LinzWfsResult
 import com.yokuli.anchorwatch.data.database.LinzDepthCacheDao
@@ -77,6 +78,21 @@ class LinzDepthReferenceTest {
         assertTrue(throttle.shouldQuery(-36.8485,174.7637,10_000L))
     }
 
+    @Test fun finalResultCacheIsOnlyReusableNearItsOriginalQueryPosition() {
+        val cached=LinzDepthCacheEntity("cell",-36.8485,174.7633,100_000L,status=LinzDepthStatus.AVAILABLE.name)
+        assertTrue(LinzFinalResultCachePolicy.canReuseFresh(cached,-36.8485,174.76331,100_100L,LinzDepthReferenceRepository.CACHE_TTL_MILLIS))
+        assertTrue(!LinzFinalResultCachePolicy.canReuseFresh(cached,-36.8485,174.7640,100_100L,LinzDepthReferenceRepository.CACHE_TTL_MILLIS))
+        assertTrue(LinzFinalResultCachePolicy.isNear(cached,-36.8485,174.76331))
+    }
+
+    @Test fun movingWithinSameHundredMeterCellDoesNotReusePositionSpecificResult()=runBlocking {
+        val cache=FakeCache();val client=FakeClient();val repository=LinzDepthReferenceRepository(client,cache)
+        repository.refresh(-36.8485,174.7633,nowWall=100_000L,nowElapsed=0L)
+        repository.refresh(-36.8485,174.7637,nowWall=101_000L,nowElapsed=1_000L)
+        assertEquals(2,client.queryCount)
+        assertEquals(174.7637,repository.state.value.queriedLongitude,.000001)
+    }
+
     @Test fun offlineUsesStaleSpatialCacheAndNoCacheStaysUnavailable()=runBlocking {
         val cache=FakeCache();val client=FakeClient();val repository=LinzDepthReferenceRepository(client,cache)
         repository.refresh(-36.8485,174.7633,nowWall=100_000L,nowElapsed=0L)
@@ -100,7 +116,9 @@ class LinzDepthReferenceTest {
         override val configured=true
         override val allLayerIds=listOf("50858","50671","50672")
         var failure:Throwable?=null
+        var queryCount=0
         override suspend fun query(latitude:Double,longitude:Double):LinzWfsResult{
+            queryCount++
             failure?.let{throw it}
             val sounding=HydroFeature("s1","50858",HydroFeatureKind.SOUNDING,HydroGeometry.Point(GeoPoint(longitude,latitude)),depth=6.4)
             return LinzWfsResult(listOf(sounding),emptyList(),emptyList(),3,200,emptyList())

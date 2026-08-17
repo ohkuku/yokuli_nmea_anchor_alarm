@@ -40,7 +40,8 @@ fun AnchorApp(vm:MainViewModel){
             Destination(tr("History","历史"),Icons.AutoMirrored.Filled.List),
             Destination(tr("Settings","设置"),Icons.Default.Settings),
         )
-        Scaffold(bottomBar={NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},label={Text(item.label)})}}}){padding->
+        val destinationTags=listOf("nav_watch","nav_data","nav_history","nav_settings")
+        Scaffold(bottomBar={NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
             Box(Modifier.fillMaxSize().padding(padding)){
                 when(state.page){0->WatchPage(state,vm);1->DataPage(state,vm);2->HistoryPage(state,vm);else->SettingsScreen(state,vm)}
                 AlarmTestBanner(state,vm,Modifier.align(Alignment.TopCenter))

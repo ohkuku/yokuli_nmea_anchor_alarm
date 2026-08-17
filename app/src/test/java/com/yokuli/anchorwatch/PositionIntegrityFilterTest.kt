@@ -2,6 +2,7 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.model.NavigationFix
+import com.yokuli.anchorwatch.domain.model.FixTrust
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.location.PositionIntegrityFilter
 import com.yokuli.anchorwatch.location.PositionIntegrityResult
@@ -41,6 +42,12 @@ class PositionIntegrityFilterTest {
         val result=filter.evaluate(fix(1.0,1_000).copy(timestampUtcMillis=9_000))
         assertTrue(result is PositionIntegrityResult.Rejected)
         assertEquals("SOURCE_TIMESTAMP_MOVED_BACKWARDS",(result as PositionIntegrityResult.Rejected).reason)
+    }
+
+    @Test fun missingReportedQualityIsAcceptedButNeverMarkedTrusted() {
+        val result=PositionIntegrityFilter().evaluate(fix(0.0,0).copy(horizontalAccuracyMeters=null,hdop=null)) as PositionIntegrityResult.Accepted
+        assertEquals(FixTrust.DEGRADED,result.fixes.single().trust)
+        assertEquals("QUALITY_NOT_REPORTED",result.fixes.single().reason)
     }
 
     private fun fix(northMeters:Double,time:Long):NavigationFix {

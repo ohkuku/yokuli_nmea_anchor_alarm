@@ -41,6 +41,13 @@ class NmeaOutputMuxTest {
         assertTrue(output.all{NmeaChecksum.validate(it,true)})
     }
 
+
+    @Test fun encoderLeavesHdopBlankWhenSourceReportsNoAccuracy(){
+        val fix=NavigationFix(0.0,0.0,1_720_000_000_000,10_000,positionProvider=PositionProvider.NMEA,sourceSentence="RMC",valid=true)
+        val gga=mux.acceptedPosition(fix,10_100).first{it.startsWith("\$GNGGA")}.substringBefore('*').split(',')
+        assertEquals("",gga[8])
+    }
+
     @Test fun systemEncoderFormatsSouthernEasternNorthernWesternAndDatelineCoordinates(){
         fun rmc(lat:Double,lon:Double)=mux.acceptedPosition(NavigationFix(lat,lon,1_720_000_000_000,10_000,sogKnots=1.0,cogTrueDegrees=90.0,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100).first{it.startsWith("\$GNRMC")}
         assertTrue(rmc(-36.8485,174.7633).contains(",3650.91000,S,17445.79800,E,"))

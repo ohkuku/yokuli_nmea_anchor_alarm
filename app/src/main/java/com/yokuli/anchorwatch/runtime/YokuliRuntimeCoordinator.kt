@@ -72,6 +72,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private data class SourcedFix(val source:GpsDataSource,val fix:NavigationFix)
  fun start(host:RuntimeServiceHost){
   this.host=host
+  diagnostics.serviceStarting()
   incidentLogger.record("service","STARTED")
   anchorRuntime=AnchorWatchRuntime(navigation,dao,preferences,mockGps,systemLocation,demoLocation,phoneHeading,acceptedPosition,alarmUi,sonarRecorder,resources,diagnostics,nmeaRuntime,object:AnchorRuntimeHost{
    override fun notificationPermissionGranted()=host.notificationPermissionGranted()
@@ -93,7 +94,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   // normally-dispatched subscriber here creates a cold-start race that can lose the first
   // safety position. UNDISPATCHED runs collect() up to its first suspension immediately.
   scope.launch(start=CoroutineStart.UNDISPATCHED){acceptedPosition.accepted.collect{event->val count=acceptedIncidentBatch.incrementAndGet();if(count==1L||count%100L==0L)incidentLogger.record("gps","ACCEPTED_BATCH",sessionId=anchorRuntime.activeSession()?.id,details=mapOf("acceptedSinceStart" to count,"source" to event.source.name));anchorActor.submit{onAcceptedPosition(event.accepted,event.source)};if(event.source==GpsDataSource.NMEA)proxyActor.submit{handleProxyResult(proxyRuntime.onAcceptedNmeaFix(event.accepted.fix))};sharingRuntime.onAcceptedPosition(event,monotonicClock.elapsedRealtime())}}
-  scope.launch{try{restoreState()}finally{stateReady.complete(Unit)}}
+  scope.launch{try{restoreState();diagnostics.serviceReady()}finally{stateReady.complete(Unit)}}
   scope.launch{combine(preferences.settings.map{it.gpsDataSource}.distinctUntilChanged(),navigation.fix,systemLocation.fix){source,nmea,system->anchorRuntime.selectIdleSource(source);when(val selected=anchorRuntime.snapshot().gpsSource){GpsDataSource.NMEA->nmea?.let{SourcedFix(selected,it)};GpsDataSource.SYSTEM->system?.let{SourcedFix(selected,it)};GpsDataSource.DEMO->null}}.filterNotNull().collect{value->anchorRuntime.submitRawFix(value.fix,value.source)}}
   scope.launch{acceptedPosition.state.map{Triple(it.disposition,it.reason,it.rawFix?.receivedElapsedRealtime)}.distinctUntilChanged().collect{(disposition,reason,at)->diagnostics.recordPositionDisposition(disposition);if(disposition=="QUARANTINED"||disposition=="REJECTED")incidentLogger.record("gps",disposition,if(disposition=="REJECTED")IncidentSeverity.CRITICAL else IncidentSeverity.WARNING,anchorRuntime.activeSession()?.id,mapOf("reason" to reason));anchorActor.submit{onPositionHealth(disposition,reason,at)}}}
   scope.launch{navigation.connectionState.collect{state->incidentLogger.record("nmea","CONNECTION_${state.name}",if(state==NmeaConnectionState.ERROR||state==NmeaConnectionState.STALE)IncidentSeverity.WARNING else IncidentSeverity.INFO,anchorRuntime.activeSession()?.id);anchorActor.submit{onNmeaState(state)}}}
@@ -241,7 +242,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  }
  private fun releaseIfIdle(){if(pendingCommands.get()==0&&!alarmTestActive&&anchorRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!sharingRuntime.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending){nmeaRuntime.releaseIfUnowned();host.stopForegroundAndSelf()}}
  private fun cleanup(){alarmTestGeneration.incrementAndGet();alarmTestActive=false;silence();resources.releaseAll()}
- fun shutdown(){incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();sharingRuntime.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup()}
+ fun shutdown(){incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();sharingRuntime.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup();diagnostics.serviceStopped()}
  private fun channels()=notificationCoordinator.createChannels(l("Anchor and GPS status","锚警与 GPS 状态"),l("Anchor safety events","锚泊安全事件"),l("Anchor alarms with snooze","带稍后提醒的锚警"))
  private fun l(english:String,chinese:String)=localized(appLanguage,english,chinese)
  private fun serviceMessage(message:String):String{

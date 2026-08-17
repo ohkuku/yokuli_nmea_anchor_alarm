@@ -49,11 +49,11 @@ class NmeaOutputMux @Inject constructor() {
         // Android does not expose NMEA HDOP consistently. Accuracy / 3 is an
         // explicitly approximate compatibility mapping; unlike satellites or
         // altitude it is never replaced by a made-up constant.
-        val hdop = fix.hdop ?: ((fix.horizontalAccuracyMeters ?: 8.0) / 3.0).coerceIn(.5, 9.9)
+        val hdop = fix.hdop ?: fix.horizontalAccuracyMeters?.div(3.0)?.coerceIn(.5, 9.9)
         val altitude = fix.altitudeMeters?.let { f(it, 1) }.orEmpty()
         return buildList {
             add(sentence("GNRMC,$time,A,$lat,$ns,$lon,$ew,${sog?.let { f(it, 2) }.orEmpty()},${cog?.let { f(it, 2) }.orEmpty()},$date,,,A"))
-            add(sentence("GNGGA,$time,$lat,$ns,$lon,$ew,1,$satellites,${f(hdop, 1)},$altitude,M,,M,,"))
+            add(sentence("GNGGA,$time,$lat,$ns,$lon,$ew,1,$satellites,${hdop?.let{f(it,1)}.orEmpty()},$altitude,M,,M,,"))
             if (sog != null && cog != null) add(sentence("GNVTG,${f(cog, 2)},T,,M,${f(sog, 2)},N,${f(sog * 1.852, 2)},K,A"))
         }
     }

@@ -39,6 +39,12 @@ class WatchPreflightEvaluatorTest {
         assertTrue(report.checks.count{it.status==SafetyCheckStatus.WARNING}>=2)
     }
 
+    @Test fun deniedFullScreenAlarmAccessIsAnExplicitNonBlockingWarning(){
+        val report=WatchPreflightEvaluator.evaluate(input(device=device().copy(fullScreenAlarmAllowed=false)))
+        assertFalse(report.ready);assertTrue(report.canContinue)
+        assertTrue(report.checks.any{it.id=="full_screen_alarm"&&it.status==SafetyCheckStatus.WARNING})
+    }
+
     private fun input(
         settings:AppSettings=readySettings(),
         fix:NavigationFix=fix(),

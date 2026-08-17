@@ -8,6 +8,7 @@ import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
+import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
@@ -27,4 +28,5 @@ interface AnchorWatchEntryPoint {
     fun alarmUi(): AlarmUiRepository
     fun sharingServer(): NmeaSharingServer
     fun acceptedPosition(): AcceptedPositionRepository
+    fun runtimeDiagnostics():RuntimeDiagnosticsRepository
 }

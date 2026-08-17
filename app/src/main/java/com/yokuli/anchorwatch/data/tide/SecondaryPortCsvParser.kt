@@ -18,7 +18,7 @@ object SecondaryPortCsvParser {
             val latitude=coordinate(fields.getOrNull(2),fields.getOrNull(3),negative=true)?:return@forEach
             val longitude=coordinate(fields.getOrNull(4),fields.getOrNull(5),negative=false)?:return@forEach
             val meanHigh=fields.getOrNull(6)?.trim().orEmpty()
-            val msl=fields.getOrNull(15)?.trim()?.toDoubleOrNull()
+            val msl=fields.getOrNull(14)?.trim()?.toDoubleOrNull()
             if(meanHigh.equals("hhmm",ignoreCase=true)){
                 val id=slug(name)
                 reference=TideStation(id,name,latitude,longitude,TideStationType.DAILY_PREDICTION,csvName=name,meanSeaLevelMeters=msl,referenceMeanSeaLevelMeters=msl)
@@ -28,7 +28,7 @@ object SecondaryPortCsvParser {
             val standard=reference?:return@forEach
             val highOffset=parseOffsetMinutes(meanHigh)?:return@forEach
             val lowOffset=parseOffsetMinutes(fields.getOrNull(8)?.trim().orEmpty())?:return@forEach
-            val ratio=fields.getOrNull(16)?.trim()?.toDoubleOrNull()?:return@forEach
+            val ratio=fields.getOrNull(15)?.trim()?.toDoubleOrNull()?:return@forEach
             if(msl==null)return@forEach
             val id=slug(name)
             result[id]=TideStation(

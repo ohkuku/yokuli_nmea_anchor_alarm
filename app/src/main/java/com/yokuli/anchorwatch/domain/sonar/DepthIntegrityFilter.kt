@@ -44,11 +44,17 @@ class DepthIntegrityFilter {
     }
 
     private fun confirmsRealSlope(base: DepthCandidate, points: List<DepthCandidate>): Boolean {
-        val depths = listOf(base.normalizedDepthMeters) + points.map { it.normalizedDepthMeters }
-        val deltas = depths.zipWithNext { a, b -> b - a }
-        val direction = deltas.first().sign
-        if (direction == 0.0 || deltas.any { it.sign != direction }) return false
-        val medianStep = deltas.map(::abs).sorted()[deltas.size / 2]
-        return medianStep > .15 && deltas.all { abs(it) <= max(12.0, medianStep * 3.0) }
+        if (points.size != 3) return false
+        val initialJump = points.first().normalizedDepthMeters - base.normalizedDepthMeters
+        val continuedSteps = points.zipWithNext { a, b -> b.normalizedDepthMeters - a.normalizedDepthMeters }
+        val direction = initialJump.sign
+        if (direction == 0.0 || continuedSteps.any { it.sign != direction }) return false
+
+        // A real bank can begin with one large jump followed by smaller, coherent
+        // changes. Judge the confirmation samples against one another instead of
+        // rejecting them merely because the first jump was much larger.
+        val magnitudes = continuedSteps.map(::abs)
+        val medianStep = magnitudes.sorted()[magnitudes.size / 2]
+        return medianStep > .15 && magnitudes.all { it <= max(12.0, medianStep * 3.0) }
     }
 }

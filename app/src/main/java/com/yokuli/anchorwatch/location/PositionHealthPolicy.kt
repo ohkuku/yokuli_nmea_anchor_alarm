@@ -10,7 +10,15 @@ object PositionHealthPolicy {
     fun evaluate(source: GpsDataSource, fix: NavigationFix?, connection: NmeaConnectionState, nowElapsed: Long, lostAfterMillis: Long): PositionHealth {
         if (fix?.valid != true || nowElapsed - fix.receivedElapsedRealtime !in 0 until lostAfterMillis) return PositionHealth.GPS_LOST
         if (source == GpsDataSource.NMEA && connection != NmeaConnectionState.CONNECTED) return PositionHealth.GPS_LOST
+        if (source == GpsDataSource.NMEA && fix.horizontalAccuracyMeters == null && fix.hdop == null) return PositionHealth.GPS_DEGRADED
         if (fix.positionProvider == PositionProvider.ANDROID_NETWORK || (fix.horizontalAccuracyMeters ?: 0.0) > 30.0 || (fix.hdop ?: 0.0) > 5.0) return PositionHealth.GPS_DEGRADED
         return PositionHealth.GPS_OK
     }
+}
+
+/** Missing NMEA quality is allowed with a warning; explicitly bad quality is not. */
+object NmeaFixQualityPolicy{
+    fun allowsContinuation(fix:NavigationFix?):Boolean=fix!=null&&
+        (fix.fixQuality==null||fix.fixQuality>0)&&
+        (fix.hdop==null||fix.hdop<=5.0)
 }

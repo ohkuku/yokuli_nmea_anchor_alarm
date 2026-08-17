@@ -55,6 +55,8 @@ import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
 import com.yokuli.anchorwatch.service.AnchorForegroundService
+import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
+import com.yokuli.anchorwatch.runtime.RuntimeOwner
 import dagger.hilt.android.EntryPointAccessors
 import java.io.Closeable
 import java.net.ServerSocket
@@ -101,12 +103,13 @@ class AnchorSafetyFlowTest {
     private lateinit var sonarDao:SonarDao
     private lateinit var sonarRecorder:SonarSurveyRecorder
     private lateinit var acceptedPosition:AcceptedPositionRepository
+    private lateinit var runtimeDiagnostics:RuntimeDiagnosticsRepository
 
     @Before fun prepare() = runBlocking<Unit> {
         MapRuntimePolicy.renderGoogleEngine=false
         context = InstrumentationRegistry.getInstrumentation().targetContext
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
-        dao = entry.dao();sonarDao=entry.sonarDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition(); preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
+        dao = entry.dao();sonarDao=entry.sonarDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition();runtimeDiagnostics=entry.runtimeDiagnostics();preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
         context.stopService(Intent(context, AnchorForegroundService::class.java))
         delay(250)
         navigation.disconnectAll()
@@ -756,9 +759,10 @@ class AnchorSafetyFlowTest {
     )
 
     private suspend fun startServiceForRestore() {
-        val activeId=dao.active()?.id
+        val generation=runtimeDiagnostics.state.value.serviceGeneration
         ContextCompat.startForegroundService(context, Intent(context, AnchorForegroundService::class.java))
-        if(activeId!=null)withTimeout(8_000){dao.points(activeId).first{it.isNotEmpty()}}
+        withTimeout(15_000){runtimeDiagnostics.state.first{it.serviceGeneration>generation&&it.serviceReady}}
+        if(dao.active()?.paused==false)assertTrue(RuntimeOwner.ANCHOR_WATCH in runtimeDiagnostics.state.value.activeOwners)
     }
 
     private fun openDisconnectDecision() {

@@ -3,15 +3,15 @@ package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartDecision
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartPolicy
+import com.yokuli.anchorwatch.domain.sonar.SonarMapDisplayPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SonarSurveyStartPolicyTest {
-    @Test fun realSonarLayerRequiresConnectedNmeaButDemoIsAllowed() {
-        assertEquals(false,SonarSurveyStartPolicy.canEnableLayer(false,NmeaConnectionState.DISCONNECTED))
-        assertEquals(false,SonarSurveyStartPolicy.canEnableLayer(false,NmeaConnectionState.CONNECTED_NO_DATA))
-        assertEquals(true,SonarSurveyStartPolicy.canEnableLayer(false,NmeaConnectionState.CONNECTED))
-        assertEquals(true,SonarSurveyStartPolicy.canEnableLayer(true,NmeaConnectionState.DISCONNECTED))
+    @Test fun savedSonarMapDisplayIsIndependentOfLiveNmea() {
+        assertEquals(false,SonarMapDisplayPolicy.isVisible(enabled=false,hasStoredCells=true))
+        assertEquals(false,SonarMapDisplayPolicy.isVisible(enabled=true,hasStoredCells=false))
+        assertEquals(true,SonarMapDisplayPolicy.isVisible(enabled=true,hasStoredCells=true))
     }
 
     @Test fun demoDoesNotNeedNmeaOrRealDepth() {

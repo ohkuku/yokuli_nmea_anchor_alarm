@@ -42,6 +42,8 @@ data class RuntimeDiagnostics(
     val wakeLockHeld:Boolean=false,
     val wifiLockHeld:Boolean=false,
     val activeOwners:Set<RuntimeOwner> = emptySet(),
+    val serviceGeneration:Long=0,
+    val serviceReady:Boolean=false,
 )
 
 /**
@@ -95,4 +97,9 @@ class RuntimeDiagnosticsRepository @Inject constructor(
     }}}
 
     fun recordEstimatorRun(durationMillis:Long){_state.update{it.copy(estimatorRuns=it.estimatorRuns+1,estimatorLastDurationMs=durationMillis,estimatorMaxDurationMs=maxOf(it.estimatorMaxDurationMs,durationMillis))}}
+
+    /** Distinguishes a newly-created Android service from stale process state. */
+    fun serviceStarting(){_state.update{it.copy(serviceGeneration=it.serviceGeneration+1,serviceReady=false)}}
+    fun serviceReady(){_state.update{it.copy(serviceReady=true)}}
+    fun serviceStopped(){_state.update{it.copy(serviceReady=false)}}
 }

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.app.NotificationManager
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -48,6 +49,7 @@ data class DeviceSafetySnapshot(
     val wifiConnected: Boolean,
     val backgroundServiceDeclared: Boolean,
     val freeStorageBytes: Long,
+    val fullScreenAlarmAllowed:Boolean=true,
 )
 
 data class WatchSafetyInput(
@@ -94,6 +96,8 @@ object WatchPreflightEvaluator {
         }
         checks += if (input.device.notificationPermission) ok("notifications", "Alarm notifications", "Allowed")
         else blocker("notifications", "Alarm notifications", "Permission denied", "Android may hide critical anchor alarm notifications.")
+        checks += if(input.device.fullScreenAlarmAllowed)ok("full_screen_alarm","Full-screen alarm","Allowed")
+        else warning("full_screen_alarm","Full-screen alarm","Needs action","Android may show only a lock-screen heads-up alert instead of opening the alarm screen.")
         checks += when {
             input.device.alarmVolume <= 0 -> blocker("alarm_sound", "Alarm sound", "Android alarm volume is muted", "The alarm cannot be heard.")
             input.settings.alarmAudibleConfirmedAt == null -> warning("alarm_sound", "Alarm sound", "Not confirmed on this device", "Run the alarm test and confirm that you heard it.")
@@ -152,6 +156,7 @@ class DeviceSafetyProbe @Inject constructor(@ApplicationContext private val cont
             wifiConnected = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
             backgroundServiceDeclared = runCatching { context.packageManager.getServiceInfo(ComponentName(context, AnchorForegroundService::class.java), 0).enabled }.getOrDefault(false),
             freeStorageBytes = context.filesDir.usableSpace,
+            fullScreenAlarmAllowed = Build.VERSION.SDK_INT<34||context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent(),
         )
     }
 }

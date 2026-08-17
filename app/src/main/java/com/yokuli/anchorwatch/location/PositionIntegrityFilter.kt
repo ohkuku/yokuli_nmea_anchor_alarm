@@ -95,7 +95,7 @@ class PositionIntegrityFilter(
                 return quarantine(fix, "POSITION_ACCURACY_POOR")
             }
             lastTrusted = fix
-            return PositionIntegrityResult.Accepted(listOf(IntegrityAcceptedFix(fix, trustFor(fix))))
+            return PositionIntegrityResult.Accepted(listOf(IntegrityAcceptedFix(fix, trustFor(fix),reason=qualityReason(fix))))
         }
 
         if (pending.isNotEmpty()) return evaluatePending(fix, baseline)
@@ -104,7 +104,7 @@ class PositionIntegrityFilter(
         if (suspiciousReason != null) return quarantine(fix, suspiciousReason)
 
         lastTrusted = fix
-        return PositionIntegrityResult.Accepted(listOf(IntegrityAcceptedFix(fix, trustFor(fix))))
+        return PositionIntegrityResult.Accepted(listOf(IntegrityAcceptedFix(fix, trustFor(fix),reason=qualityReason(fix))))
     }
 
     private fun evaluatePending(fix: NavigationFix, baseline: NavigationFix): PositionIntegrityResult {
@@ -178,6 +178,7 @@ class PositionIntegrityFilter(
     }
 
     private fun trustFor(fix: NavigationFix): FixTrust = when {
+        fix.horizontalAccuracyMeters == null && fix.hdop == null -> FixTrust.DEGRADED
         effectiveAccuracy(fix) > 30.0 -> FixTrust.DEGRADED
         fix.hdop != null && fix.hdop > 3.0 -> FixTrust.DEGRADED
         fix.satellites != null && fix.satellites < 5 -> FixTrust.DEGRADED
@@ -185,10 +186,15 @@ class PositionIntegrityFilter(
     }
 
     private fun effectiveAccuracy(fix: NavigationFix): Double =
-        fix.horizontalAccuracyMeters ?: fix.hdop?.times(3.0) ?: 8.0
+        fix.horizontalAccuracyMeters ?: fix.hdop?.times(3.0) ?: UNKNOWN_ACCURACY_METERS
+
+    private fun qualityReason(fix:NavigationFix):String?=
+        if(fix.horizontalAccuracyMeters==null&&fix.hdop==null)"QUALITY_NOT_REPORTED" else null
 
     private fun distance(a: NavigationFix, b: NavigationFix): Double =
         AnchorGeometry.distanceMeters(a.latitude, a.longitude, b.latitude, b.longitude)
 
     private fun bearingDifference(a: Double, b: Double): Double = abs((a - b + 540.0) % 360.0 - 180.0)
+
+    private companion object{const val UNKNOWN_ACCURACY_METERS=50.0}
 }

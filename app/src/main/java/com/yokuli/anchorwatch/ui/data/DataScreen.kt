@@ -83,7 +83,7 @@ import java.text.DateFormat
 @OptIn(ExperimentalMaterial3Api::class)
 internal fun DataPage(state:MainUiState,vm:MainViewModel){
     var section by remember{mutableIntStateOf(0)}
-    Column(Modifier.fillMaxSize()){
+    Column(Modifier.fillMaxSize().testTag("data_page")){
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)){
             SegmentedButton(section==0,{section=0},shape=SegmentedButtonDefaults.itemShape(0,3)){Text(tr("NMEA","连接"))}
             SegmentedButton(section==1,{section=1},shape=SegmentedButtonDefaults.itemShape(1,3)){Text(tr("Raw data","原始数据"))}

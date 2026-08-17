@@ -79,6 +79,16 @@ data class BackupValidation(
     val files:Map<String,File>,
 )
 
+private data class BackupSnapshot(
+    val sessions:List<com.yokuli.anchorwatch.data.database.AnchorSessionEntity>,
+    val pointThroughId:Long,
+    val eventThroughId:Long,
+    val surveys:List<com.yokuli.anchorwatch.data.database.SonarSurveyEntity>,
+    val sampleThroughId:Long,
+)
+
+private data class WrittenBackupEntry(val checksum:String,val recordCount:Long)
+
 object BackupRestorePolicy {
     fun blockingReason(anchorActive:Boolean,sonarActive:Boolean,proxyActive:Boolean,sharingActive:Boolean):String?=when{
         anchorActive->"End the active anchor session before restoring a backup."
@@ -138,37 +148,42 @@ class YokuliBackupManager @Inject constructor(
     suspend fun export(uri:Uri):Result<BackupManifestV1> = withContext(Dispatchers.IO){runCatching{
         _state.value=BackupOperationState(running=true,progress="Preparing a consistent data snapshot…")
         val settings=settingsRepository.settings.first()
-        val counts=database.withTransaction{mapOf(
-            YokuliBackupArchive.ANCHORS to anchorDao.sessionCount(),
-            YokuliBackupArchive.POINTS to anchorDao.pointCount(),
-            YokuliBackupArchive.EVENTS to anchorDao.eventCount(),
-            YokuliBackupArchive.SURVEYS to sonarDao.surveyCount(),
-            YokuliBackupArchive.SAMPLES to sonarDao.rawSampleCount(),
+        // Keep the Room transaction short. Parent rows and monotonically increasing
+        // child-id ceilings form the logical snapshot; the potentially large child
+        // tables are then streamed outside the transaction without including later writes.
+        val snapshot=database.withTransaction{BackupSnapshot(
+            sessions=anchorDao.allSessionsNow(),
+            pointThroughId=anchorDao.maxPointId(),
+            eventThroughId=anchorDao.maxEventId(),
+            surveys=sonarDao.allSurveysNow(),
+            sampleThroughId=sonarDao.maxSampleId(),
         )}
-        val manifest=BackupManifestV1(
-            createdAtUtc=Instant.now().toString(),appVersionName=BuildConfig.VERSION_NAME,
-            appVersionCode=BuildConfig.VERSION_CODE,recordCounts=counts,
-            files=listOf(YokuliBackupArchive.SETTINGS)+YokuliBackupArchive.dataFiles,
-        )
+        var completedManifest:BackupManifestV1?=null
         val raw=context.contentResolver.openOutputStream(uri,"w")?:error("Android could not open the selected backup file")
         raw.use{output->ZipOutputStream(BufferedOutputStream(output)).use{zip->
             val checksums=linkedMapOf<String,String>()
-            checksums[YokuliBackupArchive.MANIFEST]=writeTextEntry(zip,YokuliBackupArchive.MANIFEST,gson.toJson(manifest))
             val settingsV1=BackupSettingsV1(payload=gson.toJsonTree(settings).asJsonObject,customAlarmSoundDisplayName=displayName(settings.customAlarmSoundUri),originalCustomAlarmSoundUri=settings.customAlarmSoundUri)
             checksums[YokuliBackupArchive.SETTINGS]=writeTextEntry(zip,YokuliBackupArchive.SETTINGS,gson.toJson(settingsV1))
-            database.withTransaction{
-                _state.value=_state.value.copy(progress="Exporting anchor sessions…")
-                checksums[YokuliBackupArchive.ANCHORS]=writeRecords(zip,YokuliBackupArchive.ANCHORS,anchorDao.allSessionsNow().asSequence().map(BackupAnchorSessionV1::from))
-                checksums[YokuliBackupArchive.POINTS]=writePaged(zip,YokuliBackupArchive.POINTS){after->anchorDao.allPointsPage(after,YokuliBackupArchive.PAGE).map(BackupTrackPointV1::from)}
-                checksums[YokuliBackupArchive.EVENTS]=writePaged(zip,YokuliBackupArchive.EVENTS){after->anchorDao.allEventsPage(after,YokuliBackupArchive.PAGE).map(BackupAlarmEventV1::from)}
-                checksums[YokuliBackupArchive.SURVEYS]=writeRecords(zip,YokuliBackupArchive.SURVEYS,sonarDao.allSurveysNow().asSequence().map(BackupSonarSurveyV1::from))
-                _state.value=_state.value.copy(progress="Streaming sonar soundings…")
-                checksums[YokuliBackupArchive.SAMPLES]=writePaged(zip,YokuliBackupArchive.SAMPLES){after->sonarDao.allSamplesPage(after,YokuliBackupArchive.PAGE).map(BackupDepthSampleV1::from)}
-            }
+            val written=linkedMapOf<String,WrittenBackupEntry>()
+            _state.value=_state.value.copy(progress="Exporting anchor sessions…")
+            written[YokuliBackupArchive.ANCHORS]=writeRecords(zip,YokuliBackupArchive.ANCHORS,snapshot.sessions.asSequence().map(BackupAnchorSessionV1::from))
+            written[YokuliBackupArchive.POINTS]=writePaged(zip,YokuliBackupArchive.POINTS){after->anchorDao.allPointsPageThrough(after,snapshot.pointThroughId,YokuliBackupArchive.PAGE).map(BackupTrackPointV1::from)}
+            written[YokuliBackupArchive.EVENTS]=writePaged(zip,YokuliBackupArchive.EVENTS){after->anchorDao.allEventsPageThrough(after,snapshot.eventThroughId,YokuliBackupArchive.PAGE).map(BackupAlarmEventV1::from)}
+            written[YokuliBackupArchive.SURVEYS]=writeRecords(zip,YokuliBackupArchive.SURVEYS,snapshot.surveys.asSequence().map(BackupSonarSurveyV1::from))
+            _state.value=_state.value.copy(progress="Streaming sonar soundings…")
+            written[YokuliBackupArchive.SAMPLES]=writePaged(zip,YokuliBackupArchive.SAMPLES){after->sonarDao.allSamplesPageThrough(after,snapshot.sampleThroughId,YokuliBackupArchive.PAGE).map(BackupDepthSampleV1::from)}
+            written.forEach{(name,entry)->checksums[name]=entry.checksum}
+            val manifest=BackupManifestV1(
+                createdAtUtc=Instant.now().toString(),appVersionName=BuildConfig.VERSION_NAME,
+                appVersionCode=BuildConfig.VERSION_CODE,recordCounts=written.mapValues{it.value.recordCount},
+                files=listOf(YokuliBackupArchive.SETTINGS)+YokuliBackupArchive.dataFiles,
+            )
+            completedManifest=manifest
+            checksums[YokuliBackupArchive.MANIFEST]=writeTextEntry(zip,YokuliBackupArchive.MANIFEST,gson.toJson(manifest))
             writeTextEntry(zip,YokuliBackupArchive.CHECKSUMS,gson.toJson(checksums))
         }}
         val completed=System.currentTimeMillis();_state.value=BackupOperationState(result="Backup exported successfully.",lastBackupAt=completed)
-        manifest
+        checkNotNull(completedManifest)
     }.onFailure{error->_state.value=BackupOperationState(error=error.message?:"Backup export failed",lastBackupAt=_state.value.lastBackupAt)}}
 
     suspend fun restore(uri:Uri):Result<BackupManifestV1> = withContext(Dispatchers.IO){runCatching{
@@ -249,10 +264,15 @@ class YokuliBackupManager @Inject constructor(
 
     private fun displayName(uri:String?):String?=uri?.let{value->runCatching{context.contentResolver.query(Uri.parse(value),arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use{cursor->if(cursor.moveToFirst())cursor.getString(0)else null}}.getOrNull()}
     private suspend fun writeTextEntry(zip:ZipOutputStream,name:String,text:String):String=writeEntry(zip,name){writer->writer.write(text)}
-    private suspend fun writeRecords(zip:ZipOutputStream,name:String,rows:Sequence<Any>):String=writeEntry(zip,name){writer->rows.forEach{row->writer.write(gson.toJson(BackupRecordV1(payload=gson.toJsonTree(row).asJsonObject)));writer.newLine()}}
-    private suspend fun <T> writePaged(zip:ZipOutputStream,name:String,load:suspend(Long)->List<T>):String{
-        var after=0L
-        return writeEntry(zip,name){writer->while(true){val page=load(after);if(page.isEmpty())break;page.forEach{row->writer.write(gson.toJson(BackupRecordV1(payload=gson.toJsonTree(row).asJsonObject)));writer.newLine()};after=(gson.toJsonTree(page.last()).asJsonObject.get("id")?.asLong?:error("Backup row has no id"))}}
+    private suspend fun writeRecords(zip:ZipOutputStream,name:String,rows:Sequence<Any>):WrittenBackupEntry{
+        var count=0L
+        val checksum=writeEntry(zip,name){writer->rows.forEach{row->writer.write(gson.toJson(BackupRecordV1(payload=gson.toJsonTree(row).asJsonObject)));writer.newLine();count++}}
+        return WrittenBackupEntry(checksum,count)
+    }
+    private suspend fun <T> writePaged(zip:ZipOutputStream,name:String,load:suspend(Long)->List<T>):WrittenBackupEntry{
+        var after=0L;var count=0L
+        val checksum=writeEntry(zip,name){writer->while(true){val page=load(after);if(page.isEmpty())break;page.forEach{row->writer.write(gson.toJson(BackupRecordV1(payload=gson.toJsonTree(row).asJsonObject)));writer.newLine();count++};after=(gson.toJsonTree(page.last()).asJsonObject.get("id")?.asLong?:error("Backup row has no id"))}}
+        return WrittenBackupEntry(checksum,count)
     }
     private suspend fun writeEntry(zip:ZipOutputStream,name:String,block:suspend (BufferedWriter)->Unit):String{
         zip.putNextEntry(ZipEntry(name));val digest=MessageDigest.getInstance("SHA-256");val writer=BufferedWriter(OutputStreamWriter(DigestingNonClosingOutputStream(zip,digest),Charsets.UTF_8));block(writer);writer.flush();zip.closeEntry();return digest.digest().joinToString(""){"%02x".format(it)}

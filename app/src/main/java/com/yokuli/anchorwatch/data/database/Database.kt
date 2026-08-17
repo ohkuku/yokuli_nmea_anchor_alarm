@@ -257,12 +257,17 @@ interface AnchorDao {
     @Transaction suspend fun deleteCompletedSession(id:Long):Int{deleteCompletedEvents(id);deleteCompletedPoints(id);return deleteCompletedSessionRow(id)}
     @Insert suspend fun insertPoint(value: TrackPointEntity)
     @Query("SELECT * FROM track_points WHERE sessionId=:id ORDER BY timestamp") fun points(id: Long): Flow<List<TrackPointEntity>>
+    @Query("SELECT * FROM (SELECT * FROM track_points WHERE sessionId=:id ORDER BY timestamp DESC,id DESC LIMIT :limit) ORDER BY timestamp,id") fun recentPoints(id:Long,limit:Int):Flow<List<TrackPointEntity>>
     @Insert suspend fun insertEvent(value: AlarmEventEntity)
     @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp") fun events(id: Long): Flow<List<AlarmEventEntity>>
-    @Query("SELECT * FROM alarm_events ORDER BY timestamp DESC") fun allEvents(): Flow<List<AlarmEventEntity>>
+    @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp DESC,id DESC LIMIT :limit") suspend fun recentEvents(id:Long,limit:Int):List<AlarmEventEntity>
     @Query("SELECT * FROM anchor_sessions ORDER BY id") suspend fun allSessionsNow():List<AnchorSessionEntity>
     @Query("SELECT * FROM track_points WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allPointsPage(afterId:Long,limit:Int):List<TrackPointEntity>
+    @Query("SELECT * FROM track_points WHERE id>:afterId AND id<=:throughId ORDER BY id LIMIT :limit") suspend fun allPointsPageThrough(afterId:Long,throughId:Long,limit:Int):List<TrackPointEntity>
     @Query("SELECT * FROM alarm_events WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allEventsPage(afterId:Long,limit:Int):List<AlarmEventEntity>
+    @Query("SELECT * FROM alarm_events WHERE id>:afterId AND id<=:throughId ORDER BY id LIMIT :limit") suspend fun allEventsPageThrough(afterId:Long,throughId:Long,limit:Int):List<AlarmEventEntity>
+    @Query("SELECT COALESCE(MAX(id),0) FROM track_points") suspend fun maxPointId():Long
+    @Query("SELECT COALESCE(MAX(id),0) FROM alarm_events") suspend fun maxEventId():Long
     @Query("SELECT COUNT(*) FROM anchor_sessions") suspend fun sessionCount():Long
     @Query("SELECT COUNT(*) FROM track_points") suspend fun pointCount():Long
     @Query("SELECT COUNT(*) FROM alarm_events") suspend fun eventCount():Long
@@ -312,6 +317,8 @@ interface SonarDao {
     @Query("DELETE FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId") suspend fun deleteGridScope(scopeType:String,scopeId:Long)
     @Query("SELECT * FROM sonar_surveys ORDER BY id") suspend fun allSurveysNow():List<SonarSurveyEntity>
     @Query("SELECT * FROM depth_samples WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allSamplesPage(afterId:Long,limit:Int):List<DepthSampleEntity>
+    @Query("SELECT * FROM depth_samples WHERE id>:afterId AND id<=:throughId ORDER BY id LIMIT :limit") suspend fun allSamplesPageThrough(afterId:Long,throughId:Long,limit:Int):List<DepthSampleEntity>
+    @Query("SELECT COALESCE(MAX(id),0) FROM depth_samples") suspend fun maxSampleId():Long
     @Query("SELECT COUNT(*) FROM sonar_surveys") suspend fun surveyCount():Long
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importSurveys(values:List<SonarSurveyEntity>)
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importSamples(values:List<DepthSampleEntity>)
