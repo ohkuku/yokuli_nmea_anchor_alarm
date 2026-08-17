@@ -618,7 +618,10 @@ class AnchorSafetyFlowTest {
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ARM)
                 .putExtra("lat",-36.8485).putExtra("lon",174.7633).putExtra("rode",40.0).putExtra("depth",8.0).putExtra("bowHeight",1.5).putExtra("boatLength",10.0)
                 .putExtra("warning",56.0).putExtra("alarm",70.0).putExtra("placement",AnchorPlacementMode.BACKDOWN.name).putExtra("rangeMode","ADVANCED").putExtra("safetyPreset","BALANCED"))
-            val active=withTimeout(5_000){while(dao.active()==null)delay(50);dao.active()!!}
+            // The release gate runs all device stories in one orchestrated job. Room and
+            // the foreground service can be cold after earlier process recycling even
+            // though the same story is consistently fast in the three CI shards.
+            val active=withTimeout(20_000){while(dao.active()==null)delay(50);dao.active()!!}
             assertTrue(active.active&&!active.paused)
             assertEquals(AnchorCenterStatus.LEARNING.name,active.centerStatus)
             assertEquals(-36.8485,active.learningReferenceLatitude!!,0.000001)
