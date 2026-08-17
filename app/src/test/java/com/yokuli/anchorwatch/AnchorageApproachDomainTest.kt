@@ -172,6 +172,23 @@ class ApproachDirectionPolicyTest {
         assertEquals(ApproachDirectionReference.HDT, value.reference)
     }
 
+    @Test fun explicitPhoneModeUsesOnlyPhoneDirectionForSideBySideComparison() {
+        val value = ApproachDirectionPolicy.resolve(
+            nowElapsed = now,
+            targetBearingDegrees = 90.0,
+            nmeaTrueHeadingDegrees = 80.0,
+            nmeaHeadingReceivedElapsed = 9_000L,
+            cogTrueDegrees = 70.0,
+            sogKnots = 5.0,
+            cogReceivedElapsed = 9_000L,
+            phoneTrueHeadingDegrees = 60.0,
+            phoneHeadingTrusted = true,
+            preferredMode = com.yokuli.anchorwatch.domain.anchorage.ApproachHeadingMode.PHONE,
+        )
+        assertEquals(ApproachDirectionReference.PHONE, value.reference)
+        assertEquals(60.0, value.referenceHeadingDegrees!!, .001)
+    }
+
     @Test fun staleHdtFallsBackToFreshCogAboveOneKnot() {
         val value = ApproachDirectionPolicy.resolve(now, 90.0, 80.0, 1_000L, 70.0, 1.1, 9_000L, 60.0, true)
         assertEquals(ApproachDirectionReference.COG, value.reference)
