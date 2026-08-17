@@ -8,6 +8,8 @@ import com.yokuli.anchorwatch.domain.sonar.DepthIntegrityFilter
 import com.yokuli.anchorwatch.domain.sonar.DepthReference
 import com.yokuli.anchorwatch.domain.sonar.DepthSentenceType
 import com.yokuli.anchorwatch.domain.sonar.DepthNormalizer
+import com.yokuli.anchorwatch.domain.sonar.DepthObservation
+import com.yokuli.anchorwatch.domain.sonar.DepthProvenance
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarGrid
 import com.yokuli.anchorwatch.domain.sonar.SonarGridSample
@@ -19,6 +21,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SonarPipelineTest {
+    @Test fun nmeaAndUserOffsetsRemainSeparateAndProduceFinalDepth(){
+        val observation=DepthObservation(
+            rawDepthMeters=5.0,
+            offsetMeters=.5,
+            reference=DepthReference.BELOW_SURFACE,
+            sentenceType=DepthSentenceType.DPT,
+            receivedElapsedRealtime=100L,
+            sourceSentence="\$SDDPT,5.0,0.5",
+        )
+        val result=DepthProvenance.from(observation,.2)
+        assertEquals(5.0,result.rawDepthMeters,.001)
+        assertEquals(.5,result.nmeaOffsetMeters!!,.001)
+        assertEquals(.2,result.userOffsetMeters,.001)
+        assertEquals(5.7,result.finalDepthMeters,.001)
+    }
+
     @Test fun dptAndDbtRetainSentenceTypeReferenceAndOffset(){
         val parser=Nmea0183Parser()
         val dpt=parser.parse(NmeaChecksum.append("SDDPT,12.3,0.8"),true,100)!!.depthObservation!!

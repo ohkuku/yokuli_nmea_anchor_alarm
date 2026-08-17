@@ -25,7 +25,7 @@ class BackupHighVolumeStoryTest{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
         val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
         val file=File(context.cacheDir,"500k-${System.nanoTime()}.yokuli-backup")
         try{
             sonar.importSurveys(listOf(SonarSurveyEntity(id=700,name="500k streaming fixture",startedAt=1_700_000_000_000L,endedAt=1_700_500_000_000L,active=false,sampleCount=SAMPLE_COUNT)))

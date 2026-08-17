@@ -23,6 +23,26 @@ data class DepthObservation(
     }
 }
 
+/** Explicit provenance for the number displayed and persisted as measured depth. */
+data class DepthProvenance(
+    val rawDepthMeters: Double,
+    val nmeaOffsetMeters: Double?,
+    val userOffsetMeters: Double,
+    val finalDepthMeters: Double,
+) {
+    companion object {
+        fun from(observation: DepthObservation, userOffsetMeters: Double): DepthProvenance {
+            val safeUserOffset = userOffsetMeters.coerceIn(-20.0, 20.0)
+            return DepthProvenance(
+                rawDepthMeters = observation.rawDepthMeters,
+                nmeaOffsetMeters = observation.offsetMeters,
+                userOffsetMeters = safeUserOffset,
+                finalDepthMeters = (observation.rawDepthMeters + (observation.offsetMeters ?: 0.0) + safeUserOffset).coerceAtLeast(.01),
+            )
+        }
+    }
+}
+
 data class DepthCandidate(
     val latitude: Double,
     val longitude: Double,

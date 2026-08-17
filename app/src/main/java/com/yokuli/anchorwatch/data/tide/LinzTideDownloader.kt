@@ -21,7 +21,7 @@ class LinzTideDownloader @Inject constructor(){
         val source=dailyPredictionUrl(station,year)
         val connection=(URL(source).openConnection() as HttpURLConnection).apply{
             connectTimeout=12_000;readTimeout=20_000;instanceFollowRedirects=true
-            setRequestProperty("User-Agent","Anchor-by-Yokuli/1.0 (LINZ predicted tide cache)")
+            setRequestProperty("User-Agent","Anchor-Watch/1.0 (LINZ predicted tide cache)")
         }
         try{
             if(connection.responseCode !in 200..299)error("LINZ tide HTTP ${connection.responseCode}")
@@ -38,7 +38,7 @@ class LinzTideDownloader @Inject constructor(){
         val source=secondaryPortsUrl()
         val connection=(URL(source).openConnection() as HttpURLConnection).apply{
             connectTimeout=8_000;readTimeout=12_000;instanceFollowRedirects=true
-            setRequestProperty("User-Agent","Anchor-by-Yokuli/1.0 (LINZ secondary-port cache)")
+            setRequestProperty("User-Agent","Anchor-Watch/1.0 (LINZ secondary-port cache)")
         }
         try{
             if(connection.responseCode !in 200..299)error("LINZ secondary ports HTTP ${connection.responseCode}")

@@ -12,6 +12,8 @@ import com.yokuli.anchorwatch.data.database.IncidentLogEntity
 import com.yokuli.anchorwatch.data.database.SonarDao
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
+import com.yokuli.anchorwatch.map.LinzHydroDiagnostics
+import com.yokuli.anchorwatch.map.nautical.OpenSeaMapDiagnostics
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.BufferedOutputStream
@@ -167,6 +169,7 @@ class StorageHealthRepository @Inject constructor(
             database.openHelper.writableDatabase.execSQL("DELETE FROM tide_prediction_cache")
         }
         File(context.filesDir, "offline_maps/linz_recent").deleteRecursively()
+        File(context.filesDir, "offline_maps/openseamap_recent").deleteRecursively()
         context.cacheDir.listFiles()?.forEach { file -> if (file.isDirectory) file.deleteRecursively() else file.delete() }
         sonarGridUpdater.rebuildMissing()
     }
@@ -229,9 +232,14 @@ class SupportBundleManager @Inject constructor(
                 "offlineMapEnabled" to appSettings.offlineMapEnabled,
             )))
             write(zip, "runtime.json", gson.toJson(runtimeState))
+            write(zip, "map_tiles.json", gson.toJson(mapOf(
+                "openSeaMap" to OpenSeaMapDiagnostics.state.value,
+                "linzLocalDepth" to LinzHydroDiagnostics.state.value,
+                "note" to "Map tile failures never alter anchor-watch safety state",
+            )))
             write(zip, "storage.json", gson.toJson(storageState))
             write(zip, "incidents.ndjson", recent.joinToString("\n") { gson.toJson(it) })
-            write(zip, "README.txt", "This bundle is designed for Yokuli support. It excludes raw NMEA, API keys and exact vessel positions. Review it before sharing.\n")
+            write(zip, "README.txt", "This bundle is designed for Anchor Watch diagnostics. It excludes raw NMEA, API keys and exact vessel positions. Review it before sharing.\n")
         } }
         _state.value = SupportBundleState(message = "Diagnostics exported successfully.")
     }.onFailure { _state.value = SupportBundleState(error = it.message ?: "Diagnostics export failed") }.map { Unit } }

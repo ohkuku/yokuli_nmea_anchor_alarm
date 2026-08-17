@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -216,6 +217,28 @@ class AnchorSafetyFlowTest {
         }
     }
 
+    @Test fun mapLayerSheetHasThreeBaseStylesAndOnlyLocalDepthOpacity() = runBlocking<Unit> {
+        preferences.save(AppSettings(mapType=1,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("map_layers").fetchSemanticsNode();true}.getOrDefault(false)}
+            compose.onNodeWithTag("map_layers").performClick()
+            compose.onNodeWithTag("map_style_map").assertExists()
+            compose.onNodeWithTag("map_style_satellite").assertExists()
+            compose.onNodeWithTag("map_style_nautical").assertExists()
+            compose.onNodeWithTag("local_depth_section").assertExists()
+            compose.onNodeWithTag("local_depth_toggle").assertExists()
+            compose.onNodeWithTag("local_depth_provider").assertExists()
+            compose.onAllNodesWithTag("sonar_opacity").assertCountEquals(0)
+            compose.onAllNodesWithTag("offline_map_opacity").assertCountEquals(0)
+            compose.onAllNodesWithTag("base_map_opacity").assertCountEquals(0)
+            compose.onNodeWithTag("map_style_nautical").performClick()
+            compose.onNodeWithText("Nautical map is a visual aid").assertExists()
+            compose.onNodeWithText("I understand · Use Nautical").performClick()
+            val saved=withTimeout(5_000){preferences.settings.first{it.mapType==3&&it.nauticalDisclaimerAccepted}}
+            assertEquals(3,saved.mapType)
+        }
+    }
+
     @Test fun realSonarStartNeedsFreshConnectedNmeaButDemoIsTheExplicitException() = runBlocking<Unit> {
         navigation.disconnectAll();preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,demoMode=false,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
@@ -236,9 +259,9 @@ class AnchorSafetyFlowTest {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithTag("map_lock_toggle").assertExists()
-            compose.onNodeWithContentDescription("Map locked to boat").assertExists()
+            compose.onNodeWithContentDescription("Auto-return to boat · pan and zoom remain available").assertExists()
             compose.onNodeWithTag("map_lock_toggle").performClick()
-            compose.onNodeWithContentDescription("Free map pan and zoom").assertExists()
+            compose.onNodeWithContentDescription("Free map browsing").assertExists()
             compose.onNodeWithTag("map_recenter").assertExists().performClick()
         }
     }
@@ -325,7 +348,7 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("nmea_runtime_list").performScrollToIndex(3)
             compose.onNodeWithText("Enable global GPS proxy").performClick()
             compose.onNodeWithText("Connect to the NMEA source first.").assertExists()
-            compose.onNodeWithText("Select mock location app → Anchor by Yokuli.",substring=true).assertExists()
+            compose.onNodeWithText("Select mock location app → Anchor Watch.",substring=true).assertExists()
         }
     }
 
@@ -387,6 +410,66 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("settings_language").performClick()
             compose.onNodeWithTag("language_en").assertExists().performClick()
             compose.onNodeWithText("Enable global GPS proxy").assertDoesNotExist()
+        }
+    }
+
+    @Test fun aboutPageShowsRealMakerCrewAndOptionalSupportConfirmation() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Settings").performClick()
+            compose.onNodeWithTag("settings_support_card").assertExists().performClick()
+            compose.onNodeWithText("Support is optional and does not unlock app features.",substring=true).assertExists()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithTag("settings_list").performScrollToIndex(6)
+            compose.onNodeWithTag("settings_about").performClick()
+            compose.onNodeWithTag("about_page").assertExists()
+            compose.onNodeWithText("Made aboard Yokuli").assertExists()
+            compose.onNodeWithText("kuku").assertExists()
+            compose.onNodeWithText("yoyo").assertExists()
+            compose.onNodeWithText("lili").assertExists()
+            compose.onNodeWithTag("about_buy_me_a_coffee").performScrollTo().performClick()
+            compose.onNodeWithText("Support is optional and does not unlock app features.",substring=true).assertExists()
+            compose.onNodeWithTag("about_support_continue").assertExists()
+        }
+    }
+
+    @Test fun firstRunMakerPageHasCrewAndVoyageButNeverAsksForMoney() = runBlocking<Unit> {
+        preferences.save(AppSettings(onboardingCompleted=false,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithTag("onboarding_maker").assertExists()
+            compose.onNodeWithText("Made aboard Yokuli").assertExists()
+            compose.onNodeWithTag("onboarding_language").assertExists().performClick()
+            withTimeout(5_000){preferences.settings.first{it.appLanguage==AppLanguage.SIMPLIFIED_CHINESE}}
+            compose.onNodeWithText("诞生于 Yokuli 船上").assertExists()
+            compose.onNodeWithTag("onboarding_language").performClick()
+            withTimeout(5_000){preferences.settings.first{it.appLanguage==AppLanguage.ENGLISH}}
+            compose.onNodeWithTag("about_buy_me_a_coffee").assertDoesNotExist()
+            compose.onNodeWithTag("onboarding_meet_crew").performClick()
+            compose.onNodeWithTag("onboarding_crew").assertExists()
+            compose.onNodeWithText("kuku",substring=true).assertExists()
+            compose.onNodeWithText("yoyo",substring=true).assertExists()
+            compose.onNodeWithText("Captain",substring=true).assertExists()
+            compose.onNodeWithText("lili",substring=true).assertExists()
+            compose.onNodeWithTag("onboarding_continue").performClick()
+            compose.onNodeWithTag("nav_watch").assertExists()
+            assertTrue(preferences.settings.first().onboardingCompleted)
+        }
+    }
+
+    @Test fun feedbackPageBuildsAnEditableEmailRequestWithoutSendingInsideTheApp() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Settings").performClick()
+            compose.onNodeWithTag("settings_list").performScrollToIndex(6)
+            compose.onNodeWithTag("settings_feedback").performClick()
+            compose.onNodeWithTag("feedback_page").assertExists()
+            compose.onNodeWithText("kuku.the.developer@gmail.com").assertExists()
+            compose.onNodeWithTag("feedback_subject").assertExists()
+            compose.onNodeWithTag("feedback_details").assertExists()
+            compose.onNodeWithTag("feedback_open_email").assertIsEnabled()
+            compose.onNodeWithText("Anchor Watch does not send or track the message itself.",substring=true).assertExists()
         }
     }
 

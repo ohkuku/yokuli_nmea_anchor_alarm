@@ -12,6 +12,8 @@ import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.domain.anchor.AlarmEngine
 import com.yokuli.anchorwatch.domain.anchor.AlarmReminderPolicy
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
+import com.yokuli.anchorwatch.domain.anchor.AnchorDepthSource
+import com.yokuli.anchorwatch.domain.anchor.AnchorSetupDepthPolicy
 import com.yokuli.anchorwatch.domain.anchor.BackdownCenterEstimator
 import com.yokuli.anchorwatch.domain.anchor.CandidateCenterObservation
 import com.yokuli.anchorwatch.domain.anchor.CandidateDriftDetector
@@ -54,6 +56,10 @@ import com.yokuli.anchorwatch.runtime.SystemMonotonicClock
 import com.yokuli.anchorwatch.runtime.SystemWallClock
 import com.yokuli.anchorwatch.runtime.WallClock
 import com.yokuli.anchorwatch.runtime.nmea.NmeaRuntime
+import com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig
+import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
+import com.yokuli.anchorwatch.data.condition.LiveWindRepository
+import com.yokuli.anchorwatch.data.nmea.NmeaUpdate
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -68,6 +74,9 @@ data class ArmRequest(
     val positionSource:GpsDataSource?,
     val centerSource:AnchorCenterSource,
     val usePhoneHeading:Boolean,
+    val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,
+    val conditions:ConditionGuardConfig=ConditionGuardConfig(),
+    val savedAnchorageId:Long?=null,
 )
 
 data class AnchorRuntimeSnapshot(
@@ -109,6 +118,8 @@ class AnchorWatchRuntime(
     private val resources:RuntimeResourceManager,
     private val diagnostics:RuntimeDiagnosticsRepository,
     private val nmeaRuntime:NmeaRuntime,
+    private val liveDepth:LiveDepthRepository,
+    private val liveWind:LiveWindRepository,
     private val host:AnchorRuntimeHost,
     private val monotonicClock:MonotonicClock=SystemMonotonicClock,
     private val wallClock:WallClock=SystemWallClock,
@@ -134,6 +145,16 @@ class AnchorWatchRuntime(
     fun activeSession()=session
     fun alarmSnapshot()=lastSnapshot
     fun selectIdleSource(source:GpsDataSource){if(session==null)currentGpsSource=source}
+
+    /**
+     * Condition monitoring persists independent fields on the same Room row. The
+     * coordinator calls this from the serialized anchor actor immediately after
+     * those writes so a later anchor update cannot put an older row back.
+     */
+    suspend fun refreshSessionFromDatabase(){
+        val current=session?:return
+        dao.session(current.id)?.takeIf{it.active}?.let{session=it}
+    }
 
     suspend fun restore(initialSettings:AppSettings):AppSettings{
         var settings=initialSettings
@@ -166,7 +187,7 @@ class AnchorWatchRuntime(
             when(currentGpsSource){
                 GpsDataSource.NMEA->nmeaRuntime.ensureConnected(settings.profile)
                 GpsDataSource.SYSTEM->host.enableSystemGps()
-                GpsDataSource.DEMO->{host.enableSystemGps();session?.let{active->demoSonar=DemoSonarGenerator(demoSeed(active));if(!demoLocation.status.value.running)demoLocation.start(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(active.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,active.alarmRadiusMeters,settings.demoSpeedMultiplier,initialElapsedMillis=restoredDemoElapsed,seed=demoSeed(active))else demoLocation.resume()}}
+                GpsDataSource.DEMO->{host.enableSystemGps();session?.let{active->demoSonar=DemoSonarGenerator(demoSeed(active),settings.demoScenario);if(!demoLocation.status.value.running)demoLocation.start(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(active.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,active.alarmRadiusMeters,settings.demoSpeedMultiplier,initialElapsedMillis=restoredDemoElapsed,seed=demoSeed(active))else demoLocation.resume()}}
             }
         }else if(session?.paused==true&&currentGpsSource==GpsDataSource.DEMO){
             session?.let{active->if(!demoLocation.status.value.running)demoLocation.start(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(active.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,active.alarmRadiusMeters,settings.demoSpeedMultiplier,initialElapsedMillis=restoredDemoElapsed,seed=demoSeed(active));demoLocation.pause()}
@@ -178,12 +199,21 @@ class AnchorWatchRuntime(
     suspend fun arm(request:ArmRequest){
         if(session!=null){host.notify("Anchor session already open","Pause, resume or lift the current anchor before starting another session.",true);return}
         var settings=preferences.settings.first();val now=monotonicClock.elapsedRealtime();val positionSource=request.positionSource?:settings.gpsDataSource
+        val geometryRequired=request.placement==AnchorPlacementMode.BACKDOWN||request.rangeMode==AnchorRangeMode.ADVANCED
+        val config=if(geometryRequired&&request.depthSource==AnchorDepthSource.NMEA){
+            val live=liveDepth.state.value
+            if(!AnchorSetupDepthPolicy.nmeaAvailable(navigation.connectionState.value,live.depthMeters,live.receivedElapsedRealtime,now)){
+                host.notify("Anchor watch not started","NMEA depth was selected, but the NMEA stream is not connected or its DPT/DBT depth is no longer fresh. Reconnect it or choose Manual depth.",true)
+                return
+            }
+            request.config.copy(waterDepthMeters=live.depthMeters)
+        }else request.config
         if(!host.notificationPermissionGranted()){host.notify("Anchor watch not started","Notification permission is required so background safety alarms remain visible.",true);return}
         if(settings.demoMode&&positionSource!=GpsDataSource.DEMO){host.notify("Anchor watch not started","Demo mode locks the position source to Demo GPS.",true);return}
         if(!settings.demoMode&&positionSource==GpsDataSource.DEMO){host.notify("Anchor watch not started","Demo GPS is only available while Developer demo mode is enabled.",true);return}
         if(positionSource==GpsDataSource.SYSTEM&&GpsSourceSafety.blocksSystemGps(settings.mockEnabled,mockGps.status.value.state)){host.notify("Anchor watch not started","Phone GPS is not independent while the global NMEA GPS proxy is active. Disable the proxy first.",true);return}
-        if(request.config.latitude !in -90.0..90.0||request.config.longitude !in -180.0..180.0||!request.config.latitude.isFinite()||!request.config.longitude.isFinite()){host.notify("Anchor watch not started","Enter a valid anchor coordinate.",true);return}
-        if(request.placement==AnchorPlacementMode.BACKDOWN||request.rangeMode==AnchorRangeMode.ADVANCED){val depth=request.config.waterDepthMeters;val rode=request.config.rodeLengthMeters;val bow=request.config.bowRollerHeightMeters;if(depth==null||depth<0||bow<=0||rode<=depth+bow||(request.rangeMode==AnchorRangeMode.ADVANCED&&(request.boatLength?:0.0)<=0)){host.notify("Anchor watch not started","The selected setup requires valid water depth, rode, bow height and boat length; rode must exceed the total vertical depth.",true);return}}
+        if(config.latitude !in -90.0..90.0||config.longitude !in -180.0..180.0||!config.latitude.isFinite()||!config.longitude.isFinite()){host.notify("Anchor watch not started","Enter a valid anchor coordinate.",true);return}
+        if(geometryRequired){val depth=config.waterDepthMeters;val rode=config.rodeLengthMeters;val bow=config.bowRollerHeightMeters;if(depth==null||depth<0||bow<=0||rode<=depth+bow||(request.rangeMode==AnchorRangeMode.ADVANCED&&(request.boatLength?:0.0)<=0)){host.notify("Anchor watch not started","The selected setup requires valid water depth, rode, bow height and boat length; rode must exceed the total vertical depth.",true);return}}
         val sourceReady=when(positionSource){GpsDataSource.NMEA->navigation.connectionState.value==NmeaConnectionState.CONNECTED;GpsDataSource.SYSTEM,GpsDataSource.DEMO->host.enableSystemGps()}
         val latestFix=when(positionSource){GpsDataSource.NMEA->navigation.fix.value;GpsDataSource.SYSTEM,GpsDataSource.DEMO->systemLocation.fix.value}
         val lastFix=if(positionSource==GpsDataSource.NMEA)navigation.diagnostics.value.lastFixElapsed else latestFix?.receivedElapsedRealtime
@@ -191,12 +221,18 @@ class AnchorWatchRuntime(
         val sourceQualityReady=when(positionSource){GpsDataSource.NMEA->NmeaFixQualityPolicy.allowsContinuation(latestFix);GpsDataSource.SYSTEM,GpsDataSource.DEMO->(latestFix?.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}
         val freshFix=sourceReady&&latestFix?.valid==true&&preciseProvider&&sourceQualityReady&&lastFix!=null&&now-lastFix<settings.gpsLossSeconds*1_000L
         if(!freshFix){val label=when(positionSource){GpsDataSource.NMEA->"NMEA";GpsDataSource.SYSTEM->"system GNSS (not coarse network location)";GpsDataSource.DEMO->"system GNSS origin for Demo"};host.notify("Anchor watch not started","A live, current $label GPS fix is required. Existing connections were left unchanged.",false);host.refresh();host.releaseIfIdle();return}
+        val conditions=request.conditions.validated()
+        if(positionSource!=GpsDataSource.DEMO&&(conditions.depthGuardEnabled||conditions.windGuardEnabled||conditions.windShiftEnabled)&&navigation.connectionState.value!=NmeaConnectionState.CONNECTED){host.notify("Anchor watch not started","Condition alerts require an explicitly connected NMEA stream. Connect the boat source and wait for live sensor data.",true);return}
+        if(positionSource!=GpsDataSource.DEMO&&conditions.depthGuardEnabled&&!liveDepth.state.value.isFresh(now)){host.notify("Anchor watch not started","Depth guard is enabled but no fresh NMEA depth is available. Disable the guard or wait for the sounder.",true);return}
+        val liveWindState=liveWind.state.value
+        if(positionSource!=GpsDataSource.DEMO&&conditions.windGuardEnabled&&liveWindState.speed(now,conditions.windAllowApparentFallback)==null){host.notify("Anchor watch not started","Wind guard is enabled but no fresh supported NMEA wind speed is available.",true);return}
+        if(positionSource!=GpsDataSource.DEMO&&conditions.windShiftEnabled&&liveWindState.direction(now)==null){host.notify("Anchor watch not started","Wind shift guard requires fresh true wind direction (MWD or coherent MWV-T plus HDT).",true);return}
         val learning=request.placement==AnchorPlacementMode.BACKDOWN
-        val c=if(positionSource==GpsDataSource.DEMO||learning)request.config.copy(latitude=latestFix!!.latitude,longitude=latestFix.longitude,gpsAntennaOffsetMeters=if(positionSource==GpsDataSource.NMEA)request.config.gpsAntennaOffsetMeters else 0.0)else request.config.copy(gpsAntennaOffsetMeters=if(positionSource==GpsDataSource.NMEA)request.config.gpsAntennaOffsetMeters else 0.0)
+        val c=if(positionSource==GpsDataSource.DEMO||learning)config.copy(latitude=latestFix!!.latitude,longitude=latestFix.longitude,gpsAntennaOffsetMeters=if(positionSource==GpsDataSource.NMEA)config.gpsAntennaOffsetMeters else 0.0)else config.copy(gpsAntennaOffsetMeters=if(positionSource==GpsDataSource.NMEA)config.gpsAntennaOffsetMeters else 0.0)
         val wallNow=wallClock.currentTimeMillis();val horizontalRode=AnchorGeometry.expectedRadius(c.rodeLengthMeters,c.waterDepthMeters,c.bowRollerHeightMeters,c.gpsAntennaOffsetMeters)
-        val entity=AnchorSessionEntity(startedAt=wallNow,anchorLatitude=c.latitude,anchorLongitude=c.longitude,rodeLengthMeters=c.rodeLengthMeters,waterDepthMeters=c.waterDepthMeters,bowRollerHeightMeters=c.bowRollerHeightMeters,gpsAntennaOffsetMeters=c.gpsAntennaOffsetMeters,expectedSwingRadiusMeters=horizontalRode,warningRadiusMeters=c.warningRadiusMeters,alarmRadiusMeters=c.alarmRadiusMeters,placementMode=request.placement.name,centerStatus=if(learning)AnchorCenterStatus.LEARNING.name else AnchorCenterStatus.RESOLVED.name,centerResolvedAt=if(learning)null else wallNow,centerConfidence=if(learning)Confidence.LOW.name else Confidence.HIGH.name,centerSampleCount=if(learning)0 else 1,boatLengthMeters=request.boatLength,rangeMode=request.rangeMode.name,safetyPreset=request.safetyPreset.name,learningReferenceLatitude=if(learning)c.latitude else null,learningReferenceLongitude=if(learning)c.longitude else null,provisionalAnchorLatitude=if(learning)c.latitude else null,provisionalAnchorLongitude=if(learning)c.longitude else null,provisionalRadiusMeters=if(learning)maxOf(horizontalRode,c.rodeLengthMeters*.85,25.0) else null,positionSource=positionSource.name,anchorPositionMode=if(learning)AnchorPositionMode.ESTIMATE.name else AnchorPositionMode.KNOWN.name,centerSource=if(learning)AnchorCenterSource.UNKNOWN.name else request.centerSource.name,usePhoneHeading=learning&&request.usePhoneHeading,candidateDecision=CandidateDecision.NONE.name)
+        val entity=AnchorSessionEntity(startedAt=wallNow,anchorLatitude=c.latitude,anchorLongitude=c.longitude,rodeLengthMeters=c.rodeLengthMeters,waterDepthMeters=c.waterDepthMeters,bowRollerHeightMeters=c.bowRollerHeightMeters,gpsAntennaOffsetMeters=c.gpsAntennaOffsetMeters,expectedSwingRadiusMeters=horizontalRode,warningRadiusMeters=c.warningRadiusMeters,alarmRadiusMeters=c.alarmRadiusMeters,placementMode=request.placement.name,centerStatus=if(learning)AnchorCenterStatus.LEARNING.name else AnchorCenterStatus.RESOLVED.name,centerResolvedAt=if(learning)null else wallNow,centerConfidence=if(learning)Confidence.LOW.name else Confidence.HIGH.name,centerSampleCount=if(learning)0 else 1,boatLengthMeters=request.boatLength,rangeMode=request.rangeMode.name,safetyPreset=request.safetyPreset.name,learningReferenceLatitude=if(learning)c.latitude else null,learningReferenceLongitude=if(learning)c.longitude else null,provisionalAnchorLatitude=if(learning)c.latitude else null,provisionalAnchorLongitude=if(learning)c.longitude else null,provisionalRadiusMeters=if(learning)maxOf(horizontalRode,c.rodeLengthMeters*.85,25.0) else null,positionSource=positionSource.name,anchorPositionMode=if(learning)AnchorPositionMode.ESTIMATE.name else AnchorPositionMode.KNOWN.name,centerSource=if(learning)AnchorCenterSource.UNKNOWN.name else request.centerSource.name,usePhoneHeading=learning&&request.usePhoneHeading,candidateDecision=CandidateDecision.NONE.name,savedAnchorageId=request.savedAnchorageId,depthGuardEnabled=conditions.depthGuardEnabled,shallowDepthAlarmMeters=conditions.shallowDepthAlarmMeters,deepDepthAlarmMeters=conditions.deepDepthAlarmMeters,windGuardEnabled=conditions.windGuardEnabled,windWarningKnots=conditions.windWarningKnots,windAlarmKnots=conditions.windAlarmKnots,windShiftEnabled=conditions.windShiftEnabled,windShiftThresholdDegrees=conditions.windShiftThresholdDegrees,windAllowApparentFallback=conditions.windAllowApparentFallback)
         settings=settings.copy(gpsDataSource=positionSource);preferences.save(settings);currentGpsSource=positionSource
-        session=entity.copy(id=dao.insertSession(entity));acceptedPosition.lockSource(session!!.id,positionSource);acceptedPosition.setPhoneHeadingEvidenceEnabled(learning&&request.usePhoneHeading);dao.insertEvent(AlarmEventEntity(sessionId=session!!.id,timestamp=wallNow,type=if(learning)"SESSION_STARTED_CENTER_LEARNING" else "SESSION_STARTED",detail="SOURCE=${positionSource.name};CENTER=${request.centerSource.name}"));samples.clear();driftDetector.reset();clearPositionDegraded();host.silence();lastReportedAlarm=null;engine=alarmEngine(settings);lastSnapshot=if(learning)engine.learn(c,now)else engine.arm(c,now);setResources(session!!,settings);if(positionSource==GpsDataSource.NMEA)nmeaRuntime.ensureConnected(settings.profile);if(positionSource==GpsDataSource.DEMO)demoSonar=DemoSonarGenerator(demoSeed(session!!));val initialFix=if(positionSource==GpsDataSource.DEMO)demoLocation.start(c.latitude,c.longitude,request.placement,settings.demoScenario,c.alarmRadiusMeters,settings.demoSpeedMultiplier,now,seed=demoSeed(session!!))?:latestFix!! else latestFix!!;submitRawFix(initialFix,positionSource)
+        session=entity.copy(id=dao.insertSession(entity));acceptedPosition.lockSource(session!!.id,positionSource);acceptedPosition.setPhoneHeadingEvidenceEnabled(learning&&request.usePhoneHeading);dao.insertEvent(AlarmEventEntity(sessionId=session!!.id,timestamp=wallNow,type=if(learning)"SESSION_STARTED_CENTER_LEARNING" else "SESSION_STARTED",detail="SOURCE=${positionSource.name};CENTER=${request.centerSource.name};DEPTH_SOURCE=${request.depthSource.name}"));samples.clear();driftDetector.reset();clearPositionDegraded();host.silence();lastReportedAlarm=null;engine=alarmEngine(settings);lastSnapshot=if(learning)engine.learn(c,now)else engine.arm(c,now);setResources(session!!,settings);if(positionSource==GpsDataSource.NMEA)nmeaRuntime.ensureConnected(settings.profile);if(positionSource==GpsDataSource.DEMO)demoSonar=DemoSonarGenerator(demoSeed(session!!),settings.demoScenario);val initialFix=if(positionSource==GpsDataSource.DEMO)demoLocation.start(c.latitude,c.longitude,request.placement,settings.demoScenario,c.alarmRadiusMeters,settings.demoSpeedMultiplier,now,seed=demoSeed(session!!))?:latestFix!! else latestFix!!;submitRawFix(initialFix,positionSource)
     }
 
     suspend fun onNmeaState(state:NmeaConnectionState){
@@ -222,7 +258,10 @@ class AnchorWatchRuntime(
 
     suspend fun onAcceptedPosition(accepted:IntegrityAcceptedFix,source:GpsDataSource){
         val fix=accepted.fix
-        if(source==GpsDataSource.DEMO)demoSonar?.observation(fix,fix.receivedElapsedRealtime)?.let{sonarRecorder.submitDemo(it)}
+        if(source==GpsDataSource.DEMO){
+            demoSonar?.observation(fix,fix.receivedElapsedRealtime)?.let{observation->liveDepth.accept(observation,isDemo=true);sonarRecorder.submitDemo(observation)}
+            liveWind.accept(NmeaUpdate(trueHeading=fix.headingTrueDegrees,trueWindDirection=fix.windDirectionTrueDegrees,trueWindSpeedKnots=fix.trueWindSpeedKnots?:fix.windSpeedKnots,apparentWindSpeedKnots=fix.apparentWindSpeedKnots,trueWindAngle=fix.trueWindAngleDegrees,apparentWindAngle=fix.apparentWindAngleDegrees,type="DEMO"),fix.receivedElapsedRealtime)
+        }
         if(accepted.trust==FixTrust.TRUSTED)clearPositionDegraded() else markPositionDegraded(fix.receivedElapsedRealtime,accepted.reason?:accepted.trust.name)
         if(source==GpsDataSource.NMEA&&nmeaLossAnnounced&&session?.paused==false){nmeaLossAnnounced=false;logEvent("NMEA_CONNECTION_RESTORED","");host.notify("NMEA GPS restored","Valid NMEA positions are flowing again; anchor watch remained active.",false)}
         val active=session

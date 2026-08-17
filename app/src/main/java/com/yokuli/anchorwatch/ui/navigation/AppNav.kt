@@ -23,9 +23,10 @@ import com.yokuli.anchorwatch.domain.model.AppLanguage
 import com.yokuli.anchorwatch.domain.model.AlarmState
 import com.yokuli.anchorwatch.domain.model.AlarmType
 import com.yokuli.anchorwatch.localization.localized
+import com.yokuli.anchorwatch.ui.about.OnboardingMakerScreen
 
 private data class Destination(val label:String,val icon:ImageVector)
-internal val LocalAppLanguage=compositionLocalOf{AppLanguage.SYSTEM}
+internal val LocalAppLanguage=compositionLocalOf{AppLanguage.ENGLISH}
 
 @Composable internal fun tr(english:String,chinese:String)=localized(LocalAppLanguage.current,english,chinese)
 
@@ -34,6 +35,14 @@ internal val LocalAppLanguage=compositionLocalOf{AppLanguage.SYSTEM}
 fun AnchorApp(vm:MainViewModel){
     val state by vm.ui.collectAsState()
     CompositionLocalProvider(LocalAppLanguage provides state.settings.appLanguage){
+        if(!state.settingsReady){
+            Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+            return@CompositionLocalProvider
+        }
+        if(!state.settings.onboardingCompleted){
+            OnboardingMakerScreen(vm::completeOnboarding){language->vm.updateSettings(state.settings.copy(appLanguage=language))}
+            return@CompositionLocalProvider
+        }
         val destinations=listOf(
             Destination(tr("Watch","锚警"),Icons.Default.Map),
             Destination(tr("Data","数据"),Icons.Default.DataObject),

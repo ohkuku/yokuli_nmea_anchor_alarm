@@ -140,3 +140,33 @@ object Migration10To11 : Migration(10,11){
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_incident_log_severity` ON `incident_log` (`severity`)")
     }
 }
+
+object Migration11To12:Migration(11,12){
+    override fun migrate(db:SupportSQLiteDatabase){
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN depthGuardEnabled INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN shallowDepthAlarmMeters REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN deepDepthAlarmMeters REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windGuardEnabled INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windWarningKnots REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windAlarmKnots REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windShiftEnabled INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windShiftThresholdDegrees REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windAllowApparentFallback INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windBaselineDirectionDegrees REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windBaselineEstablishedAt INTEGER")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windBaselineSource TEXT")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN depthAlarmSnoozedUntil INTEGER")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windAlarmSnoozedUntil INTEGER")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windShiftAlarmSnoozedUntil INTEGER")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN minObservedDepthMeters REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN maxObservedDepthMeters REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN maxObservedWindKnots REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN maxObservedWindSource TEXT")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN depthAlarmCount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN windAlarmCount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN savedAnchorageId INTEGER")
+        db.execSQL("CREATE TABLE IF NOT EXISTS saved_anchorages (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,name TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,lastVisitedAt INTEGER,visitCount INTEGER NOT NULL DEFAULT 0,preferredAlarmRadiusMeters REAL,typicalWaterDepthMeters REAL,typicalRodeLengthMeters REAL,seabedType TEXT NOT NULL DEFAULT 'UNKNOWN',customSeabedText TEXT,rating INTEGER,notes TEXT NOT NULL,sourceSessionId INTEGER)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_saved_anchorages_updatedAt ON saved_anchorages(updatedAt)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_saved_anchorages_lastVisitedAt ON saved_anchorages(lastVisitedAt)")
+    }
+}

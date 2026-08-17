@@ -1,6 +1,6 @@
 # Yokuli 锚中心点推测算法说明
 
-> 文档对应 Room schema v11 / 当前 `BackdownCenterEstimator` 实现。它描述的是 Yokuli 自己的保守估算器，不声称复制 Garmin 或其他厂商未公开的专有算法。
+> 文档对应 Room schema v12 / 当前 `BackdownCenterEstimator` 实现。它描述的是 Yokuli 自己的保守估算器，不声称复制 Garmin 或其他厂商未公开的专有算法。
 
 ## English abstract
 

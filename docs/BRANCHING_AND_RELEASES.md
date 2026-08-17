@@ -37,11 +37,11 @@ gitGraph
 ### 日常开发流程
 
 1. 从 `codex/develop` 创建 `codex/feature/<name>`。
-2. feature push 会运行 Unit、Lint、Debug 编译和三片设备集成测试。
+2. feature push 会运行 Unit、Lint、Debug 编译、三片 Android 14 设备集成测试与 API 36 smoke。
 3. 只有 CI 通过才合回 `codex/develop`。
 4. `codex/develop` 每次 push 产生两个有明确含义的产物：
    - `candidate`：只通过 Unit/Lint/编译，还没通过全部设备 story；
-   - `development-debug` / `debug-verified`：全部三片设备 story 通过，可供开发试用下载。
+   - `development-debug` / `debug-verified`：全部三片设备 story 与 API 36 smoke 通过，可供开发试用下载。
 5. 失败构建若仍成功编译，只会上传 7 天的 `UNVERIFIED` 诊断 APK，绝不能当作可用版本传播。
 
 ### Alpha、Beta、Stable
@@ -50,7 +50,7 @@ gitGraph
 - **Beta**：功能冻结，只修发布阻断缺陷。来源是 `codex/release/*`（特殊情况下 main），tag 为 `vX.Y.Z-beta.N`。
 - **Stable**：来源只能是 `main`，tag 必须是 `vX.Y.Z`，不能带预发布后缀。
 
-GitHub 的 `Publish Anchor by Yokuli Release` 手动 Action 会验证“当前分支 + channel + tag”组合；组合不合法会在构建和签名前直接失败。之后它会跑完整设备 story、Unit、Release Lint，生成签名 APK/AAB、校验签名和 SHA‑256，再创建 GitHub Release。
+GitHub 的 `Publish Anchor Watch Release` 手动 Action 会验证“当前分支 + channel + tag”组合；组合不合法会在构建和签名前直接失败。之后它会跑完整设备 story、Unit、Release Lint，生成签名 APK/AAB、校验签名和 SHA‑256，再创建 GitHub Release。
 
 ### 版本合并规则
 
@@ -62,9 +62,9 @@ GitHub 的 `Publish Anchor by Yokuli Release` 手动 Action 会验证“当前�
 
 ### 下载开发包
 
-进入 GitHub → Actions → `Anchor by Yokuli Android CI` → 选择 `codex/develop` 最近一次绿色运行 → Artifacts，下载：
+进入 GitHub → Actions → `Anchor Watch Android CI` → 选择 `codex/develop` 最近一次绿色运行 → Artifacts，下载：
 
-`anchor-by-yokuli-development-debug-<run>-<sha>`
+`anchor-watch-development-debug-<run>-<sha>`
 
 Debug APK 使用调试签名，不能覆盖由正式签名安装的 stable APK；测试前应确认当前设备上安装的是哪一种签名。
 
@@ -83,7 +83,7 @@ Debug APK 使用调试签名，不能覆盖由正式签名安装的 stable APK�
 ### Normal flow
 
 1. Branch a feature from `codex/develop`.
-2. Pushes run unit tests, lint, Debug compilation and three device-test shards.
+2. Pushes run unit tests, lint, Debug compilation, three Android 14 device-test shards and an API 36 smoke.
 3. Merge only green work back to `codex/develop`.
 4. Every green develop push publishes a 45-day `development-debug` artifact. A candidate artifact is not equivalent to a device-verified artifact.
 5. Freeze a planned release into `codex/release/X.Y.Z`; publish alpha/beta tags while fixing only release blockers.

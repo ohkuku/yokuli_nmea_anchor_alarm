@@ -9,6 +9,18 @@ plugins {
 }
 
 val local = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load) }
+fun brandConfig(key: String, defaultValue: String = ""): String {
+    if (local.containsKey(key)) return local.getProperty(key).orEmpty().trim()
+    System.getenv(key)?.let { return it.trim() }
+    providers.gradleProperty(key).orNull?.let { return it.trim() }
+    return defaultValue
+}
+val yokuliYoutubeUrl = brandConfig("YOKULI_YOUTUBE_URL", "https://www.youtube.com/@yokuli_ocean_diary")
+val yokuliBuyMeACoffeeUrl = brandConfig("YOKULI_BUYMEACOFFEE_URL", "https://buymeacoffee.com/ukus3yya8a")
+val yokuliWebsiteUrl = brandConfig("YOKULI_WEBSITE_URL")
+val yokuliContactEmail = brandConfig("YOKULI_CONTACT_EMAIL", "kuku.the.developer@gmail.com")
+val yokuliPrivacyUrl = brandConfig("YOKULI_PRIVACY_URL")
+val yokuliSourceCodeUrl = brandConfig("YOKULI_SOURCE_CODE_URL", "https://github.com/ohkuku/yokuli_nmea_anchor_alarm")
 val mapsApiKey = local.getProperty("MAPS_API_KEY")
     ?.takeIf { it.isNotBlank() }
     ?: System.getenv("MAPS_API_KEY")?.takeIf { it.isNotBlank() }
@@ -47,13 +59,13 @@ val releaseSigningAvailable = listOf(releaseStoreFile, releaseStorePassword, rel
 
 android {
     namespace = "com.yokuli.anchorwatch"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.yokuli.anchorwatch"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0"
+        versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
@@ -63,6 +75,12 @@ android {
         buildConfigField("String", "LINZ_SOUNDING_LAYER_IDS", linzSoundingLayerIds.asBuildConfigString())
         buildConfigField("String", "LINZ_DEPTH_AREA_LAYER_IDS", linzDepthAreaLayerIds.asBuildConfigString())
         buildConfigField("String", "LINZ_DEPTH_CONTOUR_LAYER_IDS", linzDepthContourLayerIds.asBuildConfigString())
+        buildConfigField("String", "YOKULI_YOUTUBE_URL", yokuliYoutubeUrl.asBuildConfigString())
+        buildConfigField("String", "YOKULI_BUYMEACOFFEE_URL", yokuliBuyMeACoffeeUrl.asBuildConfigString())
+        buildConfigField("String", "YOKULI_WEBSITE_URL", yokuliWebsiteUrl.asBuildConfigString())
+        buildConfigField("String", "YOKULI_CONTACT_EMAIL", yokuliContactEmail.asBuildConfigString())
+        buildConfigField("String", "YOKULI_PRIVACY_URL", yokuliPrivacyUrl.asBuildConfigString())
+        buildConfigField("String", "YOKULI_SOURCE_CODE_URL", yokuliSourceCodeUrl.asBuildConfigString())
     }
     signingConfigs {
         if (releaseSigningAvailable) {

@@ -9,10 +9,11 @@ import kotlinx.coroutines.launch
 class SerialRuntimeActor(
     scope: CoroutineScope,
     private val awaitRestore: suspend () -> Unit,
+    mailboxCapacity: Int = 256,
     private val onFailure: (Throwable) -> Unit,
 ) {
     private data class Work(val action: suspend () -> Unit, val completion: CompletableDeferred<Unit>?)
-    private val channel = Channel<Work>(Channel.UNLIMITED)
+    private val channel = Channel<Work>(mailboxCapacity.coerceAtLeast(1))
 
     init {
         scope.launch {
@@ -32,9 +33,7 @@ class SerialRuntimeActor(
 
     suspend fun execute(action: suspend () -> Unit) {
         val completion = CompletableDeferred<Unit>()
-        if (!channel.trySend(Work(action, completion)).isSuccess) {
-            throw IllegalStateException("Runtime actor is closed")
-        }
+        channel.send(Work(action, completion))
         completion.await()
     }
 

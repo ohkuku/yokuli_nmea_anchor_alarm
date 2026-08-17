@@ -11,6 +11,7 @@ import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.DepthSampleEntity
 import com.yokuli.anchorwatch.data.database.SonarSurveyEntity
+import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.data.database.TrackPointEntity
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
@@ -40,7 +41,7 @@ class BackupRestoreStoryTest{
     @Test fun activeWritesDuringExportStillProduceARestoreValidSnapshot()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
         val file=File(context.cacheDir,"active-export-${System.nanoTime()}.yokuli-backup")
         try{
             anchor.importSessions(listOf(session(41,"CURRENT_POSITION")))
@@ -58,22 +59,24 @@ class BackupRestoreStoryTest{
     @Test fun settingsAnchorTrackAlarmAndSonarRoundTripAsOneUserStory()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
         val file=File(context.cacheDir,"story-${System.nanoTime()}.yokuli-backup")
         try{
             preferences.save(original.copy(appLanguage=AppLanguage.SIMPLIFIED_CHINESE,boatLengthMeters=12.4,preferredAlarmRadiusMeters=66.0))
             anchor.importSessions(listOf(session(41,"ESTIMATED_USER_ACCEPTED")))
             anchor.importPoints(listOf(TrackPointEntity(id=51,sessionId=41,timestamp=2_000,latitude=-36.8484,longitude=174.7634,distanceFromAnchor=2.0,sog=.1,cog=12.0,heading=11.0,hdop=.8)))
             anchor.importEvents(listOf(AlarmEventEntity(id=61,sessionId=41,timestamp=2_500,type="ALARM_SNOOZED",detail="5m")))
+            database.anchorageDao().insert(SavedAnchorageEntity(id=62,name="Quiet Bay",latitude=-36.8485,longitude=174.7633,createdAt=2_600,updatedAt=2_600,preferredAlarmRadiusMeters=55.0,rating=5,notes="Local-only note",sourceSessionId=41))
             sonar.importSurveys(listOf(SonarSurveyEntity(id=71,name="港湾 α 测深",startedAt=3_000,endedAt=4_000,active=false,tideMode="AUTO_PREDICTED",tideStationId="auckland",tideStationName="Auckland",tideStationDistanceMeters=840.0)))
             sonar.importSamples(listOf(DepthSampleEntity(id=81,surveyId=71,timestamp=3_500,latitude=-36.8483,longitude=174.7635,baseGridX=1,baseGridY=2,sourceElapsedRealtime=300,rawDepthMeters=8.2,measuredDepthMeters=8.4,normalizedDepthMeters=6.9,depthReference="BELOW_SURFACE",sentenceType="DPT",gpsSource="NMEA_SERVER",positionProvider="NMEA",positionAgeMillis=50,tideHeightMetersApplied=1.5,tideCorrectionMode="AUTO_PREDICTED",tideStationId="auckland",tideStationName="Auckland",tideStationDistanceMeters=840.0,tidePredictionYear=2026,tideCorrectionMethod="LINZ_COSINE_BETWEEN_EXTREMES",tideSource="LINZ_DAILY_PREDICTION",tideSourceUpdatedAt=3_400,tideCorrectionStatus="AVAILABLE")))
             assertTrue(manager.export(Uri.fromFile(file)).isSuccess)
-            sonar.clearGridCells();sonar.clearSamples();sonar.clearSurveys();anchor.clearEvents();anchor.clearPoints();anchor.clearSessions()
+            sonar.clearGridCells();sonar.clearSamples();sonar.clearSurveys();database.anchorageDao().clear();anchor.clearEvents();anchor.clearPoints();anchor.clearSessions()
             preferences.save(original)
             assertTrue(manager.restore(Uri.fromFile(file)).isSuccess)
             assertEquals(41,anchor.allSessionsNow().single().id);assertEquals("ESTIMATED_USER_ACCEPTED",anchor.allSessionsNow().single().centerSource)
             assertEquals(51,anchor.allPointsPage(0,10).single().id);assertEquals("ALARM_SNOOZED",anchor.allEventsPage(0,10).single().type)
             assertEquals("港湾 α 测深",sonar.allSurveysNow().single().name);assertEquals("NMEA_SERVER",sonar.allSamplesPage(0,10).single().gpsSource);assertEquals(1.5,sonar.allSamplesPage(0,10).single().tideHeightMetersApplied!!,.0001);assertEquals("LINZ_DAILY_PREDICTION",sonar.allSamplesPage(0,10).single().tideSource)
+            assertEquals("Quiet Bay",database.anchorageDao().allNow().single().name);assertEquals(5,database.anchorageDao().allNow().single().rating)
             val restored=preferences.settings.first();assertEquals(AppLanguage.SIMPLIFIED_CHINESE,restored.appLanguage);assertEquals(12.4,restored.boatLengthMeters,.001)
             // Explicit imported primary keys must advance SQLite's generated ids;
             // otherwise the first post-restore watch or sounding could collide.
@@ -88,7 +91,7 @@ class BackupRestoreStoryTest{
     @Test fun corruptArchiveIsRejectedBeforeExistingLocalHistoryChanges()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
         val corrupt=File(context.cacheDir,"corrupt-${System.nanoTime()}.yokuli-backup").apply{writeBytes(byteArrayOf(1,2,3,4,5))}
         try{anchor.importSessions(listOf(session(99,"CURRENT_POSITION")));assertTrue(manager.restore(Uri.fromFile(corrupt)).isFailure);assertEquals(99,anchor.allSessionsNow().single().id)}finally{preferences.save(original);database.close();corrupt.delete()}
     }
@@ -96,7 +99,7 @@ class BackupRestoreStoryTest{
     @Test fun emptyAppRoundTripAndSecondExportHaveTheSameCanonicalPayload()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
         val first=File(context.cacheDir,"empty-a-${System.nanoTime()}.yokuli-backup");val second=File(context.cacheDir,"empty-b-${System.nanoTime()}.yokuli-backup")
         try{
             anchor.clearEvents();anchor.clearPoints();anchor.clearSessions();sonar.clearGridCells();sonar.clearSamples();sonar.clearSurveys()
@@ -115,11 +118,12 @@ class BackupRestoreStoryTest{
     @Test fun checksumMissingEntryUnsupportedVersionInvalidFkAndInvalidCoordinateAreRejectedBeforeReplace()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
         val base=File(context.cacheDir,"fault-base-${System.nanoTime()}.yokuli-backup");val variants=mutableListOf<File>()
         try{
             anchor.importSessions(listOf(session(41,"CURRENT_POSITION")))
             anchor.importPoints(listOf(TrackPointEntity(id=51,sessionId=41,timestamp=2_000,latitude=-36.8484,longitude=174.7634,distanceFromAnchor=2.0,sog=null,cog=null,heading=null,hdop=.8)))
+            database.anchorageDao().insert(SavedAnchorageEntity(id=71,name="Validation Bay",latitude=-36.84,longitude=174.76,createdAt=1,updatedAt=1,rating=4))
             assertTrue(manager.export(Uri.fromFile(base)).isSuccess)
             suspend fun rejected(name:String,mutate:(MutableMap<String,ByteArray>)->Unit){
                 val target=File(context.cacheDir,"$name-${System.nanoTime()}.yokuli-backup");variants+=target
@@ -129,9 +133,10 @@ class BackupRestoreStoryTest{
             }
             rejected("wrong-checksum"){entries->entries[YokuliBackupArchive.POINTS]=entries.getValue(YokuliBackupArchive.POINTS)+" ".encodeToByteArray()}
             rejected("missing-entry"){entries->entries.remove(YokuliBackupArchive.SAMPLES)}
-            rejected("unsupported-version"){entries->entries[YokuliBackupArchive.MANIFEST]=entries.getValue(YokuliBackupArchive.MANIFEST).decodeToString().replace("\"formatVersion\":1","\"formatVersion\":999").encodeToByteArray()}
+            rejected("unsupported-version"){entries->entries[YokuliBackupArchive.MANIFEST]=entries.getValue(YokuliBackupArchive.MANIFEST).decodeToString().replace("\"formatVersion\":2","\"formatVersion\":999").encodeToByteArray()}
             rejected("invalid-fk"){entries->entries[YokuliBackupArchive.POINTS]=entries.getValue(YokuliBackupArchive.POINTS).decodeToString().replace("\"sessionId\":41","\"sessionId\":999").encodeToByteArray();refreshChecksum(entries,YokuliBackupArchive.POINTS)}
             rejected("invalid-coordinate"){entries->entries[YokuliBackupArchive.ANCHORS]=entries.getValue(YokuliBackupArchive.ANCHORS).decodeToString().replace("\"anchorLatitude\":-36.8485","\"anchorLatitude\":999.0").encodeToByteArray();refreshChecksum(entries,YokuliBackupArchive.ANCHORS)}
+            rejected("invalid-rating"){entries->entries[YokuliBackupArchive.ANCHORAGES]=entries.getValue(YokuliBackupArchive.ANCHORAGES).decodeToString().replace("\"rating\":4","\"rating\":99").encodeToByteArray();refreshChecksum(entries,YokuliBackupArchive.ANCHORAGES)}
         }finally{preferences.save(original);database.close();base.delete();variants.forEach(File::delete)}
     }
 

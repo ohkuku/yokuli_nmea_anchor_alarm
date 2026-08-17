@@ -85,6 +85,8 @@ class AnchorForegroundService : Service() {
         const val KEEP_CURRENT_CENTER = "com.yokuli.anchorwatch.KEEP_CURRENT_CENTER"
         const val CONTINUE_ESTIMATING_CENTER = "com.yokuli.anchorwatch.CONTINUE_ESTIMATING_CENTER"
         const val UPDATE_PHONE_HEADING = "com.yokuli.anchorwatch.UPDATE_PHONE_HEADING"
+        const val UPDATE_CONDITION_GUARDS = "com.yokuli.anchorwatch.UPDATE_CONDITION_GUARDS"
+        const val RESET_WIND_BASELINE = "com.yokuli.anchorwatch.RESET_WIND_BASELINE"
         const val START_PROXY = "com.yokuli.anchorwatch.START_PROXY"
         const val STOP_PROXY = "com.yokuli.anchorwatch.STOP_PROXY"
         const val TEST_ALARM = "com.yokuli.anchorwatch.TEST_ALARM"

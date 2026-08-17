@@ -14,6 +14,7 @@ class AnchorRuntimeActor(
     scope: CoroutineScope,
     private val awaitRestore: suspend () -> Unit,
     private val runtime: AnchorWatchRuntime,
+    mailboxCapacity: Int = 512,
     private val onFailure: (Throwable) -> Unit,
 ) {
     private data class Work(
@@ -21,7 +22,7 @@ class AnchorRuntimeActor(
         val completion: CompletableDeferred<Unit>?,
     )
 
-    private val channel = Channel<Work>(Channel.UNLIMITED)
+    private val channel = Channel<Work>(mailboxCapacity.coerceAtLeast(1))
 
     init {
         scope.launch {
@@ -42,9 +43,7 @@ class AnchorRuntimeActor(
 
     suspend fun execute(action: suspend AnchorWatchRuntime.() -> Unit) {
         val completion = CompletableDeferred<Unit>()
-        if (!channel.trySend(Work(action, completion)).isSuccess) {
-            throw IllegalStateException("Anchor runtime actor is closed")
-        }
+        channel.send(Work(action, completion))
         completion.await()
     }
 

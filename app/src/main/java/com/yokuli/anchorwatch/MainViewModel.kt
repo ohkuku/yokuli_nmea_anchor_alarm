@@ -48,6 +48,7 @@ import com.yokuli.anchorwatch.domain.model.AlarmSnapshot
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.domain.anchor.AnchorDepthSource
 import com.yokuli.anchorwatch.location.GlobalMockLocationManager
 import com.yokuli.anchorwatch.location.DemoGpsStatus
 import com.yokuli.anchorwatch.location.DemoLocationRepository
@@ -59,6 +60,8 @@ import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionState
+import com.yokuli.anchorwatch.location.PhoneHeadingRepository
+import com.yokuli.anchorwatch.location.PhoneHeadingSample
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnostics
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
@@ -68,6 +71,15 @@ import com.yokuli.anchorwatch.domain.safety.WatchSafetyInput
 import com.yokuli.anchorwatch.domain.safety.WatchSafetyReport
 import com.yokuli.anchorwatch.map.OfflineMapInfo
 import com.yokuli.anchorwatch.map.OfflineMapRepository
+import com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig
+import com.yokuli.anchorwatch.domain.condition.ConditionRuntimeSnapshot
+import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
+import com.yokuli.anchorwatch.data.condition.LiveDepthState
+import com.yokuli.anchorwatch.data.condition.LiveWindRepository
+import com.yokuli.anchorwatch.data.condition.LiveWindState
+import com.yokuli.anchorwatch.runtime.condition.ConditionRuntime
+import com.yokuli.anchorwatch.data.anchorage.AnchorageRepository
+import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -132,11 +144,24 @@ data class MainUiState(
     val incidents:List<IncidentLogEntity> = emptyList(),
     val supportBundle:SupportBundleState=SupportBundleState(),
     val offlineMap:OfflineMapInfo=OfflineMapInfo(),
+    /** Live orientation is intentionally separate from GPS publication cadence. */
+    val phoneHeading:PhoneHeadingSample=PhoneHeadingSample(),
+    val liveDepth:LiveDepthState=LiveDepthState(),
+    val liveWind:LiveWindState=LiveWindState(),
+    val conditions:ConditionRuntimeSnapshot=ConditionRuntimeSnapshot(),
+    val savedAnchorages:List<SavedAnchorageEntity> = emptyList(),
+    val mapPreviewAnchorage:SavedAnchorageEntity?=null,
+    val anchorageSetupPrefill:SavedAnchorageEntity?=null,
+    val anchorageSetupRequested:Boolean=false,
+    val anchorageDuplicateExisting:SavedAnchorageEntity?=null,
+    val anchorageDuplicateProposed:SavedAnchorageEntity?=null,
+    val pendingAnchorageVisit:SavedAnchorageEntity?=null,
+    val pendingAnchorageVisitSession:AnchorSessionEntity?=null,
 )
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
 private data class AvailablePositions(val nmea:NavigationFix?,val system:NavigationFix?,val demo:NavigationFix?,val demoStatus:DemoGpsStatus)
-data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=false)
+data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=false,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig(),val savedAnchorageId:Long?=null)
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -151,6 +176,7 @@ class MainViewModel @Inject constructor(
     private val alarmUi:AlarmUiRepository,
     private val sharingServer:NmeaSharingServer,
     private val acceptedPosition:AcceptedPositionRepository,
+    private val phoneHeadingRepository:PhoneHeadingRepository,
     private val sonarDao:SonarDao,
     private val sonarRecorder:SonarSurveyRecorder,
     private val sonarGridUpdater:SonarIncrementalGridUpdater,
@@ -162,6 +188,10 @@ class MainViewModel @Inject constructor(
     private val supportBundleManager:SupportBundleManager,
     private val incidentLogger:IncidentLogger,
     private val offlineMapRepository:OfflineMapRepository,
+    private val liveDepthRepository:LiveDepthRepository,
+    private val liveWindRepository:LiveWindRepository,
+    private val conditionRuntime:ConditionRuntime,
+    private val anchorageRepository:AnchorageRepository,
 ):AndroidViewModel(app){
     private val _ui=MutableStateFlow(MainUiState());val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
@@ -204,6 +234,14 @@ class MainViewModel @Inject constructor(
             }
         }
         viewModelScope.launch{acceptedPosition.state.map{accepted->delay(UI_POSITION_FRAME_MILLIS);accepted}.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)};refreshDepthUi()}}
+        // Rotation-vector sensors commonly publish much faster than Android GNSS. Keeping
+        // this stream independent makes the boat symbol turn immediately while the
+        // estimator still receives phone-heading evidence only with accepted positions.
+        viewModelScope.launch{phoneHeadingRepository.sample.collect{sample->_ui.update{it.copy(phoneHeading=sample)}}}
+        viewModelScope.launch{liveDepthRepository.state.collect{value->_ui.update{it.copy(liveDepth=value)}}}
+        viewModelScope.launch{liveWindRepository.state.collect{value->_ui.update{it.copy(liveWind=value)}}}
+        viewModelScope.launch{conditionRuntime.state.collect{value->_ui.update{it.copy(conditions=value)}}}
+        viewModelScope.launch{anchorageRepository.anchorages.collect{value->_ui.update{it.copy(savedAnchorages=value)}}}
         viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{systemLocation.setAppEnabled(it==GpsDataSource.SYSTEM||it==GpsDataSource.DEMO)}}
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
@@ -332,6 +370,7 @@ class MainViewModel @Inject constructor(
     }
     fun clearConnectionAttempt()=_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     fun updateSettings(settings:AppSettings){_ui.update{it.copy(settings=settings)};viewModelScope.launch{prefs.save(settings)}}
+    fun completeOnboarding()=updateSettings(_ui.value.settings.copy(onboardingCompleted=true))
     fun setSonarLayerEnabled(enabled:Boolean,acceptDisclaimer:Boolean=false){
         val state=_ui.value
         updateSettings(state.settings.copy(sonarLayerEnabled=enabled,sonarDisclaimerAccepted=state.settings.sonarDisclaimerAccepted||acceptDisclaimer))
@@ -369,7 +408,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{prefs.save(settings);if(enabled||sharingServer.status.value.state!=com.yokuli.anchorwatch.data.sharing.SharingServerState.STOPPED)ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.SET_NMEA_SHARING).putExtra("enabled",enabled).putExtra("port",safePort))}
     }
     fun deleteHistorySession(session:AnchorSessionEntity){if(session.active)return;viewModelScope.launch{dao.deleteCompletedSession(session.id)}}
-    fun setMapType(mapType:Int){val value=mapType.takeIf{it in 1..2}?:1;val updated=_ui.value.settings.copy(mapType=value);_ui.update{it.copy(settings=updated)};viewModelScope.launch{prefs.save(updated)}}
+    fun setMapType(mapType:Int){val value=mapType.takeIf{it in 1..3}?:1;val updated=_ui.value.settings.copy(mapType=value);_ui.update{it.copy(settings=updated)};viewModelScope.launch{prefs.save(updated)}}
     fun setGpsDataSource(source:GpsDataSource)=switchGpsDataSource(source)
     fun switchGpsDataSource(source:GpsDataSource)=viewModelScope.launch{
         val current=_ui.value.settings
@@ -420,13 +459,23 @@ class MainViewModel @Inject constructor(
             .putExtra("lat",lat).putExtra("lon",lon).putExtra("rode",input.rodeMeters).putExtra("depth",input.depthMeters?:Double.NaN).putExtra("bowHeight",input.bowHeightMeters).putExtra("boatLength",input.boatLengthMeters?:Double.NaN)
             .putExtra("antennaOffset",if(input.positionSource==GpsDataSource.NMEA)_ui.value.settings.nmeaGpsAntennaToBowMeters else 0.0)
             .putExtra("warning",maxOf(input.alarmRadiusMeters*.8,input.alarmRadiusMeters-10).coerceAtMost(input.alarmRadiusMeters-.1)).putExtra("alarm",input.alarmRadiusMeters).putExtra("placement",input.placement.name).putExtra("rangeMode",input.rangeMode.name).putExtra("safetyPreset",input.safetyPreset.name).putExtra("positionSource",input.positionSource.name).putExtra("centerSource",input.centerSource.name).putExtra("usePhoneHeading",input.usePhoneHeading)
+            .putExtra("depthSource",input.depthSource.name)
+            .putExtra("depthGuard",input.conditions.depthGuardEnabled).putExtra("shallowDepth",input.conditions.shallowDepthAlarmMeters?:Double.NaN).putExtra("deepDepth",input.conditions.deepDepthAlarmMeters?:Double.NaN).putExtra("windGuard",input.conditions.windGuardEnabled).putExtra("windWarning",input.conditions.windWarningKnots?:Double.NaN).putExtra("windAlarm",input.conditions.windAlarmKnots?:Double.NaN).putExtra("windShift",input.conditions.windShiftEnabled).putExtra("windShiftDegrees",input.conditions.windShiftThresholdDegrees?:Double.NaN).putExtra("apparentFallback",input.conditions.windAllowApparentFallback)
+            .also{intent->input.savedAnchorageId?.let{intent.putExtra("savedAnchorageId",it)}}
         ContextCompat.startForegroundService(app,intent)
     }
     fun updateAnchorSettings(input:AnchorWatchInput){val intent=Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_RADIUS).putExtra("alarm",input.alarmRadiusMeters);ContextCompat.startForegroundService(app,intent)}
     fun setPhoneHeadingEvidence(enabled:Boolean)=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_PHONE_HEADING).putExtra("enabled",enabled))
+    fun updateConditionGuards(config:ConditionGuardConfig){val value=config.validated();ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_CONDITION_GUARDS).putExtra("depthGuard",value.depthGuardEnabled).putExtra("shallowDepth",value.shallowDepthAlarmMeters?:Double.NaN).putExtra("deepDepth",value.deepDepthAlarmMeters?:Double.NaN).putExtra("windGuard",value.windGuardEnabled).putExtra("windWarning",value.windWarningKnots?:Double.NaN).putExtra("windAlarm",value.windAlarmKnots?:Double.NaN).putExtra("windShift",value.windShiftEnabled).putExtra("windShiftDegrees",value.windShiftThresholdDegrees?:Double.NaN).putExtra("apparentFallback",value.windAllowApparentFallback))}
+    fun resetWindBaseline()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.RESET_WIND_BASELINE))
     fun pauseWatch()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.PAUSE_WATCH))
     fun resumeWatch()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.RESUME_WATCH))
-    fun liftAnchor()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.LIFT_ANCHOR))
+    fun liftAnchor(){
+        val active=_ui.value.active
+        val saved=active?.savedAnchorageId?.let{id->_ui.value.savedAnchorages.firstOrNull{it.id==id}}
+        if(active!=null&&saved!=null)_ui.update{it.copy(pendingAnchorageVisit=saved,pendingAnchorageVisitSession=active)}
+        ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.LIFT_ANCHOR))
+    }
     fun stop()=pauseWatch()
     fun acknowledge()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ACK))
     fun acceptEstimatedCenter(session:AnchorSessionEntity)=session.candidateId?.let{candidateId->ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ACCEPT_ESTIMATED_CENTER).putExtra("sessionId",session.id).putExtra("candidateId",candidateId))}
@@ -474,6 +523,34 @@ class MainViewModel @Inject constructor(
     fun requestRangeEditor()=_ui.update{it.copy(page=0,rangeEditorRequested=true)}
     fun consumeRangeEditorRequest()=_ui.update{it.copy(rangeEditorRequested=false)}
     fun loadHistoryEvents(sessionId:Long)=viewModelScope.launch{val events=dao.recentEvents(sessionId,30);_ui.update{it.copy(eventsBySession=mapOf(sessionId to events))}}
+    fun saveAnchorageFromSession(session:AnchorSessionEntity,name:String,notes:String="")=viewModelScope.launch{anchorageRepository.saveFromSession(session,name,notes)}
+    fun saveAnchorage(value:SavedAnchorageEntity)=viewModelScope.launch{
+        val proposed=value.copy(updatedAt=System.currentTimeMillis())
+        val duplicate=if(proposed.id==0L)anchorageRepository.duplicate(proposed.latitude,proposed.longitude)else null
+        if(duplicate!=null)_ui.update{it.copy(anchorageDuplicateExisting=duplicate,anchorageDuplicateProposed=proposed)}
+        else anchorageRepository.save(proposed)
+    }
+    fun resolveAnchorageDuplicate(replaceExisting:Boolean)=viewModelScope.launch{
+        val state=_ui.value;val existing=state.anchorageDuplicateExisting;val proposed=state.anchorageDuplicateProposed
+        if(existing!=null&&proposed!=null){
+            val value=if(replaceExisting)proposed.copy(id=existing.id,createdAt=existing.createdAt,lastVisitedAt=existing.lastVisitedAt,visitCount=existing.visitCount)else proposed
+            anchorageRepository.save(value)
+        }
+        _ui.update{it.copy(anchorageDuplicateExisting=null,anchorageDuplicateProposed=null)}
+    }
+    fun dismissAnchorageDuplicate()=_ui.update{it.copy(anchorageDuplicateExisting=null,anchorageDuplicateProposed=null)}
+    fun resolveAnchorageVisitUpdate(update:Boolean)=viewModelScope.launch{
+        val state=_ui.value;val saved=state.pendingAnchorageVisit;val session=state.pendingAnchorageVisitSession
+        if(update&&saved!=null&&session!=null)anchorageRepository.updateFromVisit(saved.id,dao.session(session.id)?:session)
+        _ui.update{it.copy(pendingAnchorageVisit=null,pendingAnchorageVisitSession=null)}
+    }
+    fun deleteAnchorage(id:Long)=viewModelScope.launch{anchorageRepository.delete(id)}
+    fun viewAnchorageOnMap(value:SavedAnchorageEntity)=_ui.update{it.copy(page=0,mapPreviewAnchorage=value)}
+    fun clearAnchorageMapPreview()=_ui.update{it.copy(mapPreviewAnchorage=null)}
+    /** Copies only setup geometry. The saved coordinate is never reused as a new anchor. */
+    fun useAnchorageSetup(value:SavedAnchorageEntity)=viewModelScope.launch{_ui.update{it.copy(page=0,anchorageSetupPrefill=value,anchorageSetupRequested=true,mapPreviewAnchorage=null)}}
+    fun consumeAnchorageSetupPrefill()=_ui.update{it.copy(anchorageSetupRequested=false)}
+    fun clearAnchorageSetupPrefill()=_ui.update{it.copy(anchorageSetupPrefill=null,anchorageSetupRequested=false)}
     fun exportCsv(session:AnchorSessionEntity)=viewModelScope.launch{
         val points=dao.points(session.id).first()
         val file=java.io.File(app.cacheDir,"anchor-${session.id}.csv")
@@ -487,7 +564,7 @@ class MainViewModel @Inject constructor(
         val points=dao.points(session.id).first();val events=dao.events(session.id).first();val file=java.io.File(app.cacheDir,"anchor-${session.id}.gpx")
         file.writeText(buildString{
             appendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-            appendLine("<gpx version=\"1.1\" creator=\"Anchor by Yokuli\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
+            appendLine("<gpx version=\"1.1\" creator=\"Anchor Watch\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
             if(events.isNotEmpty())appendLine("<metadata><desc>${xmlEscape(events.joinToString(" | "){event->"${java.time.Instant.ofEpochMilli(event.timestamp)} ${event.type} ${event.detail}"})}</desc></metadata>")
             appendLine("<wpt lat=\"${session.anchorLatitude}\" lon=\"${session.anchorLongitude}\"><name>Active anchor</name></wpt>")
             appendLine("<trk><name>Anchor session ${session.id}</name><trkseg>")

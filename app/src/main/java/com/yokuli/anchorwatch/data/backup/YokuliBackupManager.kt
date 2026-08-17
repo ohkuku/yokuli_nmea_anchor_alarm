@@ -12,6 +12,7 @@ import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.LinzDepthCacheDao
 import com.yokuli.anchorwatch.data.database.SonarDao
 import com.yokuli.anchorwatch.data.database.TidePredictionCacheDao
+import com.yokuli.anchorwatch.data.database.AnchorageDao
 import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
@@ -55,7 +56,7 @@ data class BackupManifestV1(
     val createdAtUtc:String,
     val appVersionName:String,
     val appVersionCode:Int,
-    val roomSchemaVersion:Int=11,
+    val roomSchemaVersion:Int=12,
     val recordCounts:Map<String,Long>,
     val files:List<String>,
     val device:Map<String,String> = mapOf("platform" to "Android"),
@@ -85,6 +86,7 @@ private data class BackupSnapshot(
     val eventThroughId:Long,
     val surveys:List<com.yokuli.anchorwatch.data.database.SonarSurveyEntity>,
     val sampleThroughId:Long,
+    val anchorages:List<com.yokuli.anchorwatch.data.database.SavedAnchorageEntity>,
 )
 
 private data class WrittenBackupEntry(val checksum:String,val recordCount:Long)
@@ -102,7 +104,8 @@ object BackupRestorePolicy {
 /** ZIP/NDJSON archive primitives shared by production and corruption tests. */
 object YokuliBackupArchive {
     const val FORMAT="YOKULI_BACKUP"
-    const val VERSION=1
+    const val VERSION=2
+    const val LEGACY_VERSION=1
     const val EXTENSION=".yokuli-backup"
     const val MANIFEST="manifest.json"
     const val SETTINGS="settings.json"
@@ -112,8 +115,12 @@ object YokuliBackupArchive {
     const val EVENTS="data/alarm_events.ndjson"
     const val SURVEYS="data/sonar_surveys.ndjson"
     const val SAMPLES="data/depth_samples.ndjson"
-    val required=setOf(MANIFEST,SETTINGS,CHECKSUMS,ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES)
-    val dataFiles=listOf(ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES)
+    const val ANCHORAGES="data/saved_anchorages.ndjson"
+    val requiredV1=setOf(MANIFEST,SETTINGS,CHECKSUMS,ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES)
+    val required=setOf(MANIFEST,SETTINGS,CHECKSUMS,ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES,ANCHORAGES)
+    val allowed=required
+    val dataFiles=listOf(ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES,ANCHORAGES)
+    fun requiredFor(version:Int)=if(version==LEGACY_VERSION)requiredV1 else required
     const val MAX_ARCHIVE_BYTES=2_000_000_000L
     const val MAX_ENTRY_BYTES=1_500_000_000L
     const val PAGE=1_000
@@ -140,6 +147,7 @@ class YokuliBackupManager @Inject constructor(
     private val gridUpdater:SonarIncrementalGridUpdater,
     private val linzCache:LinzDepthCacheDao,
     private val tideCache:TidePredictionCacheDao,
+    private val anchorageDao:AnchorageDao,
 ){
     private val gson=Gson()
     private val _state=MutableStateFlow(BackupOperationState())
@@ -157,6 +165,7 @@ class YokuliBackupManager @Inject constructor(
             eventThroughId=anchorDao.maxEventId(),
             surveys=sonarDao.allSurveysNow(),
             sampleThroughId=sonarDao.maxSampleId(),
+            anchorages=anchorageDao.allNow(),
         )}
         var completedManifest:BackupManifestV1?=null
         val raw=context.contentResolver.openOutputStream(uri,"w")?:error("Android could not open the selected backup file")
@@ -166,12 +175,13 @@ class YokuliBackupManager @Inject constructor(
             checksums[YokuliBackupArchive.SETTINGS]=writeTextEntry(zip,YokuliBackupArchive.SETTINGS,gson.toJson(settingsV1))
             val written=linkedMapOf<String,WrittenBackupEntry>()
             _state.value=_state.value.copy(progress="Exporting anchor sessions…")
-            written[YokuliBackupArchive.ANCHORS]=writeRecords(zip,YokuliBackupArchive.ANCHORS,snapshot.sessions.asSequence().map(BackupAnchorSessionV1::from))
+            written[YokuliBackupArchive.ANCHORS]=writeRecords(zip,YokuliBackupArchive.ANCHORS,snapshot.sessions.asSequence().map(BackupAnchorSessionV2::from))
             written[YokuliBackupArchive.POINTS]=writePaged(zip,YokuliBackupArchive.POINTS){after->anchorDao.allPointsPageThrough(after,snapshot.pointThroughId,YokuliBackupArchive.PAGE).map(BackupTrackPointV1::from)}
             written[YokuliBackupArchive.EVENTS]=writePaged(zip,YokuliBackupArchive.EVENTS){after->anchorDao.allEventsPageThrough(after,snapshot.eventThroughId,YokuliBackupArchive.PAGE).map(BackupAlarmEventV1::from)}
             written[YokuliBackupArchive.SURVEYS]=writeRecords(zip,YokuliBackupArchive.SURVEYS,snapshot.surveys.asSequence().map(BackupSonarSurveyV1::from))
             _state.value=_state.value.copy(progress="Streaming sonar soundings…")
             written[YokuliBackupArchive.SAMPLES]=writePaged(zip,YokuliBackupArchive.SAMPLES){after->sonarDao.allSamplesPageThrough(after,snapshot.sampleThroughId,YokuliBackupArchive.PAGE).map(BackupDepthSampleV1::from)}
+            written[YokuliBackupArchive.ANCHORAGES]=writeRecords(zip,YokuliBackupArchive.ANCHORAGES,snapshot.anchorages.asSequence().map(BackupSavedAnchorageV2::from))
             written.forEach{(name,entry)->checksums[name]=entry.checksum}
             val manifest=BackupManifestV1(
                 createdAtUtc=Instant.now().toString(),appVersionName=BuildConfig.VERSION_NAME,
@@ -193,19 +203,21 @@ class YokuliBackupManager @Inject constructor(
         val staging=File(context.cacheDir,"restore-staging-${System.nanoTime()}").apply{mkdirs()}
         try{
             val validation=stageAndValidate(uri,staging)
-            _state.value=_state.value.copy(progress="Replacing local Yokuli data…")
+            _state.value=_state.value.copy(progress="Replacing local Anchor Watch data…")
             database.withTransaction{
                 sonarDao.clearGridCells();linzCache.clear();tideCache.clear()
                 sonarDao.clearSamples();sonarDao.clearSurveys()
-                anchorDao.clearEvents();anchorDao.clearPoints();anchorDao.clearSessions()
-                importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV1::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null)else it})}
+                anchorDao.clearEvents();anchorDao.clearPoints();anchorDao.clearSessions();anchorageDao.clear()
+                if(validation.manifest.formatVersion==YokuliBackupArchive.LEGACY_VERSION)importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV1::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null)else it})}
+                else importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV2::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV2::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null,depthAlarmSnoozedUntil=null,windAlarmSnoozedUntil=null,windShiftAlarmSnoozedUntil=null)else it})}
                 importFile(validation.files.getValue(YokuliBackupArchive.POINTS),BackupTrackPointV1::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importPoints(rows.map(BackupTrackPointV1::toEntity))}
                 importFile(validation.files.getValue(YokuliBackupArchive.EVENTS),BackupAlarmEventV1::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importEvents(rows.map(BackupAlarmEventV1::toEntity))}
                 importFile(validation.files.getValue(YokuliBackupArchive.SURVEYS),BackupSonarSurveyV1::class.java,YokuliBackupArchive.PAGE){rows->sonarDao.importSurveys(rows.map(BackupSonarSurveyV1::toEntity).map{if(it.active)it.copy(active=false,endedAt=it.endedAt?:System.currentTimeMillis())else it})}
                 importFile(validation.files.getValue(YokuliBackupArchive.SAMPLES),BackupDepthSampleV1::class.java,YokuliBackupArchive.PAGE){rows->sonarDao.importSamples(rows.map(BackupDepthSampleV1::toEntity))}
+                validation.files[YokuliBackupArchive.ANCHORAGES]?.let{file->importFile(file,BackupSavedAnchorageV2::class.java,YokuliBackupArchive.PAGE){rows->anchorageDao.importAll(rows.map(BackupSavedAnchorageV2::toEntity))}}
             }
             val imported=validation.appSettings.copy(
-                mockEnabled=false,nmeaSharingEnabled=false,customAlarmSoundUri=null,
+                onboardingCompleted=true,mockEnabled=false,nmeaSharingEnabled=false,customAlarmSoundUri=null,
                 alarmSound=if(validation.appSettings.alarmSound==AlarmSound.CUSTOM)AlarmSound.SYSTEM_ALARM else validation.appSettings.alarmSound,
             )
             val settingsError=runCatching{settingsRepository.save(imported)}.exceptionOrNull()
@@ -213,8 +225,8 @@ class YokuliBackupManager @Inject constructor(
             val message=buildString{
                 append("Backup data restored. Active watches were restored paused; sonar recording was closed.")
                 if(settingsError!=null)append(" Some preferences could not be restored and remain unchanged.")
-                if(rebuildError!=null)append(" The derived sonar map will be rebuilt the next time Yokuli starts.")
-                append(" Restart Yokuli before use.")
+                if(rebuildError!=null)append(" The derived sonar map will be rebuilt the next time Anchor Watch starts.")
+                append(" Restart Anchor Watch before use.")
             }
             _state.value=BackupOperationState(result=message,lastBackupAt=_state.value.lastBackupAt)
             validation.manifest
@@ -229,7 +241,7 @@ class YokuliBackupManager @Inject constructor(
         ZipInputStream(BufferedInputStream(source)).use{zip->
             while(true){val entry=zip.nextEntry?:break
                 require(!entry.isDirectory){"Unexpected directory in backup"}
-                require(entry.name in YokuliBackupArchive.required){"Unexpected backup entry: ${entry.name}"}
+                require(entry.name in YokuliBackupArchive.allowed){"Unexpected backup entry: ${entry.name}"}
                 require(found.put(entry.name,File(staging,entry.name.replace('/','_')))==null){"Duplicate backup entry: ${entry.name}"}
                 val target=found.getValue(entry.name);FileOutputStream(target).use{out->
                     val buffer=ByteArray(64*1024);var entryBytes=0L
@@ -237,25 +249,28 @@ class YokuliBackupManager @Inject constructor(
                 };zip.closeEntry()
             }
         }
-        require(found.keys.containsAll(YokuliBackupArchive.required)){"Backup is missing required files: ${YokuliBackupArchive.required-found.keys}"}
         val manifest=gson.fromJson(found.getValue(YokuliBackupArchive.MANIFEST).readText(),BackupManifestV1::class.java)
-        require(manifest.format==YokuliBackupArchive.FORMAT){"This is not a Yokuli backup"};require(manifest.formatVersion==YokuliBackupArchive.VERSION){"Unsupported Yokuli backup version ${manifest.formatVersion}"}
+        require(manifest.format==YokuliBackupArchive.FORMAT){"This is not an Anchor Watch backup"};require(manifest.formatVersion in setOf(YokuliBackupArchive.LEGACY_VERSION,YokuliBackupArchive.VERSION)){"Unsupported Anchor Watch backup version ${manifest.formatVersion}"}
+        val required=YokuliBackupArchive.requiredFor(manifest.formatVersion);require(found.keys.containsAll(required)){"Backup is missing required files: ${required-found.keys}"};require(found.keys==required){"Unexpected files for backup V${manifest.formatVersion}: ${found.keys-required}"}
         @Suppress("UNCHECKED_CAST") val checksums=gson.fromJson(found.getValue(YokuliBackupArchive.CHECKSUMS).readText(),Map::class.java) as Map<String,String>
-        (YokuliBackupArchive.required-YokuliBackupArchive.CHECKSUMS).forEach{name->require(checksums[name]==YokuliBackupArchive.sha256(found.getValue(name))){"Checksum mismatch for $name"}}
+        (required-YokuliBackupArchive.CHECKSUMS).forEach{name->require(checksums[name]==YokuliBackupArchive.sha256(found.getValue(name))){"Checksum mismatch for $name"}}
         val settings=gson.fromJson(found.getValue(YokuliBackupArchive.SETTINGS).readText(),BackupSettingsV1::class.java);require(settings.schemaVersion==1){"Unsupported settings schema"}
-        val appSettings=requireNotNull(gson.fromJson(settings.payload,AppSettings::class.java)){"Backup settings payload is invalid"}
+        val decodedSettings=requireNotNull(gson.fromJson(settings.payload,AppSettings::class.java)){"Backup settings payload is invalid"}
+        val appSettings=if(manifest.formatVersion==YokuliBackupArchive.LEGACY_VERSION)decodedSettings.copy(defaultDepthGuardEnabled=false,defaultShallowDepthMeters=2.5,defaultDeepDepthEnabled=false,defaultDeepDepthMeters=15.0,defaultWindGuardEnabled=false,defaultWindWarningKnots=25.0,defaultWindAlarmKnots=35.0,defaultWindShiftEnabled=false,defaultWindShiftDegrees=70.0,allowApparentWindFallback=true)else decodedSettings
         validateRecords(found,manifest)
         return BackupValidation(manifest,settings,appSettings,found)
     }
 
     private fun validateRecords(files:Map<String,File>,manifest:BackupManifestV1){
         val sessions=mutableSetOf<Long>();var count=0L
-        forEach(files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java){row->YokuliBackupArchive.validateCoordinate(row.anchorLatitude,row.anchorLongitude);row.learningReferenceLatitude?.let{YokuliBackupArchive.validateCoordinate(it,requireNotNull(row.learningReferenceLongitude))};require(sessions.add(row.id)){"Duplicate anchor session id"};count++}
+        if(manifest.formatVersion==YokuliBackupArchive.LEGACY_VERSION)forEach(files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java){row->YokuliBackupArchive.validateCoordinate(row.anchorLatitude,row.anchorLongitude);row.learningReferenceLatitude?.let{YokuliBackupArchive.validateCoordinate(it,requireNotNull(row.learningReferenceLongitude))};require(sessions.add(row.id)){"Duplicate anchor session id"};count++}
+        else forEach(files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV2::class.java){row->val base=row.base;YokuliBackupArchive.validateCoordinate(base.anchorLatitude,base.anchorLongitude);require(sessions.add(base.id)){"Duplicate anchor session id"};count++}
         requireCount(manifest,YokuliBackupArchive.ANCHORS,count)
         count=0;forEach(files.getValue(YokuliBackupArchive.POINTS),BackupTrackPointV1::class.java){row->require(row.sessionId in sessions){"Track point references a missing anchor session"};YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);count++};requireCount(manifest,YokuliBackupArchive.POINTS,count)
         count=0;forEach(files.getValue(YokuliBackupArchive.EVENTS),BackupAlarmEventV1::class.java){row->require(row.sessionId in sessions){"Alarm event references a missing anchor session"};count++};requireCount(manifest,YokuliBackupArchive.EVENTS,count)
         val surveys=mutableSetOf<Long>();count=0;forEach(files.getValue(YokuliBackupArchive.SURVEYS),BackupSonarSurveyV1::class.java){row->require(surveys.add(row.id)){"Duplicate sonar survey id"};count++};requireCount(manifest,YokuliBackupArchive.SURVEYS,count)
         count=0;forEach(files.getValue(YokuliBackupArchive.SAMPLES),BackupDepthSampleV1::class.java){row->require(row.surveyId in surveys){"Depth sample references a missing sonar survey"};YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);require(row.rawDepthMeters.isFinite()&&row.rawDepthMeters>0){"Invalid raw sonar depth"};count++};requireCount(manifest,YokuliBackupArchive.SAMPLES,count)
+        if(manifest.formatVersion>=2){val anchorageIds=mutableSetOf<Long>();count=0;forEach(files.getValue(YokuliBackupArchive.ANCHORAGES),BackupSavedAnchorageV2::class.java){row->require(anchorageIds.add(row.id)){"Duplicate saved anchorage id"};YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);require(row.name.length<=200&&row.notes.length<=20_000&&(row.customSeabedText?.length?:0)<=200){"Saved anchorage text is too long"};require(row.rating==null||row.rating in 1..5){"Invalid saved anchorage rating"};require(listOfNotNull(row.preferredAlarmRadiusMeters,row.typicalWaterDepthMeters,row.typicalRodeLengthMeters).all{it.isFinite()&&it>=0}){"Invalid saved anchorage measurement"};count++};requireCount(manifest,YokuliBackupArchive.ANCHORAGES,count)}
     }
 
     private fun requireCount(manifest:BackupManifestV1,name:String,actual:Long){require(manifest.recordCounts[name]==actual){"Record count mismatch for $name"}}

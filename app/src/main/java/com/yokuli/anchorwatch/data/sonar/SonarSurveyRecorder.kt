@@ -14,6 +14,7 @@ import com.yokuli.anchorwatch.domain.sonar.DepthCandidate
 import com.yokuli.anchorwatch.domain.sonar.DepthDisposition
 import com.yokuli.anchorwatch.domain.sonar.DepthIntegrityFilter
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
+import com.yokuli.anchorwatch.domain.sonar.DepthProvenance
 import com.yokuli.anchorwatch.domain.sonar.DepthReference
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarGrid
@@ -43,6 +44,9 @@ import kotlin.math.floor
 data class SonarRecorderStatus(
     val activeSurvey:SonarSurveyEntity?=null,
     val lastRawDepthMeters:Double?=null,
+    val lastNmeaOffsetMeters:Double?=null,
+    val lastUserOffsetMeters:Double?=null,
+    val lastMeasuredDepthMeters:Double?=null,
     val lastDepthMeters:Double?=null,
     val lastDepthReference:DepthReference?=null,
     val lastSentenceType:String?=null,
@@ -142,8 +146,8 @@ class SonarSurveyRecorder @Inject constructor(
     suspend fun submitDemo(observation:DepthObservation)=onDepth(observation,allowDemo=true)
 
     private suspend fun onDepth(observation:DepthObservation,allowDemo:Boolean)=mutex.withLock{
-        val survey=_status.value.activeSurvey;val offset=survey?.sounderOffsetMeters?:settings.settings.first().sounderOffsetMeters;val measured=(observation.rawDepthMeters+(observation.offsetMeters?:0.0)+offset).coerceAtLeast(.01);val manualNormalized=survey?.takeIf{it.tideMode==TideMode.MANUAL.name}?.let{measured-it.manualTideOffsetMeters}
-        fun live(message:String,disposition:DepthDisposition?=null){_status.value=_status.value.copy(lastRawDepthMeters=observation.rawDepthMeters,lastDepthMeters=manualNormalized?:measured,lastDepthReference=DepthReference.BELOW_SURFACE,lastSentenceType=observation.sentenceType.name,lastDepthReceivedElapsedRealtime=observation.receivedElapsedRealtime,lastDepthIsDemo=allowDemo,lastDepthIsChartDatum=manualNormalized!=null,lastDisposition=disposition,message=message)}
+        val survey=_status.value.activeSurvey;val offset=survey?.sounderOffsetMeters?:settings.settings.first().sounderOffsetMeters;val provenance=DepthProvenance.from(observation,offset);val measured=provenance.finalDepthMeters;val manualNormalized=survey?.takeIf{it.tideMode==TideMode.MANUAL.name}?.let{measured-it.manualTideOffsetMeters}
+        fun live(message:String,disposition:DepthDisposition?=null){_status.value=_status.value.copy(lastRawDepthMeters=provenance.rawDepthMeters,lastNmeaOffsetMeters=provenance.nmeaOffsetMeters,lastUserOffsetMeters=provenance.userOffsetMeters,lastMeasuredDepthMeters=provenance.finalDepthMeters,lastDepthMeters=manualNormalized?:measured,lastDepthReference=DepthReference.BELOW_SURFACE,lastSentenceType=observation.sentenceType.name,lastDepthReceivedElapsedRealtime=observation.receivedElapsedRealtime,lastDepthIsDemo=allowDemo,lastDepthIsChartDatum=manualNormalized!=null,lastDisposition=disposition,message=message)}
         if(survey==null){live(if(allowDemo)"Ready · live Demo sonar received" else "Ready · live NMEA depth received");return@withLock}
         val demoPosition=acceptedPosition.state.value
         val realPosition=nmeaPosition.state.value
@@ -167,6 +171,6 @@ class SonarSurveyRecorder @Inject constructor(
         if(result.releasedElapsedTimestamps.isNotEmpty()){val released=dao.samplesByElapsed(survey.id,result.releasedElapsedTimestamps);dao.releaseSlopeSamples(survey.id,result.releasedElapsedTimestamps);touched+=released.map{GridCoordinate(it.baseGridX,it.baseGridY)}}
         val projected=SonarGrid.project(fix.latitude,fix.longitude);val coordinate=GridCoordinate(floor(projected.first/5.0).toLong(),floor(projected.second/5.0).toLong());touched+=coordinate
         dao.insertSampleAndIncrement(DepthSampleEntity(surveyId=survey.id,timestamp=wallTimestamp,latitude=fix.latitude,longitude=fix.longitude,baseGridX=coordinate.baseGridX,baseGridY=coordinate.baseGridY,sourceElapsedRealtime=observation.receivedElapsedRealtime,rawDepthMeters=observation.rawDepthMeters,measuredDepthMeters=measured,normalizedDepthMeters=normalized,depthReference=DepthReference.BELOW_SURFACE.name,sentenceType=observation.sentenceType.name,nmeaOffsetMeters=observation.offsetMeters,horizontalAccuracyMeters=fix.horizontalAccuracyMeters,gpsSource=if(allowDemo)"DEMO" else "NMEA_SERVER",positionProvider=fix.positionProvider.name,hdop=fix.hdop,sogKnots=fix.sogKnots,fixTrust=trust.name,positionAgeMillis=age,disposition=result.disposition.name,usable=result.usable,integrityReason=result.reason,positionCorrectionApplied=false,positionCorrectionMethod="NONE",tideHeightMetersApplied=when(survey.tideMode){TideMode.MANUAL.name->survey.manualTideOffsetMeters;TideMode.AUTO_PREDICTED.name->tide?.tideHeightMetersAboveChartDatum;else->null},tideCorrectionMode=survey.tideMode,tideStationId=tide?.stationId?:survey.tideStationId,tideStationName=tide?.stationName?:survey.tideStationName,tideStationDistanceMeters=tide?.stationDistanceMeters?:survey.tideStationDistanceMeters,tidePredictionYear=tide?.predictionYear,tideCorrectionMethod=tide?.method,tideSource=when{tide!=null->"LINZ_DAILY_PREDICTION";survey.tideMode==TideMode.MANUAL.name->"USER_MANUAL";else->null},tideSourceUpdatedAt=tide?.sourceUpdatedAt,tideCorrectionStatus=tide?.status?.name?:if(survey.tideMode==TideMode.OFF.name)"NOT_REQUESTED" else if(survey.tideMode==TideMode.MANUAL.name)"MANUAL" else TideCorrectionStatus.DATA_MISSING.name))
-        val diagnostics=gridUpdater.updateCells(survey.id,touched);lastRecorded=candidate;_status.value=_status.value.copy(activeSurvey=survey.copy(sampleCount=survey.sampleCount+1),lastRawDepthMeters=observation.rawDepthMeters,lastDepthMeters=gridDepth,lastDepthReference=DepthReference.BELOW_SURFACE,lastSentenceType=observation.sentenceType.name,lastDepthReceivedElapsedRealtime=observation.receivedElapsedRealtime,lastDepthIsDemo=allowDemo,lastDepthIsChartDatum=normalized!=null,lastDisposition=result.disposition,lastTideCorrection=tide,gridDiagnostics=diagnostics,message=if(result.usable)if(survey.tideMode==TideMode.AUTO_PREDICTED.name&&normalized==null)"Raw depth recorded; predicted tide unavailable" else "Depth sample recorded" else result.reason?:"Depth quarantined")
+        val diagnostics=gridUpdater.updateCells(survey.id,touched);lastRecorded=candidate;_status.value=_status.value.copy(activeSurvey=survey.copy(sampleCount=survey.sampleCount+1),lastRawDepthMeters=provenance.rawDepthMeters,lastNmeaOffsetMeters=provenance.nmeaOffsetMeters,lastUserOffsetMeters=provenance.userOffsetMeters,lastMeasuredDepthMeters=provenance.finalDepthMeters,lastDepthMeters=gridDepth,lastDepthReference=DepthReference.BELOW_SURFACE,lastSentenceType=observation.sentenceType.name,lastDepthReceivedElapsedRealtime=observation.receivedElapsedRealtime,lastDepthIsDemo=allowDemo,lastDepthIsChartDatum=normalized!=null,lastDisposition=result.disposition,lastTideCorrection=tide,gridDiagnostics=diagnostics,message=if(result.usable)if(survey.tideMode==TideMode.AUTO_PREDICTED.name&&normalized==null)"Raw depth recorded; predicted tide unavailable" else "Depth sample recorded" else result.reason?:"Depth quarantined")
     }
 }

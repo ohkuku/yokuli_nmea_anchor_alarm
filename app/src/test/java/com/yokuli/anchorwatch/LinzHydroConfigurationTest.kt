@@ -27,7 +27,7 @@ class LinzHydroConfigurationTest {
         assertTrue(LinzHydroConfiguration.isOverlayVisible(configured=true,enabled=true))
         assertFalse(LinzHydroConfiguration.isOverlayVisible(configured=false,enabled=true))
         assertFalse(LinzHydroConfiguration.isOverlayVisible(configured=true,enabled=false))
-        assertEquals("Contains data sourced from the LINZ Data Service licensed for reuse under CC BY 4.0",LinzHydroConfiguration.ATTRIBUTION)
+        assertEquals("LINZ · CC BY 4.0",LinzHydroConfiguration.ATTRIBUTION)
     }
 
     @Test fun tileProviderRejectsOutOfRangeCoordinatesAndZoom(){
@@ -40,7 +40,8 @@ class LinzHydroConfigurationTest {
 
     @Test fun chartCannotCoverYokuliSafetyOverlays(){
         assertTrue(MapOverlayZ.LINZ_CHART<MapOverlayZ.SONAR)
-        assertTrue(MapOverlayZ.SONAR<MapOverlayZ.TRAIL)
+        assertTrue(MapOverlayZ.SONAR<MapOverlayZ.NAUTICAL_SEAMARKS)
+        assertTrue(MapOverlayZ.NAUTICAL_SEAMARKS<MapOverlayZ.TRAIL)
         assertTrue(MapOverlayZ.TRAIL<MapOverlayZ.ALARM_GEOMETRY)
         assertTrue(MapOverlayZ.ALARM_GEOMETRY<MapOverlayZ.ANCHOR)
         assertTrue(MapOverlayZ.ANCHOR<MapOverlayZ.BOAT)

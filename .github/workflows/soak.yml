@@ -1,4 +1,4 @@
-name: Anchor by Yokuli Nightly Safety Soak
+name: Anchor Watch Nightly Safety Soak
 
 on:
   workflow_dispatch:

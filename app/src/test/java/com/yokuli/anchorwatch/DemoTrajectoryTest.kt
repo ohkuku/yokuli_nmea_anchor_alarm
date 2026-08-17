@@ -5,6 +5,8 @@ import com.yokuli.anchorwatch.domain.model.Confidence
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.anchor.BackdownCenterEstimator
 import com.yokuli.anchorwatch.location.DemoTrajectory
+import com.yokuli.anchorwatch.location.DemoSonarGenerator
+import com.yokuli.anchorwatch.domain.model.NavigationFix
 import kotlin.math.hypot
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -72,5 +74,15 @@ class DemoTrajectoryTest {
         val first=DemoTrajectory.point(100_000,AnchorPlacementMode.CENTER_DROP,DemoScenario.SAFE_SWING,70.0,1,10)
         val second=DemoTrajectory.point(100_000,AnchorPlacementMode.CENTER_DROP,DemoScenario.SAFE_SWING,70.0,1,11)
         assertTrue(hypot(first.northMeters-second.northMeters,first.eastMeters-second.eastMeters)>1.0)
+    }
+
+    @Test fun conditionDemoScenariosCrossTheirThresholdsAndRecover(){
+        val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=0,sourceSentence="DEMO",valid=true)
+        val shallow=DemoSonarGenerator(1,DemoScenario.DEPTH_SHALLOW);val shallowValues=listOf(0L,60_000L,120_000L).map{shallow.observation(fix.copy(receivedElapsedRealtime=it),it).rawDepthMeters}
+        assertTrue(shallowValues[0]>4.0&&shallowValues[1]<2.0&&shallowValues[2]>4.0)
+        val deep=DemoSonarGenerator(1,DemoScenario.DEPTH_DEEP);val deepValues=listOf(0L,60_000L,120_000L).map{deep.observation(fix.copy(receivedElapsedRealtime=it),it).rawDepthMeters}
+        assertTrue(deepValues[0]<15.0&&deepValues[1]>15.0&&deepValues[2]<15.0)
+        val winds=listOf(0L,50_000L,90_000L,140_000L).map{DemoTrajectory.point(it,AnchorPlacementMode.CENTER_DROP,DemoScenario.WIND_ALARM,70.0,1,8).windSpeedKnots!!}
+        assertTrue(winds[0]<25.0&&winds[1]>=25.0&&winds[2]>=35.0&&winds[3]<25.0)
     }
 }

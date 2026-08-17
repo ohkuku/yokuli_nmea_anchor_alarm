@@ -55,6 +55,7 @@ object DemoTrajectory {
             DemoScenario.SAFE_SWING -> safeSwing(seconds, placement, geometry, speed, seed)
             DemoScenario.WIND_SHIFT -> windShift(seconds, placement, geometry, speed, seed)
             DemoScenario.ANCHOR_DRAG -> anchorDrag(seconds, placement, geometry, speed, seed)
+            DemoScenario.DEPTH_SHALLOW,DemoScenario.DEPTH_DEEP,DemoScenario.WIND_ALARM -> safeSwing(seconds,placement,geometry,speed,seed)
             DemoScenario.GPS_DROPOUT -> {
                 val cutoff = 42.0 + seeded(seed, 91) * 18.0
                 safeSwing(seconds, placement, geometry, speed, seed).copy(
@@ -62,7 +63,8 @@ object DemoTrajectory {
                 )
             }
         }
-        return withEvidence(raw, geometry, seconds, seed)
+        val evidenced=withEvidence(raw, geometry, seconds, seed)
+        return if(scenario==DemoScenario.WIND_ALARM)evidenced.copy(windSpeedKnots=conditionWindSpeed(seconds*simulationRate(speed),seed))else evidenced
     }
 
     private fun safeSwing(seconds: Double, placement: AnchorPlacementMode, geometry: Geometry, speed: Double, seed: Long): DemoTrajectoryPoint {
@@ -186,6 +188,19 @@ object DemoTrajectory {
             windSpeedKnots = windSpeed,
             evidenceSequence = seconds.toLong(),
         )
+    }
+
+    private fun conditionWindSpeed(seconds:Double,seed:Long):Double{
+        val noise=smoothNoise(seconds/9.0,seed+182)*.7
+        return when{
+            seconds<20.0->15.0+noise
+            seconds<35.0->15.0+(28.0-15.0)*smoothStep((seconds-20.0)/15.0)+noise
+            seconds<60.0->28.0+noise
+            seconds<75.0->28.0+(38.0-28.0)*smoothStep((seconds-60.0)/15.0)+noise
+            seconds<105.0->38.0+noise
+            seconds<125.0->38.0+(18.0-38.0)*smoothStep((seconds-105.0)/20.0)+noise
+            else->18.0+noise
+        }
     }
 
     private fun stableDrop(seconds: Double, seed: Long) = DemoTrajectoryPoint(

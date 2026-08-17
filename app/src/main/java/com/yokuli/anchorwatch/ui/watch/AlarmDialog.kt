@@ -63,6 +63,12 @@ import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.domain.condition.DepthGuardStatus
+import com.yokuli.anchorwatch.domain.condition.WindSpeedGuardStatus
+import com.yokuli.anchorwatch.domain.condition.WindShiftGuardStatus
+import com.yokuli.anchorwatch.domain.condition.ConditionAlarmSource
+import com.yokuli.anchorwatch.domain.condition.SafetyAlert
+import com.yokuli.anchorwatch.domain.condition.SafetyAlertAggregator
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.location.NmeaSourceAvailability
@@ -75,6 +81,22 @@ import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
 
+internal data class AlarmPresentation(val title:String,val primaryValue:String,val detail:String)
+
+@Composable private fun alarmPresentation(primary:String?,alarm:com.yokuli.anchorwatch.domain.model.AlarmSnapshot,active:AnchorSessionEntity,state:MainUiState):AlarmPresentation=when(primary){
+    "SHALLOW"->AlarmPresentation(tr("SHALLOW WATER ALARM","浅水警报"),state.conditions.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:"—",tr("Below the ${active.shallowDepthAlarmMeters} m shallow threshold.","低于 ${active.shallowDepthAlarmMeters} 米浅水阈值。"))
+    "DEEP"->AlarmPresentation(tr("DEEP WATER ALARM","深水警报"),state.conditions.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:"—",tr("Above the ${active.deepDepthAlarmMeters} m deep-water threshold.","高于 ${active.deepDepthAlarmMeters} 米深水阈值。"))
+    "WIND"->AlarmPresentation(tr("HIGH WIND ALARM","大风警报"),state.conditions.windSpeed.filteredSpeedKnots?.let{"%.1f kn ${state.conditions.windSpeed.source}".format(it)}?:"—",tr("The alarm threshold is ${active.windAlarmKnots} kn.","警报阈值为 ${active.windAlarmKnots} 节。"))
+    "SHIFT"->AlarmPresentation(tr("WIND SHIFT ALARM","风向突变警报"),state.conditions.windShift.shiftDegrees?.let{"${it.toInt()}°"}?:"—",tr("Fixed baseline ${state.conditions.windShift.baselineDirectionDegrees?.toInt()?:"—"}° → current ${state.conditions.windShift.currentDirectionDegrees?.toInt()?:"—"}°.","固定基线 ${state.conditions.windShift.baselineDirectionDegrees?.toInt()?:"—"}° → 当前 ${state.conditions.windShift.currentDirectionDegrees?.toInt()?:"—"}°。"))
+    else->when(alarm.type){
+        AlarmType.ANCHOR_RADIUS_EXCEEDED->AlarmPresentation(tr("ANCHOR DRAG ALARM","走锚警报"),"${alarm.distanceMeters?.toInt()?:"—"} m",tr("The alarm radius is ${active.alarmRadiusMeters.toInt()} m.","报警范围为 ${active.alarmRadiusMeters.toInt()} 米。"))
+        AlarmType.GPS_DATA_LOST->AlarmPresentation(tr("GPS DATA LOST","GPS 数据丢失"),"—",tr("No trusted position arrived within the safety timeout. There is no silent failover; restore the locked source, or pause/lift before starting with another source.","安全超时内没有收到可信定位，应用不会静默切源。请恢复当前锁定来源；如需换源，请暂停或起锚后重新开始。"))
+        AlarmType.GPS_QUALITY_BAD->AlarmPresentation(tr("GPS QUALITY DEGRADED","GPS 质量下降"),"—",tr("Suspicious fixes are kept out of both the alarm and centre estimator.","可疑定位不会进入报警或锚点估算。"))
+        AlarmType.NMEA_CONNECTION_LOST->AlarmPresentation(tr("NMEA CONNECTION LOST","NMEA 连接丢失"),"—",tr("The locked NMEA source is reconnecting; no silent GPS-source switch is performed.","锁定的 NMEA 数据源正在重连；不会静默切换 GPS 来源。"))
+        else->AlarmPresentation(tr("ANCHOR WATCH ALARM","锚警系统警报"),"—",tr("A safety alarm is active.","安全警报正在生效。"))
+    }
+}
+
 @Composable internal fun AnchorDragAlarmDialog(state:MainUiState,vm:MainViewModel){
     val active=state.active
     val alarm=state.alarmSnapshot
@@ -82,10 +104,21 @@ import java.text.DateFormat
     // confirmation controls the user is trying to verify. AnchorApp shows a global,
     // non-modal banner instead.
     if(alarm.type==AlarmType.ALARM_TEST)return
-    val snoozed=(active?.alarmSnoozedUntil?:0L)>System.currentTimeMillis()
-    val visible=active?.paused==false&&!snoozed&&alarm.state==AlarmState.ALARM&&alarm.type!=null
-    val radiusAlarm=alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED
-    val alarmTitle=when(alarm.type){AlarmType.ANCHOR_RADIUS_EXCEEDED->tr("ANCHOR DRAG ALARM","走锚警报");AlarmType.GPS_DATA_LOST->tr("GPS DATA LOST","GPS 数据丢失");AlarmType.GPS_QUALITY_BAD->tr("GPS QUALITY DEGRADED","GPS 质量下降");AlarmType.NMEA_CONNECTION_LOST->tr("NMEA CONNECTION LOST","NMEA 连接丢失");else->tr("ANCHOR WATCH ALARM","锚警系统警报")}
+    val now=System.currentTimeMillis();val anchorAudible=alarm.state==AlarmState.ALARM&&alarm.type!=null&&(active?.alarmSnoozedUntil?:0L)<=now
+    val depthAudible=state.conditions.depth.alarmActive&&(active?.depthAlarmSnoozedUntil?:0L)<=now
+    val windAudible=state.conditions.windSpeed.alarmActive&&(active?.windAlarmSnoozedUntil?:0L)<=now
+    val shiftAudible=state.conditions.windShift.alarmActive&&(active?.windShiftAlarmSnoozedUntil?:0L)<=now
+    val activeAlerts=buildList{
+        if(anchorAudible)add(SafetyAlert(ConditionAlarmSource.ANCHOR,SafetyAlert.Severity.ALARM,if(alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED)"anchor" else "critical source lost",alarm.type?.name?:""))
+        if(depthAudible)add(SafetyAlert(ConditionAlarmSource.DEPTH,SafetyAlert.Severity.ALARM,if(state.conditions.depth.status==DepthGuardStatus.SHALLOW_ALARM)"shallow" else "deep",state.conditions.depth.status.name))
+        if(windAudible)add(SafetyAlert(ConditionAlarmSource.WIND_SPEED,SafetyAlert.Severity.ALARM,"wind speed alarm",state.conditions.windSpeed.status.name))
+        if(shiftAudible)add(SafetyAlert(ConditionAlarmSource.WIND_SHIFT,SafetyAlert.Severity.ALARM,"wind shift",state.conditions.windShift.status.name))
+    }
+    val primaryAlert=SafetyAlertAggregator.sorted(activeAlerts).firstOrNull()
+    val primary=when(primaryAlert?.source){ConditionAlarmSource.DEPTH->if(state.conditions.depth.status==DepthGuardStatus.SHALLOW_ALARM)"SHALLOW" else "DEEP";ConditionAlarmSource.ANCHOR->"ANCHOR";ConditionAlarmSource.WIND_SPEED->"WIND";ConditionAlarmSource.WIND_SHIFT->"SHIFT";else->null}
+    val visible=active?.paused==false&&primary!=null
+    val radiusAlarm=primary=="ANCHOR"&&alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED
+    val presentation=active?.let{alarmPresentation(primary,alarm,it,state)}
     var confirmLift by remember(active?.id){mutableStateOf(false)}
     LaunchedEffect(visible){if(!visible)confirmLift=false}
     if(!visible)return
@@ -94,8 +127,10 @@ import java.text.DateFormat
     }else{
         Dialog(onDismissRequest={},properties=DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false)){
             Surface(Modifier.fillMaxWidth().padding(horizontal=8.dp),shape=MaterialTheme.shapes.extraLarge,tonalElevation=8.dp){Column(Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(22.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                Text(alarmTitle,modifier=Modifier.testTag("in_app_anchor_alarm"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
-                if(radiusAlarm)Text(tr("The boat is ${alarm.distanceMeters?.toInt()?:"--"} m from the anchor centre; the limit is ${active.alarmRadiusMeters.toInt()} m.","船距锚点中心 ${alarm.distanceMeters?.toInt()?:"--"} 米，报警范围为 ${active.alarmRadiusMeters.toInt()} 米。"),style=MaterialTheme.typography.titleMedium)else Text(if(alarm.type==AlarmType.GPS_DATA_LOST)tr("No trusted position has arrived within the safety timeout. There is no silent failover. Restore the locked source, or pause/lift before starting with another source.","安全超时内没有收到可信定位，应用不会静默切源。请恢复当前锁定来源；如需换源，请暂停或起锚后重新开始。")else tr("Position quality has remained degraded. Suspicious fixes are kept out of the alarm and estimator.","定位质量持续下降；可疑定位不会进入报警与锚点估算。"),style=MaterialTheme.typography.titleMedium)
+                Text(presentation?.title?:tr("ANCHOR WATCH ALARM","锚警系统警报"),modifier=Modifier.testTag("in_app_anchor_alarm"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+                presentation?.primaryValue?.takeIf{it.isNotBlank()}?.let{Text(it,style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)}
+                Text(presentation?.detail.orEmpty(),style=MaterialTheme.typography.titleMedium)
+                if(activeAlerts.size>1)Text(tr("+ ${activeAlerts.size-1} other active alert${if(activeAlerts.size>2)"s" else ""}","另有 ${activeAlerts.size-1} 项警报仍在生效"),fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.error)
                 Text(tr("Check the vessel and surroundings now. Monitoring continues unless you pause or lift anchor.","请立即检查船况和周边环境。除非暂停监控或起锚，否则锚警会继续运行。"),color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Button(vm::acknowledge,Modifier.fillMaxWidth().heightIn(min=56.dp).testTag("alarm_snooze_action")){Icon(Icons.Default.Snooze,null);Spacer(Modifier.width(8.dp));Text(tr("Snooze ${state.settings.alarmSnoozeMinutes} min","${state.settings.alarmSnoozeMinutes} 分钟后提醒"))}
                 if(radiusAlarm)OutlinedButton({vm.acknowledge();vm.requestRangeEditor()},Modifier.fillMaxWidth().heightIn(min=56.dp)){Icon(Icons.Default.Tune,null);Spacer(Modifier.width(8.dp));Text(tr("Snooze & adjust range","稍后提醒并调整范围"))}

@@ -44,7 +44,7 @@ open class LinzWfsHttpTransport @Inject constructor() {
                     readTimeout = 12_000
                     requestMethod = "GET"
                     setRequestProperty("Accept", accept)
-                    setRequestProperty("User-Agent", "Anchor-by-Yokuli/${BuildConfig.VERSION_NAME}")
+                    setRequestProperty("User-Agent", "Anchor-Watch/${BuildConfig.VERSION_NAME}")
                 }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream

@@ -9,6 +9,9 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
+import com.yokuli.anchorwatch.data.preferences.AppSettings
+import com.yokuli.anchorwatch.data.preferences.SettingsRepository
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -21,6 +24,7 @@ class AccessibilityLayoutTest{
 
     @Before fun prepare(){
         MapRuntimePolicy.renderGoogleEngine=false
+        runBlocking{SettingsRepository(InstrumentationRegistry.getInstrumentation().targetContext).save(AppSettings())}
         shell("pm grant com.yokuli.anchorwatch android.permission.ACCESS_COARSE_LOCATION")
         shell("pm grant com.yokuli.anchorwatch android.permission.ACCESS_FINE_LOCATION")
         shell("pm grant com.yokuli.anchorwatch android.permission.POST_NOTIFICATIONS")

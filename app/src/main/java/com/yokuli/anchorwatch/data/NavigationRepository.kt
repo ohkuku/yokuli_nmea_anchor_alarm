@@ -3,12 +3,17 @@ import android.os.SystemClock
 import com.yokuli.anchorwatch.data.nmea.*
 import com.yokuli.anchorwatch.domain.model.*
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
+import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
+import com.yokuli.anchorwatch.data.condition.LiveWindRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import javax.inject.Inject
 import javax.inject.Singleton
 
-@Singleton class NavigationRepository @Inject constructor(){
+@Singleton class NavigationRepository @Inject constructor(
+ private val liveDepth:LiveDepthRepository,
+ private val liveWind:LiveWindRepository,
+){
  private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val connection=NmeaConnectionManager(scope)
  private val requestGuard=Any();private var appConnectionRequested=false;private var backgroundConnectionRequested=false
  private val _fix=MutableStateFlow<NavigationFix?>(null);val fix=_fix.asStateFlow();val connectionState=connection.state
@@ -18,9 +23,9 @@ import javax.inject.Singleton
  private val _validRawSentences=MutableSharedFlow<String>(extraBufferCapacity=512,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val validRawSentences=_validRawSentences.asSharedFlow()
  private val _depthObservations=MutableSharedFlow<DepthObservation>(extraBufferCapacity=64,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val depthObservations=_depthObservations.asSharedFlow()
  @Volatile private var requireChecksum=true
- private var headingTrue:Pair<Double,Long>?=null;private var headingMag:Pair<Double,Long>?=null;private var depth:Pair<Double,Long>?=null;private var sog:Pair<Double,Long>?=null;private var cog:Pair<Double,Long>?=null;private var hdop:Pair<Double,Long>?=null;private var fixQuality:Pair<Int,Long>?=null;private var satellites:Pair<Int,Long>?=null;private var windDirectionTrue:Pair<Double,Long>?=null;private var trueWindSpeed:Pair<Double,Long>?=null;private var apparentWindSpeed:Pair<Double,Long>?=null;private var apparentWindAngle:Pair<Double,Long>?=null;private var trueWindAngle:Pair<Double,Long>?=null
+ private var headingTrue:Pair<Double,Long>?=null;private var headingMag:Pair<Double,Long>?=null;private var depth:Pair<Double,Long>?=null;private var sog:Pair<Double,Long>?=null;private var cog:Pair<Double,Long>?=null;private var hdop:Pair<Double,Long>?=null;private var fixQuality:Pair<Int,Long>?=null;private var satellites:Pair<Int,Long>?=null;private val wind=WindSnapshotAccumulator()
  @Volatile private var noDataTimeoutMillis=10_000L
- private var headingSampleSequence=0L;private var windSampleSequence=0L
+ private var headingSampleSequence=0L
  init{
   scope.launch{connection.lines.collect{accept(it,requireChecksum)}}
   scope.launch{connection.state.collect{state->when(state){NmeaConnectionState.CONNECTING->if(_connectionStartedElapsed.value==null)_connectionStartedElapsed.value=SystemClock.elapsedRealtime();NmeaConnectionState.RECONNECTING->_connectionStartedElapsed.value=SystemClock.elapsedRealtime();else->Unit}}}
@@ -57,13 +62,13 @@ import javax.inject.Singleton
   val normalized=line.trim();if(NmeaChecksum.validate(normalized,requireChecksum))_validRawSentences.tryEmit(normalized)
   val now=SystemClock.elapsedRealtime();val u=parser.parse(normalized,requireChecksum,now);val old=_diagnostics.value;val raw=(old.raw+normalized).takeLast(200)
   if(u==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
+  liveWind.accept(u,now);u.depthObservation?.let{liveDepth.accept(it)}
   if(u.trueHeading!=null){headingTrue=u.trueHeading to now;headingSampleSequence++};u.magneticHeading?.let{headingMag=it to now};u.depth?.let{depth=it to now};u.depthObservation?.let(_depthObservations::tryEmit);u.sog?.let{sog=it to now};u.cog?.let{cog=it to now};u.hdop?.let{hdop=it to now};u.fixQuality?.let{fixQuality=it to now};u.satellites?.let{satellites=it to now}
-  val newWind=u.trueWindDirection!=null||u.trueWindSpeedKnots!=null||u.apparentWindSpeedKnots!=null||u.apparentWindAngle!=null||u.trueWindAngle!=null
-  if(newWind)windSampleSequence++;u.trueWindDirection?.let{windDirectionTrue=it to now};u.trueWindSpeedKnots?.let{trueWindSpeed=it to now};u.apparentWindSpeedKnots?.let{apparentWindSpeed=it to now};u.apparentWindAngle?.let{apparentWindAngle=it to now};u.trueWindAngle?.let{trueWindAngle=it to now}
+  wind.update(u,now)
   u.position?.let{position->
-   val freshHeading=headingTrue.fresh(now);val freshTrueDirection=windDirectionTrue.fresh(now);val freshTrueSpeed=trueWindSpeed.fresh(now);val freshApparentSpeed=apparentWindSpeed.fresh(now);val freshApparentAngle=apparentWindAngle.fresh(now);val freshTrueAngle=trueWindAngle.fresh(now)
+   val freshHeading=headingTrue.fresh(now);val windSnapshot=wind.snapshot(now);val freshTrueDirection=windSnapshot.trueDirectionDegrees;val freshTrueSpeed=windSnapshot.trueSpeedKnots;val freshApparentSpeed=windSnapshot.apparentSpeedKnots;val freshApparentAngle=windSnapshot.apparentAngleDegrees;val freshTrueAngle=windSnapshot.trueAngleDegrees
    val freshHdop=position.hdop?:hdop.fresh(now,5_000);val freshQuality=position.fixQuality?:fixQuality.fresh(now,5_000);val freshSatellites=position.satellites?:satellites.fresh(now,5_000)
-   val merged=position.copy(sogKnots=sog.fresh(now),cogTrueDegrees=cog.fresh(now),headingTrueDegrees=freshHeading,headingMagneticDegrees=headingMag.fresh(now),depthMeters=depth.fresh(now),hdop=freshHdop,fixQuality=freshQuality,satellites=freshSatellites,horizontalAccuracyMeters=freshHdop?.times(3.0)?.coerceIn(2.5,80.0),positionProvider=PositionProvider.NMEA,headingSource=if(freshHeading!=null)HeadingSource.NMEA_PHYSICAL else HeadingSource.NONE,headingQuality=if(freshHeading!=null)HeadingQuality.STABLE else HeadingQuality.UNAVAILABLE,windDirectionTrueDegrees=freshTrueDirection,windSpeedKnots=freshTrueSpeed?:freshApparentSpeed,apparentWindAngleDegrees=freshApparentAngle,trueWindAngleDegrees=freshTrueAngle,trueWindSpeedKnots=freshTrueSpeed,apparentWindSpeedKnots=freshApparentSpeed,headingSampleSequence=headingSampleSequence.takeIf{freshHeading!=null},windSampleSequence=windSampleSequence.takeIf{freshTrueDirection!=null||freshTrueSpeed!=null||freshApparentSpeed!=null||freshApparentAngle!=null||freshTrueAngle!=null})
+   val merged=position.copy(sogKnots=sog.fresh(now),cogTrueDegrees=cog.fresh(now),headingTrueDegrees=freshHeading,headingMagneticDegrees=headingMag.fresh(now),depthMeters=depth.fresh(now),hdop=freshHdop,fixQuality=freshQuality,satellites=freshSatellites,horizontalAccuracyMeters=freshHdop?.times(3.0)?.coerceIn(2.5,80.0),positionProvider=PositionProvider.NMEA,headingSource=if(freshHeading!=null)HeadingSource.NMEA_PHYSICAL else HeadingSource.NONE,headingQuality=if(freshHeading!=null)HeadingQuality.STABLE else HeadingQuality.UNAVAILABLE,windDirectionTrueDegrees=freshTrueDirection,windSpeedKnots=freshTrueSpeed?:freshApparentSpeed,apparentWindAngleDegrees=freshApparentAngle,trueWindAngleDegrees=freshTrueAngle,trueWindSpeedKnots=freshTrueSpeed,apparentWindSpeedKnots=freshApparentSpeed,headingSampleSequence=headingSampleSequence.takeIf{freshHeading!=null},windSampleSequence=windSnapshot.sampleSequence)
    _fix.value=merged
    if(merged.valid){connection.reportValidFix();val cutoff=now-10*60_000L;_recentFixes.value=(_recentFixes.value+merged).filter{it.receivedElapsedRealtime>=cutoff}.takeLast(1_200)}
   }

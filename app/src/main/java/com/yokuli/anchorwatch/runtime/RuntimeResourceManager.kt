@@ -12,7 +12,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class RuntimeOwner { ANCHOR_WATCH, NMEA_SHARING, GPS_PROXY, SONAR_MAPPING }
+enum class RuntimeOwner { ANCHOR_WATCH, CONDITION_MONITOR, NMEA_SHARING, GPS_PROXY, SONAR_MAPPING }
 data class RuntimeRequirement(
     val needsSystemLocation:Boolean=false,
     val needsNmeaTransport:Boolean=false,

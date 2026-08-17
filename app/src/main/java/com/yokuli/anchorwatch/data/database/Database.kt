@@ -63,6 +63,49 @@ data class AnchorSessionEntity(
     @ColumnInfo(defaultValue = "0") val candidateDirectionEvidenceConsistent: Boolean = false,
     @ColumnInfo(defaultValue = "0") val maxDistanceMeters: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val alarmCount: Int = 0,
+    /** Explicit setup provenance only; never used as the authoritative anchor coordinate. */
+    val savedAnchorageId:Long?=null,
+    @ColumnInfo(defaultValue = "0") val depthGuardEnabled:Boolean=false,
+    val shallowDepthAlarmMeters:Double?=null,
+    val deepDepthAlarmMeters:Double?=null,
+    @ColumnInfo(defaultValue = "0") val windGuardEnabled:Boolean=false,
+    val windWarningKnots:Double?=null,
+    val windAlarmKnots:Double?=null,
+    @ColumnInfo(defaultValue = "0") val windShiftEnabled:Boolean=false,
+    val windShiftThresholdDegrees:Double?=null,
+    @ColumnInfo(defaultValue = "1") val windAllowApparentFallback:Boolean=true,
+    val windBaselineDirectionDegrees:Double?=null,
+    val windBaselineEstablishedAt:Long?=null,
+    val windBaselineSource:String?=null,
+    val depthAlarmSnoozedUntil:Long?=null,
+    val windAlarmSnoozedUntil:Long?=null,
+    val windShiftAlarmSnoozedUntil:Long?=null,
+    val minObservedDepthMeters:Double?=null,
+    val maxObservedDepthMeters:Double?=null,
+    val maxObservedWindKnots:Double?=null,
+    val maxObservedWindSource:String?=null,
+    @ColumnInfo(defaultValue = "0") val depthAlarmCount:Int=0,
+    @ColumnInfo(defaultValue = "0") val windAlarmCount:Int=0,
+)
+
+@Entity(tableName="saved_anchorages",indices=[Index("updatedAt"),Index("lastVisitedAt")])
+data class SavedAnchorageEntity(
+    @PrimaryKey(autoGenerate=true) val id:Long=0,
+    val name:String,
+    val latitude:Double,
+    val longitude:Double,
+    val createdAt:Long,
+    val updatedAt:Long,
+    val lastVisitedAt:Long?=null,
+    @ColumnInfo(defaultValue="0") val visitCount:Int=0,
+    val preferredAlarmRadiusMeters:Double?=null,
+    val typicalWaterDepthMeters:Double?=null,
+    val typicalRodeLengthMeters:Double?=null,
+    @ColumnInfo(defaultValue="'UNKNOWN'") val seabedType:String="UNKNOWN",
+    val customSeabedText:String?=null,
+    val rating:Int?=null,
+    val notes:String="",
+    val sourceSessionId:Long?=null,
 )
 
 @Entity(
@@ -250,6 +293,7 @@ interface AnchorDao {
     @Update suspend fun updateSession(value: AnchorSessionEntity)
     @Transaction suspend fun updateSessionAndInsertEvent(value:AnchorSessionEntity,event:AlarmEventEntity){updateSession(value);insertEvent(event)}
     @Query("SELECT * FROM anchor_sessions WHERE active=1 ORDER BY startedAt DESC LIMIT 1") suspend fun active(): AnchorSessionEntity?
+    @Query("SELECT * FROM anchor_sessions WHERE id=:id LIMIT 1") suspend fun session(id:Long):AnchorSessionEntity?
     @Query("SELECT * FROM anchor_sessions ORDER BY startedAt DESC") fun sessions(): Flow<List<AnchorSessionEntity>>
     @Query("DELETE FROM alarm_events WHERE sessionId IN (SELECT id FROM anchor_sessions WHERE id=:id AND active=0)") suspend fun deleteCompletedEvents(id: Long)
     @Query("DELETE FROM track_points WHERE sessionId IN (SELECT id FROM anchor_sessions WHERE id=:id AND active=0)") suspend fun deleteCompletedPoints(id: Long)
@@ -277,6 +321,18 @@ interface AnchorDao {
     @Query("DELETE FROM alarm_events") suspend fun clearEvents()
     @Query("DELETE FROM track_points") suspend fun clearPoints()
     @Query("DELETE FROM anchor_sessions") suspend fun clearSessions()
+}
+
+@Dao
+interface AnchorageDao{
+    @Query("SELECT * FROM saved_anchorages ORDER BY COALESCE(lastVisitedAt,updatedAt) DESC") fun anchorages():Flow<List<SavedAnchorageEntity>>
+    @Query("SELECT * FROM saved_anchorages WHERE id=:id LIMIT 1") suspend fun get(id:Long):SavedAnchorageEntity?
+    @Insert suspend fun insert(value:SavedAnchorageEntity):Long
+    @Update suspend fun update(value:SavedAnchorageEntity)
+    @Query("DELETE FROM saved_anchorages WHERE id=:id") suspend fun delete(id:Long):Int
+    @Query("SELECT * FROM saved_anchorages ORDER BY id") suspend fun allNow():List<SavedAnchorageEntity>
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<SavedAnchorageEntity>)
+    @Query("DELETE FROM saved_anchorages") suspend fun clear()
 }
 
 @Dao
@@ -356,12 +412,13 @@ interface IncidentLogDao {
 }
 
 @Database(
-    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class],
-    version = 11,
+    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class],
+    version = 12,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun anchorDao(): AnchorDao
+    abstract fun anchorageDao():AnchorageDao
     abstract fun sonarDao(): SonarDao
     abstract fun linzDepthCacheDao():LinzDepthCacheDao
     abstract fun tidePredictionCacheDao():TidePredictionCacheDao

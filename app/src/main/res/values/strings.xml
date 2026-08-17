@@ -1,8 +1,85 @@
 <resources>
- <string name="app_name">Anchor by Yokuli</string><string name="map_key_missing">Google Maps API key is not configured.</string>
- <string name="connected">CONNECTED</string><string name="disconnected">DISCONNECTED</string><string name="valid">VALID</string><string name="stale">STALE</string>
- <string name="anchor_watch">ANCHOR WATCH</string><string name="set_anchor">Set Anchor</string><string name="stop">Stop</string><string name="settings">Settings</string><string name="diagnostics">Diagnostics</string><string name="history">History</string>
- <string name="recenter">Recenter</string><string name="follow">Follow</string><string name="map_layer">Map Layer</string><string name="gps_override">GPS Override</string>
- <string name="acknowledge">ACKNOWLEDGE</string><string name="cancel">Cancel</string><string name="save">Save</string><string name="test_connection">TEST CONNECTION</string>
- <string name="safety_notice">Auxiliary aid only. Maintain a proper anchor watch.</string>
+    <string name="app_name">Anchor Watch</string>
+    <string name="map_key_missing">Google Maps API key is not configured.</string>
+    <string name="connected">CONNECTED</string>
+    <string name="disconnected">DISCONNECTED</string>
+    <string name="valid">VALID</string>
+    <string name="stale">STALE</string>
+    <string name="anchor_watch">ANCHOR WATCH</string>
+    <string name="set_anchor">Set Anchor</string>
+    <string name="stop">Stop</string>
+    <string name="settings">Settings</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="history">History</string>
+    <string name="recenter">Recenter</string>
+    <string name="follow">Follow</string>
+    <string name="map_layer">Map Layer</string>
+    <string name="gps_override">GPS Override</string>
+    <string name="acknowledge">ACKNOWLEDGE</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="test_connection">TEST CONNECTION</string>
+    <string name="safety_notice">Auxiliary aid only. Maintain a proper anchor watch.</string>
+
+    <string name="about_page_title">About &amp; support</string>
+    <string name="about_back">Back</string>
+    <string name="about_logo_description">Anchor Watch pixel-art anchor logo</string>
+    <string name="about_maker_line">Made aboard Yokuli</string>
+    <string name="about_core_line">Built between anchorages.\nShaped by the water outside our own hatch.</string>
+    <string name="about_tagline">A free, practical anchor watch born from life aboard Yokuli.</string>
+    <string name="about_story_eyebrow">OUR STORY</string>
+    <string name="about_story_title">From software to the sea</string>
+    <string name="about_story_body">Before turning his life towards the sea, kuku worked as a programmer. In New Zealand, sailing stopped being a distant idea and became part of everyday life.\n\nOur small crew sails Yokuli, a Lotus 10.6 designed by New Zealand yacht designer Alan Wright. We have refitted her with our own hands — not to make her a showpiece, but to make her a capable home for the miles ahead.\n\nWe want to begin close to home: the islands scattered around New Zealand, the bays tucked behind its headlands, and the quiet anchorages that are easy to miss from land. If wind, time and life allow, we hope one day to point Yokuli farther out and see more of the world.\n\nAnchor Watch grew naturally from that life. Kuku brought a programmer’s habit aboard: when a problem keeps returning, understand it, then build a tool that earns its place. A simple anchor alarm gradually became NMEA tools, anchor-centre estimation, personal depth mapping and the other things we actually wanted at sea.\n\nYoyo is our captain; kuku and lili complete the crew. We are still learning, and the water has a reliable way of correcting confident ideas. That is why the app keeps changing with real use aboard Yokuli — and why its complete feature set will remain free.</string>
+    <string name="about_crew_eyebrow">THE CREW</string>
+    <string name="about_crew_title">Who we are</string>
+    <string name="about_crew_role_developer">Developer · Yokuli crew</string>
+    <string name="about_crew_role_captain">Captain · Yokuli crew</string>
+    <string name="about_crew_role_member">Yokuli crew</string>
+    <string name="about_voyage_eyebrow">FOLLOW THE VOYAGE</string>
+    <string name="about_voyage_title">Yokuli on YouTube</string>
+    <string name="about_voyage_body">Follow Yokuli’s refit and our voyage from New Zealand’s islands and bays towards whatever lies beyond.</string>
+    <string name="about_youtube_action">Watch Yokuli on YouTube</string>
+    <string name="about_support_eyebrow">SUPPORT</string>
+    <string name="about_support_title">Support the crew</string>
+    <string name="about_support_body">Anchor Watch’s complete feature set is free. If the project is useful to you, you can voluntarily support continued sailing, testing and development. Support does not unlock app features.</string>
+    <string name="about_support_action">Buy Me a Coffee</string>
+    <string name="about_support_unconfigured">Support options are not configured in this build.</string>
+    <string name="about_support_confirm_title">Open Buy Me a Coffee?</string>
+    <string name="about_support_confirm_body">You’re leaving Anchor Watch to visit Buy Me a Coffee in your browser. Support is optional and does not unlock app features.</string>
+    <string name="about_continue">Continue</string>
+    <string name="about_cancel">Cancel</string>
+    <string name="about_roadmap_eyebrow">WHAT WE’RE BUILDING</string>
+    <string name="about_roadmap_title">Useful ideas, tested aboard</string>
+    <string name="about_roadmap_body">• More regional marine-data sources\n• Better offline chart workflows\n• More NMEA integrations\n• More personal sonar tools\n• Reliability improvements from real boat use</string>
+    <string name="about_roadmap_note">We build features when we actually find a reason for them aboard Yokuli. Some ideas survive real boat use. Some don’t. The useful ones make it into Anchor Watch.</string>
+    <string name="about_feedback_eyebrow">FEEDBACK &amp; SUPPORT</string>
+    <string name="about_feedback_title">Help us improve it</string>
+    <string name="about_feedback_body">Have an idea or a feature request? Send it directly to kuku. Requests are read carefully and we’ll try to help when practical, but no individual feature or delivery date can be promised.</string>
+    <string name="about_legal_eyebrow">ABOUT</string>
+    <string name="about_legal_title">Product &amp; data</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_privacy_body">Anchor Watch has no account, advertising or analytics. Anchor, track, NMEA diagnostics and sonar data stay on this device unless you deliberately export or share them.</string>
+    <string name="about_regional_data">Map sources: Google Maps; OpenSeaMap seamarks with OpenStreetMap attribution; New Zealand marine data from Land Information New Zealand (LINZ). Providers may require a network connection and have their own terms. Marine overlays are reference aids, never a substitute for official charts or a proper watch.</string>
+    <string name="about_license_pending">Software licence: owner decision pending. No licence is implied.</string>
+    <string name="about_privacy_action">Privacy policy</string>
+    <string name="about_source_action">Source code</string>
+    <string name="about_website_action">Website</string>
+    <string name="about_contact_action">Email the crew</string>
+    <string name="about_link_failed">No app could open this secure link.</string>
+    <string name="onboarding_maker_body">Before the sea, kuku wrote software. In New Zealand, our crew refitted Yokuli — an Alan Wright-designed Lotus 10.6 — and began building the tools we wanted for the voyage ahead.</string>
+    <string name="onboarding_meet_crew">Meet the crew</string>
+    <string name="onboarding_watch_yokuli">Watch Yokuli</string>
+    <string name="onboarding_continue">Continue to Anchor Watch</string>
+    <string name="onboarding_no_support">All features are free. This introduction never asks for support.</string>
+    <string name="feedback_title">Feedback &amp; feature requests</string>
+    <string name="feedback_intro_title">Tell kuku what would help aboard</string>
+    <string name="feedback_intro_body">Describe the problem, the boat setup and the result you need. Kuku will read the request and try to help when practical.</string>
+    <string name="feedback_default_subject">Anchor Watch feedback / feature request</string>
+    <string name="feedback_subject">Email subject</string>
+    <string name="feedback_details">Request details</string>
+    <string name="feedback_details_hint">Please avoid including API keys, passwords or precise private locations.</string>
+    <string name="feedback_privacy">This opens your email app. Anchor Watch does not send or track the message itself. App version, Android version and device model are added for context; location and NMEA data are not.</string>
+    <string name="feedback_open_page">Send feedback or a feature request</string>
+    <string name="feedback_open_email">Open email app</string>
+    <string name="feedback_email_unavailable">No email app could open this message.</string>
 </resources>

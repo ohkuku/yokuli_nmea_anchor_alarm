@@ -40,7 +40,7 @@ enum class HeadingSource { NONE, NMEA_PHYSICAL, PHONE }
 enum class HeadingQuality { UNAVAILABLE, STABLE, MOVING, DISTURBED, RECOVERING }
 enum class AppLanguage { SYSTEM, ENGLISH, SIMPLIFIED_CHINESE }
 enum class AlarmSound { SYSTEM_ALARM, SYSTEM_RINGTONE, SYSTEM_NOTIFICATION, CUSTOM }
-enum class DemoScenario { SAFE_SWING, ANCHOR_DRAG, WIND_SHIFT, GPS_DROPOUT }
+enum class DemoScenario { SAFE_SWING, ANCHOR_DRAG, WIND_SHIFT, GPS_DROPOUT, DEPTH_SHALLOW, DEPTH_DEEP, WIND_ALARM }
 
 /** Legacy names remain on disk so existing sessions migrate without data loss. */
 enum class AnchorPlacementMode { CENTER_DROP, BACKDOWN }

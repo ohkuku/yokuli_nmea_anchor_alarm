@@ -1,4 +1,4 @@
-# Anchor by Yokuli — Physical-device soak checklist
+# Anchor Watch — Physical-device soak checklist
 
 This checklist is a release-candidate gate, not a substitute for a navigational watch. Keep an independent anchor alarm and a qualified watchkeeper throughout every test.
 
@@ -26,7 +26,7 @@ Run the short matrix on at least one Pixel-class device and one vendor-modified 
 - [ ] Connect the real NMEA source and verify fresh accepted GPS, DPT/DBT, wind and heading on Raw data.
 - [ ] Confirm the real sonar survey refuses to start if either NMEA position or DPT/DBT is stale, and starts only when both come from the same NMEA connection.
 - [ ] Play and stop the alarm test. Confirm that Stop leaves no sound or vibration.
-- [ ] Confirm Normal/Satellite, LINZ and sonar overlays fail independently without affecting the watch.
+- [ ] Confirm Map/Satellite/Nautical, OpenSeaMap seamarks, LINZ Local depth and sonar fail independently without affecting the watch.
 - [ ] Export a backup and retain it outside the phone before the long run.
 
 ## Eight-hour screen-off run
