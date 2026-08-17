@@ -865,18 +865,14 @@ class AnchorSafetyFlowTest {
     )
 
     private suspend fun startServiceForRestore() {
-        // A stopped foreground service tears down asynchronously on Android. Do not
-        // mistake the previous instance's diagnostics for the service that restores
-        // the session seeded by this story.
-        withTimeout(5_000){runtimeDiagnostics.state.first{!it.serviceReady}}
-        val generation=runtimeDiagnostics.state.value.serviceGeneration
+        val expectedSessionId=requireNotNull(dao.active()).id
         ContextCompat.startForegroundService(context, Intent(context, AnchorForegroundService::class.java))
-        withTimeout(15_000){runtimeDiagnostics.state.first{it.serviceGeneration>generation&&it.serviceReady}}
-        if(dao.active()?.paused==false){
-            // serviceReady is published by the runtime coroutine, while diagnostic
-            // owner mirroring is a separate collector and may trail it by one turn.
-            withTimeout(5_000){runtimeDiagnostics.state.first{RuntimeOwner.ANCHOR_WATCH in it.activeOwners}}
-        }
+        // MainActivity may have already started and restored the service before this
+        // helper runs. Readiness belongs to the expected session, not to whether this
+        // particular call happened to create another Android Service generation.
+        withTimeout(15_000){runtimeDiagnostics.state.first{
+            it.serviceReady&&it.restoredSessionId==expectedSessionId&&RuntimeOwner.ANCHOR_WATCH in it.activeOwners
+        }}
     }
 
     private fun openDisconnectDecision() {
