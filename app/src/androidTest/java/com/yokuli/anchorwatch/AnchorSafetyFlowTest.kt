@@ -57,7 +57,6 @@ import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
-import com.yokuli.anchorwatch.runtime.RuntimeOwner
 import dagger.hilt.android.EntryPointAccessors
 import java.io.Closeable
 import java.net.ServerSocket
@@ -255,6 +254,7 @@ class AnchorSafetyFlowTest {
         }
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,demoMode=true,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Data").performClick();compose.onNodeWithText("Sonar").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithText("Demo survey uses continuous simulated sonar",substring=true).fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Start sonar survey").assertIsEnabled()
@@ -551,6 +551,28 @@ class AnchorSafetyFlowTest {
                 assertEquals(sessionId, dao.active()?.id)
             }
         }
+    }
+
+    @Test fun activeWatchCannotEnableEnvironmentalAlertsWithoutConnectedNmea() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM))
+        navigation.disconnectAll()
+        val sessionId=seedActiveWatch(positionSource=GpsDataSource.SYSTEM)
+        startServiceForRestore()
+
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context,AnchorForegroundService::class.java)
+                .setAction(AnchorForegroundService.UPDATE_CONDITION_GUARDS)
+                .putExtra("depthGuard",true)
+                .putExtra("shallowDepth",2.5),
+        )
+        delay(750)
+
+        val active=requireNotNull(dao.active())
+        assertEquals(sessionId,active.id)
+        assertTrue(!active.depthGuardEnabled)
+        assertTrue(!active.windGuardEnabled)
+        assertTrue(!active.windShiftEnabled)
     }
 
     @Test fun automaticReconnectRecordsRecoveryWithoutStoppingWatch() = runBlocking<Unit> {
@@ -870,9 +892,16 @@ class AnchorSafetyFlowTest {
         // MainActivity may have already started and restored the service before this
         // helper runs. Readiness belongs to the expected session, not to whether this
         // particular call happened to create another Android Service generation.
-        withTimeout(15_000){runtimeDiagnostics.state.first{
-            it.serviceReady&&it.restoredSessionId==expectedSessionId&&RuntimeOwner.ANCHOR_WATCH in it.activeOwners
+        // A full orchestrated suite can briefly starve the service process while
+        // Compose and Room test processes are being recycled. Keep the barrier
+        // session-specific, but allow enough time for an actual Android cold start.
+        val restored=withTimeoutOrNull(30_000){runtimeDiagnostics.state.first{
+            // serviceReady is published only after AnchorWatchRuntime.restore() has
+            // completed for this exact row. RuntimeResourceManager diagnostics are
+            // collected by another coroutine and may legitimately lag this barrier.
+            it.serviceReady&&it.restoredSessionId==expectedSessionId
         }}
+        assertNotNull("Service did not restore session $expectedSessionId; diagnostics=${runtimeDiagnostics.state.value}; active=${dao.active()}; connection=${navigation.connectionState.value}",restored)
     }
 
     private fun openDisconnectDecision() {

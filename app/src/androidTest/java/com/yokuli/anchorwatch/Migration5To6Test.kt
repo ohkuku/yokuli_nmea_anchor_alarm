@@ -15,6 +15,7 @@ import com.yokuli.anchorwatch.data.database.Migration8To9
 import com.yokuli.anchorwatch.data.database.Migration9To10
 import com.yokuli.anchorwatch.data.database.Migration10To11
 import com.yokuli.anchorwatch.data.database.Migration11To12
+import com.yokuli.anchorwatch.data.database.Migration12To13
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -28,7 +29,7 @@ class Migration5To6Test {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         for(startVersion in listOf(8,9)){
             val name="migration-v$startVersion-v11-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeFromV5(context,name,startVersion)
-            val remaining=when(startVersion){8->arrayOf(Migration8To9,Migration9To10,Migration10To11,Migration11To12);else->arrayOf(Migration9To10,Migration10To11,Migration11To12)}
+            val remaining=when(startVersion){8->arrayOf(Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13);else->arrayOf(Migration9To10,Migration10To11,Migration11To12,Migration12To13)}
             val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(*remaining).build()
             try{
                 database.openHelper.writableDatabase
@@ -37,12 +38,14 @@ class Migration5To6Test {
                 assertTrue(database.openHelper.writableDatabase.query("SELECT name FROM sqlite_master WHERE type='table' AND name='saved_anchorages'").use{it.moveToFirst()})
                 val conditionColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(anchor_sessions)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
                 assertTrue(conditionColumns.containsAll(setOf("depthGuardEnabled","windGuardEnabled","windShiftEnabled","windBaselineDirectionDegrees","minObservedDepthMeters","savedAnchorageId")))
+                val anchorageColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(saved_anchorages)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
+                assertTrue(anchorageColumns.containsAll(setOf("coordinateSource","coordinateUncertaintyMeters")))
             }finally{database.close();context.deleteDatabase(name)}
         }
     }
     @Test fun migration10To11PreservesOperationalDataAndCreatesBoundedIncidentTable()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val name="migration-v10-v11-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeToV10(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration10To11,Migration11To12).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration10To11,Migration11To12,Migration12To13).build()
         try{
             database.openHelper.writableDatabase
             assertEquals(1,database.anchorDao().sessions().first().size);assertEquals(0L,database.incidentLogDao().count())
@@ -53,7 +56,7 @@ class Migration5To6Test {
 
     @Test fun migration7To8PreservesV7SurveyAndCreatesOnlyDerivedCaches()=runBlocking {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val name="migration-v7-v8-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeToV7(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13).build()
         try{
             database.openHelper.writableDatabase
             val survey=database.sonarDao().survey(91L)!!
@@ -71,7 +74,7 @@ class Migration5To6Test {
         val name="migration-v5-v6-${System.nanoTime()}.db"
         context.deleteDatabase(name)
         createV5(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7,Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7,Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13).build()
         try {
             database.openHelper.writableDatabase
             val session=database.anchorDao().sessions().first().single()

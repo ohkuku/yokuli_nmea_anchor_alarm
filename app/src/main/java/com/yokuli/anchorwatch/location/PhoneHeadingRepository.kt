@@ -21,6 +21,7 @@ data class PhoneHeadingSample(
     val quality: HeadingQuality = HeadingQuality.UNAVAILABLE,
     val epoch: Long = 0L,
     val sequence: Long = 0L,
+    val receivedElapsedRealtime: Long? = null,
 )
 
 @Singleton
@@ -37,6 +38,11 @@ class PhoneHeadingRepository @Inject constructor(
     val sample = _sample.asStateFlow()
 
     private var running = false
+    private var runtimeDemand = false
+    private var displayDemand = false
+    private var approachDemand = false
+    private var lastPublishedElapsed = 0L
+    private var lastPublishedHeading:Double?=null
     private var acceleration = 9.81
     private var angularVelocity = 0.0
     private var accuracy = SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM
@@ -56,26 +62,36 @@ class PhoneHeadingRepository @Inject constructor(
         wallTime = wallTimeMillis ?: System.currentTimeMillis()
     }
 
-    fun start(): Boolean {
+    /** Safety-runtime ownership; display and approach use independent demands. */
+    @Synchronized fun start(): Boolean { runtimeDemand=true;return reconcile() }
+
+    @Synchronized fun stop() { runtimeDemand=false;reconcile() }
+
+    @Synchronized fun setDisplayDemand(active:Boolean):Boolean{displayDemand=active;return reconcile()}
+
+    @Synchronized fun setApproachDemand(active:Boolean):Boolean{approachDemand=active;return reconcile()}
+
+    @Synchronized private fun reconcile(): Boolean {
+        val wanted=runtimeDemand||displayDemand||approachDemand
+        if(!wanted){
+            if(running)sensors.unregisterListener(this)
+            running=false;monitor.reset();lastPublishedElapsed=0L;lastPublishedHeading=null;_sample.value=PhoneHeadingSample()
+            return false
+        }
         if (running) return rotation != null
         val orientation = rotation ?: return false
         activationEpoch = maxOf(activationEpoch + 1L, System.currentTimeMillis())
         monitor.reset()
-        running = sensors.registerListener(this, orientation, SensorManager.SENSOR_DELAY_NORMAL)
+        // GAME is substantially more responsive than NORMAL while still avoiding
+        // the battery/CPU cost of FASTEST. UI publication below is capped at 20 Hz.
+        running = sensors.registerListener(this, orientation, SensorManager.SENSOR_DELAY_GAME)
         if (running) {
-            accelerometer?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
-            gyroscope?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+            accelerometer?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+            gyroscope?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         } else {
             sensors.unregisterListener(this)
         }
         return running
-    }
-
-    fun stop() {
-        if (running) sensors.unregisterListener(this)
-        running = false
-        monitor.reset()
-        _sample.value = PhoneHeadingSample()
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -95,14 +111,19 @@ class PhoneHeadingRepository @Inject constructor(
         val tilt = Math.toDegrees(acos(matrix[8].toDouble().coerceIn(-1.0, 1.0)))
         val declination = GeomagneticField(latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), wallTime).declination
         val trueHeading = (magnetic + declination + 360.0) % 360.0
+        val nowElapsed=SystemClock.elapsedRealtime()
         val observation = monitor.observe(
-            nowElapsed = SystemClock.elapsedRealtime(),
+            nowElapsed = nowElapsed,
             headingTrueDegrees = trueHeading,
             tiltDegrees = tilt,
             angularVelocityRadPerSecond = angularVelocity,
             accelerationMetersPerSecondSquared = acceleration,
             sensorAccuracy = accuracy,
         )
+        val previous=lastPublishedHeading
+        val delta=previous?.let{kotlin.math.abs(((trueHeading-it+540.0)%360.0)-180.0)}?:Double.POSITIVE_INFINITY
+        if(nowElapsed-lastPublishedElapsed<50L&&delta<1.0)return
+        lastPublishedElapsed=nowElapsed;lastPublishedHeading=trueHeading
         // Keep sequence IDs unique across service/process restarts so persisted
         // evidence from an earlier activation never deduplicates newer samples.
         sequence = maxOf(sequence + 1L, System.currentTimeMillis() * 1_000L)
@@ -110,7 +131,7 @@ class PhoneHeadingRepository @Inject constructor(
         // moving the handset. Keep those activations in separate epochs so old
         // and new calibration evidence can coexist without being blended.
         val epoch = activationEpoch * 1_000L + observation.headingEpoch
-        _sample.value = PhoneHeadingSample(observation.headingTrueDegrees, observation.quality, epoch, sequence)
+        _sample.value = PhoneHeadingSample(observation.headingTrueDegrees, observation.quality, epoch, sequence,nowElapsed)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {

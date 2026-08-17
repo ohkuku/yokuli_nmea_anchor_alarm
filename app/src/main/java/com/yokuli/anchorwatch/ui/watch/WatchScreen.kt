@@ -128,6 +128,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     val fix = state.fix; val active = state.active
+    DisposableEffect(Unit){vm.setMapHeadingDisplayActive(true);onDispose{vm.setMapHeadingDisplayActive(false)}}
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
     val trail = remember(state.points) { fadingTrailChunks(state.points) }
@@ -262,7 +263,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                                 )
                             }
                         }
-                        fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(displayHeading(position,active,state.points,state.phoneHeading)?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
+                        fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(displayHeading(position,active,state.points,state.phoneHeading,state.nmeaFix)?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
                         active?.let { session ->
                             if(session.centerStatus==AnchorCenterStatus.RESOLVED.name){val anchor=LatLng(session.anchorLatitude,session.anchorLongitude)
                              Marker(state=remember(session.anchorLatitude,session.anchorLongitude){MarkerState(anchor)},title=tr("Anchor","锚点"),icon=anchorIcon,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.ANCHOR)

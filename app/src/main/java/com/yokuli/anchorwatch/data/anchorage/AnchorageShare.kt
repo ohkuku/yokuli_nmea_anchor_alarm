@@ -31,6 +31,11 @@ object AnchorageShareContent {
         append(value.name)
         append('\n')
         append(coordinates(value.latitude,value.longitude))
+        if(value.coordinateSource!=AnchorageCoordinateSource.CONFIRMED_ANCHOR.name){
+            append('\n')
+            append(if(value.coordinateSource==AnchorageCoordinateSource.ESTIMATED_REGION_CENTRE.name)"Approximate estimated-region centre" else "Approximate temporary watch reference")
+            value.coordinateUncertaintyMeters?.let{append(" (±${it.toInt()} m)")}
+        }
         if(value.notes.isNotBlank()){
             append("\n\n")
             append(value.notes.trim())

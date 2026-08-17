@@ -45,6 +45,8 @@ data class RuntimeDiagnostics(
     val serviceGeneration:Long=0,
     val serviceReady:Boolean=false,
     val restoredSessionId:Long?=null,
+    val restoreStage:String="IDLE",
+    val restoreError:String?=null,
 )
 
 /**
@@ -100,7 +102,9 @@ class RuntimeDiagnosticsRepository @Inject constructor(
     fun recordEstimatorRun(durationMillis:Long){_state.update{it.copy(estimatorRuns=it.estimatorRuns+1,estimatorLastDurationMs=durationMillis,estimatorMaxDurationMs=maxOf(it.estimatorMaxDurationMs,durationMillis))}}
 
     /** Distinguishes a newly-created Android service from stale process state. */
-    fun serviceStarting(){_state.update{it.copy(serviceGeneration=it.serviceGeneration+1,serviceReady=false,restoredSessionId=null)}}
-    fun serviceReady(restoredSessionId:Long?){_state.update{it.copy(serviceReady=true,restoredSessionId=restoredSessionId)}}
-    fun serviceStopped(){_state.update{it.copy(serviceReady=false,restoredSessionId=null)}}
+    fun serviceStarting(){_state.update{it.copy(serviceGeneration=it.serviceGeneration+1,serviceReady=false,restoredSessionId=null,restoreStage="STARTING",restoreError=null)}}
+    fun restoring(stage:String){_state.update{it.copy(restoreStage=stage,restoreError=null)}}
+    fun restoreFailed(stage:String,error:Throwable){_state.update{it.copy(serviceReady=false,restoreStage=stage,restoreError="${error.javaClass.simpleName}: ${error.message.orEmpty()}".trim())}}
+    fun serviceReady(restoredSessionId:Long?){_state.update{it.copy(serviceReady=true,restoredSessionId=restoredSessionId,restoreStage="READY",restoreError=null)}}
+    fun serviceStopped(){_state.update{it.copy(serviceReady=false,restoredSessionId=null,restoreStage="STOPPED")}}
 }

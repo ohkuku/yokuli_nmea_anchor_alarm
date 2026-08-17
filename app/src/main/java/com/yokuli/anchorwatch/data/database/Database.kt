@@ -106,6 +106,8 @@ data class SavedAnchorageEntity(
     val rating:Int?=null,
     val notes:String="",
     val sourceSessionId:Long?=null,
+    @ColumnInfo(defaultValue="'CONFIRMED_ANCHOR'") val coordinateSource:String="CONFIRMED_ANCHOR",
+    val coordinateUncertaintyMeters:Double?=null,
 )
 
 @Entity(
@@ -413,7 +415,7 @@ interface IncidentLogDao {
 
 @Database(
     entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.yokuli.anchorwatch.data.anchorage.AnchorageRepository
 import com.yokuli.anchorwatch.data.anchorage.DuplicateAnchorageException
+import com.yokuli.anchorwatch.data.anchorage.AnchorageCoordinateSource
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
@@ -47,6 +48,20 @@ class AnchorageLibraryStoryTest{
             val recreatedId=repository.saveFromSession(session.copy(id=sessionId),"Little Bay recreated")
             assertEquals("Little Bay recreated",repository.get(recreatedId)?.name)
             assertEquals(1,database.anchorageDao().allNow().size)
+        }finally{database.close()}
+    }
+
+    @Test fun unresolvedSessionSavesBestAvailableRegionCentreWithoutPretendingItIsConfirmed()=runBlocking{
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
+        try{
+            val repository=AnchorageRepository(database.anchorageDao())
+            val session=AnchorSessionEntity(startedAt=1,active=false,centerStatus="LEARNING",anchorLatitude=-36.80,anchorLongitude=175.10,learningReferenceLatitude=-36.801,learningReferenceLongitude=175.101,provisionalAnchorLatitude=-36.802,provisionalAnchorLongitude=175.102,provisionalRadiusMeters=34.0,rodeLengthMeters=40.0,waterDepthMeters=7.0,bowRollerHeightMeters=1.5,gpsAntennaOffsetMeters=0.0,expectedSwingRadiusMeters=45.0,warningRadiusMeters=50.0,alarmRadiusMeters=55.0)
+            val id=repository.saveFromSession(session,"Learning bay")
+            val saved=requireNotNull(repository.get(id))
+            assertEquals(-36.802,saved.latitude,0.000001);assertEquals(175.102,saved.longitude,0.000001)
+            assertEquals(AnchorageCoordinateSource.ESTIMATED_REGION_CENTRE.name,saved.coordinateSource)
+            assertEquals(34.0,saved.coordinateUncertaintyMeters!!,0.0)
         }finally{database.close()}
     }
 }

@@ -585,12 +585,13 @@ class MainViewModel @Inject constructor(
     fun dismissAnchorageApproachDisclaimer()=_ui.update{it.copy(approachDisclaimerTargetId=null)}
     private fun startAnchorageApproach(clusterId:String){
         selectedApproachClusterId=clusterId
-        if(_ui.value.active==null)phoneHeadingRepository.start()
+        phoneHeadingRepository.setApproachDemand(true)
         anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
         _ui.update{it.copy(page=0,approachDisclaimerTargetId=null,nearbyAnchoragePrompt=emptyList())}
         refreshAnchorageApproach()
     }
-    fun cancelAnchorageApproach(){selectedApproachClusterId=null;if(_ui.value.active==null)phoneHeadingRepository.stop();refreshAnchorageApproach()}
+    fun cancelAnchorageApproach(){selectedApproachClusterId=null;phoneHeadingRepository.setApproachDemand(false);refreshAnchorageApproach()}
+    fun setMapHeadingDisplayActive(active:Boolean){phoneHeadingRepository.setDisplayDemand(active)}
     fun dismissNearbyAnchorage(){
         anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
         _ui.update{it.copy(nearbyAnchoragePrompt=emptyList())}
@@ -663,5 +664,5 @@ class MainViewModel @Inject constructor(
     }
     private fun shareExport(file:java.io.File,mime:String){val uri=androidx.core.content.FileProvider.getUriForFile(app,"${app.packageName}.files",file);val intent=Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK);runCatching{app.startActivity(Intent.createChooser(intent,"Export anchor session").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure{_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"No app is available to receive the export."))}}}
     private fun xmlEscape(value:String)=value.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
-    override fun onCleared(){if(_ui.value.active==null&&selectedApproachClusterId!=null)phoneHeadingRepository.stop();systemLocation.setAppEnabled(false);super.onCleared()}
+    override fun onCleared(){phoneHeadingRepository.setApproachDemand(false);phoneHeadingRepository.setDisplayDemand(false);systemLocation.setAppEnabled(false);super.onCleared()}
 }

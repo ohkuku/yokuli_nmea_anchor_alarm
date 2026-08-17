@@ -170,3 +170,11 @@ object Migration11To12:Migration(11,12){
         db.execSQL("CREATE INDEX IF NOT EXISTS index_saved_anchorages_lastVisitedAt ON saved_anchorages(lastVisitedAt)")
     }
 }
+
+/** Saved places distinguish a confirmed anchor from an estimated/temporary reference. */
+object Migration12To13:Migration(12,13){
+    override fun migrate(db:SupportSQLiteDatabase){
+        db.execSQL("ALTER TABLE saved_anchorages ADD COLUMN coordinateSource TEXT NOT NULL DEFAULT 'CONFIRMED_ANCHOR'")
+        db.execSQL("ALTER TABLE saved_anchorages ADD COLUMN coordinateUncertaintyMeters REAL")
+    }
+}

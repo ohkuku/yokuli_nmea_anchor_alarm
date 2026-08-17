@@ -106,7 +106,17 @@ class YokuliRuntimeCoordinator @Inject constructor(
   // normally-dispatched subscriber here creates a cold-start race that can lose the first
   // safety position. UNDISPATCHED runs collect() up to its first suspension immediately.
   scope.launch(start=CoroutineStart.UNDISPATCHED){acceptedPosition.accepted.collect{event->val count=acceptedIncidentBatch.incrementAndGet();if(count==1L||count%100L==0L)incidentLogger.record("gps","ACCEPTED_BATCH",sessionId=anchorRuntime.activeSession()?.id,details=mapOf("acceptedSinceStart" to count,"source" to event.source.name));anchorActor.submit{onAcceptedPosition(event.accepted,event.source)};if(event.source==GpsDataSource.NMEA)proxyActor.submit{handleProxyResult(proxyRuntime.onAcceptedNmeaFix(event.accepted.fix))};sharingRuntime.onAcceptedPosition(event,monotonicClock.elapsedRealtime())}}
-  scope.launch{try{restoreState();diagnostics.serviceReady(anchorRuntime.activeSession()?.id)}finally{stateReady.complete(Unit)}}
+  scope.launch{
+   try{
+    restoreState()
+    diagnostics.serviceReady(anchorRuntime.activeSession()?.id)
+   }catch(error:Throwable){
+    if(error is CancellationException)throw error
+    diagnostics.restoreFailed(diagnostics.state.value.restoreStage,error)
+    incidentLogger.exception("service","RESTORE_FAILED",error,anchorRuntime.activeSession()?.id)
+    notifySeparate("Safety monitor restore failed",error.message?:error.javaClass.simpleName,true)
+   }finally{stateReady.complete(Unit)}
+  }
   scope.launch{combine(preferences.settings.map{it.gpsDataSource}.distinctUntilChanged(),navigation.fix,systemLocation.fix){source,nmea,system->anchorRuntime.selectIdleSource(source);when(val selected=anchorRuntime.snapshot().gpsSource){GpsDataSource.NMEA->nmea?.let{SourcedFix(selected,it)};GpsDataSource.SYSTEM->system?.let{SourcedFix(selected,it)};GpsDataSource.DEMO->null}}.filterNotNull().collect{value->anchorRuntime.submitRawFix(value.fix,value.source)}}
   scope.launch{acceptedPosition.state.map{Triple(it.disposition,it.reason,it.rawFix?.receivedElapsedRealtime)}.distinctUntilChanged().collect{(disposition,reason,at)->diagnostics.recordPositionDisposition(disposition);if(disposition=="QUARANTINED"||disposition=="REJECTED")incidentLogger.record("gps",disposition,if(disposition=="REJECTED")IncidentSeverity.CRITICAL else IncidentSeverity.WARNING,anchorRuntime.activeSession()?.id,mapOf("reason" to reason));anchorActor.submit{onPositionHealth(disposition,reason,at)}}}
   scope.launch{navigation.connectionState.collect{state->incidentLogger.record("nmea","CONNECTION_${state.name}",if(state==NmeaConnectionState.ERROR||state==NmeaConnectionState.STALE)IncidentSeverity.WARNING else IncidentSeverity.INFO,anchorRuntime.activeSession()?.id);anchorActor.submit{onNmeaState(state)}}}
@@ -122,7 +132,10 @@ class YokuliRuntimeCoordinator @Inject constructor(
   scope.launch{preferences.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{source->incidentLogger.record("gps","SOURCE_${source.name}",sessionId=anchorRuntime.activeSession()?.id)}}
   scope.launch{preferences.settings.map{it.alarmSound to it.customAlarmSoundUri}.distinctUntilChanged().collect{(sound,uri)->selectedAlarmSound=sound;customAlarmSoundUri=uri}}
   scope.launch{preferences.settings.map{it.appLanguage}.distinctUntilChanged().collect{appLanguage=it;channels();refreshNotification()}}
-  scope.launch{preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->configureSharing(enabled,port,source)}}
+  // configureSharing(false) may legitimately call releaseIfIdle(). Never let
+  // that initial DataStore emission stop a service whose active watch is still
+  // being restored on the sibling coroutine.
+  scope.launch{stateReady.await();preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->configureSharing(enabled,port,source)}}
   scope.launch{navigation.validRawSentences.collect(sharingRuntime::onBoatSentence)}
   scope.launch{while(isActive){delay(1000);anchorActor.submit{watchdog();val conditions=conditionRuntime.tick(monotonicClock.elapsedRealtime());refreshSessionFromDatabase();setConditionAlarmSources(conditions);refreshNotification()};proxyActor.submit{handleProxyResult(proxyRuntime.watchdog(monotonicClock.elapsedRealtime()))}}}
   scope.launch{while(isActive){delay(30_000);batteryWatchdog()}}
@@ -139,7 +152,12 @@ class YokuliRuntimeCoordinator @Inject constructor(
    RuntimeCommand.PauseWatchAndDisconnect->launchCommand{stopWatchAndDisconnect()}
    is RuntimeCommand.Candidate->launchCommand{anchorActor.execute{when(command.action){CandidateAction.ACCEPT->acceptCandidate(command.sessionId,command.candidateId);CandidateAction.KEEP_CURRENT->keepCurrentCenter(command.sessionId,command.candidateId);CandidateAction.CONTINUE_ESTIMATING->continueEstimating(command.sessionId,command.candidateId)}}}
    is RuntimeCommand.UpdatePhoneHeading->launchCommand{anchorActor.execute{updatePhoneHeading(command.enabled)}}
-   is RuntimeCommand.UpdateConditionGuards->launchCommand{anchorActor.execute{conditionRuntime.updateConfig(command.config);refreshSessionFromDatabase();setConditionAlarmSources(conditionRuntime.tick(monotonicClock.elapsedRealtime()));refreshNotification()}}
+   is RuntimeCommand.UpdateConditionGuards->launchCommand{anchorActor.execute{
+    val active=anchorRuntime.activeSession();val current=conditionRuntime.state.value.config
+    val allowed=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.canApply(current,command.config,navigation.connectionState.value==NmeaConnectionState.CONNECTED,active?.positionSource==GpsDataSource.DEMO.name)
+    if(!allowed){notifySeparate("NMEA instruments required","Connect the boat NMEA source before enabling a new depth or wind alert. Existing alerts can still be switched off.",true);return@execute}
+    conditionRuntime.updateConfig(command.config);refreshSessionFromDatabase();setConditionAlarmSources(conditionRuntime.tick(monotonicClock.elapsedRealtime()));refreshNotification()
+   }}
    RuntimeCommand.ResetWindBaseline->launchCommand{anchorActor.execute{conditionRuntime.resetWindBaseline();refreshSessionFromDatabase();setConditionAlarmSources(conditionRuntime.tick(monotonicClock.elapsedRealtime()));refreshNotification()}}
    RuntimeCommand.StartProxy->launchCommand{proxyActor.execute{startProxy()}}
    RuntimeCommand.StopProxy->launchCommand{proxyActor.execute{stopProxy(l("Android GPS proxy stopped by user.","用户已关闭 Android GPS 代理。"))}}
@@ -160,16 +178,22 @@ class YokuliRuntimeCoordinator @Inject constructor(
  }
 
  private suspend fun restoreState(){
+  diagnostics.restoring("SETTINGS")
   var settings=preferences.settings.first()
+  diagnostics.restoring("ANCHOR_WATCH")
   settings=anchorRuntime.restore(settings)
   alarmSnoozeMinutes=settings.alarmSnoozeMinutes
   selectedAlarmSound=settings.alarmSound
   customAlarmSoundUri=settings.customAlarmSoundUri
   appLanguage=settings.appLanguage
   channels()
+  diagnostics.restoring("SONAR")
   sonarRuntime.restore()
+  diagnostics.restoring("CONDITION_GUARDS")
   conditionRuntime.sync(anchorRuntime.activeSession())
-  handleProxyResult(proxyRuntime.restoreIfRequested{ensureLocationForeground("Starting NMEA → Android GPS…")})
+  diagnostics.restoring("GPS_PROXY")
+  if(settings.mockEnabled)handleProxyResult(proxyRuntime.restoreIfRequested{ensureLocationForeground("Starting NMEA → Android GPS…")})
+  diagnostics.restoring("FINAL_NOTIFICATION")
   anchorRuntime.onNmeaState(navigation.connectionState.value)
   refreshNotification()
  }
@@ -268,7 +292,13 @@ class YokuliRuntimeCoordinator @Inject constructor(
   if(!result.started)notifySeparate(result.title?:"Sonar survey not started",result.message?:"Sonar runtime rejected the request.",true)
   refreshNotification()
  }
- private fun releaseIfIdle(){if(pendingCommands.get()==0&&!alarmTestActive&&anchorRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!sharingRuntime.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending){nmeaRuntime.releaseIfUnowned();host.stopForegroundAndSelf()}}
+ private fun releaseIfIdle(){
+  // An empty in-memory runtime before restore is not evidence that the service
+  // is idle: Room may still contain an armed watch. This guard also protects
+  // future collectors from repeating the same cold-start race.
+  if(!stateReady.isCompleted)return
+  if(pendingCommands.get()==0&&!alarmTestActive&&anchorRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!sharingRuntime.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending){nmeaRuntime.releaseIfUnowned();host.stopForegroundAndSelf()}
+ }
  private fun cleanup(){alarmTestGeneration.incrementAndGet();alarmTestActive=false;audioArbiter.clearAll();alarmAudio.stop();resources.releaseAll()}
  fun shutdown(){incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();sharingRuntime.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup();diagnostics.serviceStopped()}
  private fun channels()=notificationCoordinator.createChannels(l("Anchor and GPS status","锚警与 GPS 状态"),l("Anchor safety events","锚泊安全事件"),l("Anchor alarms with snooze","带稍后提醒的锚警"))

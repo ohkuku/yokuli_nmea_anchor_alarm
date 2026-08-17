@@ -41,6 +41,30 @@ data class ConditionGuardConfig(
 fun ConditionGuardConfig.hasMeaningfulDiff(other:ConditionGuardConfig):Boolean =
     validated()!=other.validated()
 
+/**
+ * Instrument alarms are sourced from the boat NMEA stream, even when the
+ * anchor-watch position itself uses Android GNSS. A disconnected stream may
+ * never enable a new guard. Existing guards may still be disabled so a user is
+ * not trapped in a stale configuration. Demo sessions explicitly provide
+ * their own simulated instrument stream.
+ */
+object ConditionGuardAvailability {
+    fun canApply(current:ConditionGuardConfig,proposed:ConditionGuardConfig,nmeaConnected:Boolean,demoSession:Boolean):Boolean{
+        if(demoSession||nmeaConnected)return true
+        val before=current.validated();val after=proposed.validated()
+        // Without instrument data, the only safe mutation is turning an
+        // existing guard off. Unchanged guards may remain armed so reconnecting
+        // NMEA resumes them with their original thresholds.
+        val depthAllowed=!after.depthGuardEnabled||before.depthGuardEnabled&&
+            after.shallowDepthAlarmMeters==before.shallowDepthAlarmMeters&&after.deepDepthAlarmMeters==before.deepDepthAlarmMeters
+        val windAllowed=!after.windGuardEnabled||before.windGuardEnabled&&
+            after.windWarningKnots==before.windWarningKnots&&after.windAlarmKnots==before.windAlarmKnots&&after.windAllowApparentFallback==before.windAllowApparentFallback
+        val shiftAllowed=!after.windShiftEnabled||before.windShiftEnabled&&
+            after.windShiftThresholdDegrees==before.windShiftThresholdDegrees
+        return depthAllowed&&windAllowed&&shiftAllowed
+    }
+}
+
 data class DepthGuardSnapshot(
     val status:DepthGuardStatus=DepthGuardStatus.OFF,
     val filteredDepthMeters:Double?=null,

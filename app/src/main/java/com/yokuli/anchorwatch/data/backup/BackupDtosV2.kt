@@ -20,7 +20,8 @@ data class BackupAnchorSessionV2(
 
 data class BackupSavedAnchorageV2(
     val id:Long=0,val name:String="",val latitude:Double=0.0,val longitude:Double=0.0,val createdAt:Long=0,val updatedAt:Long=0,val lastVisitedAt:Long?=null,val visitCount:Int=0,val preferredAlarmRadiusMeters:Double?=null,val typicalWaterDepthMeters:Double?=null,val typicalRodeLengthMeters:Double?=null,val seabedType:String="UNKNOWN",val customSeabedText:String?=null,val rating:Int?=null,val notes:String="",val sourceSessionId:Long?=null,
+    val coordinateSource:String="CONFIRMED_ANCHOR",val coordinateUncertaintyMeters:Double?=null,
 ){
-    fun toEntity()=SavedAnchorageEntity(id,name,latitude,longitude,createdAt,updatedAt,lastVisitedAt,visitCount,preferredAlarmRadiusMeters,typicalWaterDepthMeters,typicalRodeLengthMeters,seabedType,customSeabedText,rating,notes,sourceSessionId)
-    companion object{fun from(value:SavedAnchorageEntity)=BackupSavedAnchorageV2(value.id,value.name,value.latitude,value.longitude,value.createdAt,value.updatedAt,value.lastVisitedAt,value.visitCount,value.preferredAlarmRadiusMeters,value.typicalWaterDepthMeters,value.typicalRodeLengthMeters,value.seabedType,value.customSeabedText,value.rating,value.notes,value.sourceSessionId)}
+    fun toEntity()=SavedAnchorageEntity(id,name,latitude,longitude,createdAt,updatedAt,lastVisitedAt,visitCount,preferredAlarmRadiusMeters,typicalWaterDepthMeters,typicalRodeLengthMeters,seabedType,customSeabedText,rating,notes,sourceSessionId,coordinateSource,coordinateUncertaintyMeters)
+    companion object{fun from(value:SavedAnchorageEntity)=BackupSavedAnchorageV2(value.id,value.name,value.latitude,value.longitude,value.createdAt,value.updatedAt,value.lastVisitedAt,value.visitCount,value.preferredAlarmRadiusMeters,value.typicalWaterDepthMeters,value.typicalRodeLengthMeters,value.seabedType,value.customSeabedText,value.rating,value.notes,value.sourceSessionId,value.coordinateSource,value.coordinateUncertaintyMeters)}
 }
