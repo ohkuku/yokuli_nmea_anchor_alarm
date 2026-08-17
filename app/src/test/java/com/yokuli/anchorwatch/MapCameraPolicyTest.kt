@@ -56,28 +56,28 @@ class MapCameraPolicyTest {
             positionSource=GpsDataSource.SYSTEM.name,anchorPositionMode="ESTIMATE",usePhoneHeading=true,
         )
         val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=10,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0,sogKnots=1.2)
-        assertEquals(123.0,displayHeading(fix,session,emptyList(),PhoneHeadingSample(trueHeadingDegrees=123.0,receivedElapsedRealtime=100),nowElapsed=100)?:Double.NaN,0.001)
-        assertEquals(287.0,displayHeading(fix,session,emptyList(),PhoneHeadingSample(trueHeadingDegrees=287.0,receivedElapsedRealtime=120),nowElapsed=120)?:Double.NaN,0.001)
+        assertEquals(123.0,displayHeading(fix,session,emptyList(),PhoneHeadingSample(liveTrueHeadingDegrees=123.0,receivedElapsedRealtime=100),nowElapsed=100)?:Double.NaN,0.001)
+        assertEquals(287.0,displayHeading(fix,session,emptyList(),PhoneHeadingSample(liveTrueHeadingDegrees=287.0,receivedElapsedRealtime=120),nowElapsed=120)?:Double.NaN,0.001)
     }
 
     @Test fun livePhoneHeadingTurnsSystemGpsBoatEvenWhenNotUsedAsEstimatorEvidence(){
         val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=100,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0,sogKnots=1.2)
-        assertEquals(211.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=500),nowElapsed=500)!!,0.001)
+        assertEquals(211.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(liveTrueHeadingDegrees=211.0,receivedElapsedRealtime=500),nowElapsed=500)!!,0.001)
     }
 
     @Test fun freshPhysicalNmeaHeadingRemainsAuthoritativeOverPhone(){
         val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=1000,sourceSentence="HDT",valid=true,headingTrueDegrees=78.0,headingReceivedElapsedRealtime=1000,headingSource=HeadingSource.NMEA_PHYSICAL)
-        assertEquals(78.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=1200),nowElapsed=1200)!!,0.001)
+        assertEquals(78.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(liveTrueHeadingDegrees=211.0,receivedElapsedRealtime=1200),nowElapsed=1200)!!,0.001)
     }
 
     @Test fun connectedNmeaHeadingWinsEvenWhenSystemGpsSuppliesPosition(){
         val system=NavigationFix(-36.8,175.1,receivedElapsedRealtime=1000,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0)
         val nmea=NavigationFix(-36.8,175.1,receivedElapsedRealtime=1180,sourceSentence="HDT",valid=true,headingTrueDegrees=96.0,headingReceivedElapsedRealtime=1180,headingSource=HeadingSource.NMEA_PHYSICAL)
-        assertEquals(96.0,displayHeading(system,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=1200),nmeaHeadingFix=nmea,nowElapsed=1200)!!,0.001)
+        assertEquals(96.0,displayHeading(system,null,emptyList(),PhoneHeadingSample(liveTrueHeadingDegrees=211.0,receivedElapsedRealtime=1200),nmeaHeadingFix=nmea,nowElapsed=1200)!!,0.001)
     }
 
     @Test fun stalePhoneHeadingNeverOverridesCurrentCourse(){
         val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=4_000,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0,sogKnots=1.2)
-        assertEquals(42.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=1_000),nowElapsed=4_000)!!,0.001)
+        assertEquals(42.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(liveTrueHeadingDegrees=211.0,receivedElapsedRealtime=1_000),nowElapsed=4_000)!!,0.001)
     }
 }

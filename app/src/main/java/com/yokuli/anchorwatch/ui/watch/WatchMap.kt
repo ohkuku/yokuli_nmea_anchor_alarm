@@ -107,8 +107,8 @@ internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFi
     }==true
     val windHeading=if(freshNmeaWind)WindAnchorEvidence.summarize(points.takeLast(300).map{point->WindAnchorEvidence.Sample(point.timestamp,point.latitude,point.longitude,point.sog,point.cog,point.heading.takeIf{point.headingMeasured},point.windDirectionTrue,point.trueWindAngle,point.apparentWindAngle,point.trueWindSpeedKnots,point.apparentWindSpeedKnots,point.headingSampleSequence,point.windSampleSequence)}).observations.lastOrNull{it.source!=WindAnchorEvidence.Source.PHYSICAL_HEADING&&it.source!=WindAnchorEvidence.Source.BACKDOWN_COG}?.headingToAnchorDegrees else null
     if(windHeading!=null)return windHeading
-    val phoneFresh=livePhoneHeading?.trueHeadingDegrees!=null&&livePhoneHeading.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true
-    if(phoneFresh)return livePhoneHeading?.trueHeadingDegrees
+    val phoneFresh=livePhoneHeading?.liveTrueHeadingDegrees!=null&&livePhoneHeading.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true
+    if(phoneFresh)return livePhoneHeading?.liveTrueHeadingDegrees
     val selectedHeadingFresh=fix.headingTrueDegrees!=null&&(fix.headingReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{nowElapsed-it in 0L..3_000L}
     if(selectedHeadingFresh)return fix.headingTrueDegrees
     val selectedCogFresh=fix.positionProvider!=com.yokuli.anchorwatch.domain.model.PositionProvider.NMEA&&fix.cogTrueDegrees!=null&&

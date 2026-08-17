@@ -17,6 +17,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 data class PhoneHeadingSample(
+    /** Responsive sensor heading for map/navigation presentation only. */
+    val liveTrueHeadingDegrees: Double? = null,
+    /** Integrity-gated heading that is safe to persist as estimator evidence. */
     val trueHeadingDegrees: Double? = null,
     val quality: HeadingQuality = HeadingQuality.UNAVAILABLE,
     val epoch: Long = 0L,
@@ -131,7 +134,22 @@ class PhoneHeadingRepository @Inject constructor(
         // moving the handset. Keep those activations in separate epochs so old
         // and new calibration evidence can coexist without being blended.
         val epoch = activationEpoch * 1_000L + observation.headingEpoch
-        _sample.value = PhoneHeadingSample(observation.headingTrueDegrees, observation.quality, epoch, sequence,nowElapsed)
+        // Navigation presentation must follow the handset while it is turning.
+        // The integrity monitor deliberately suppresses estimator evidence during
+        // motion and for its recovery window, so exposing only that value made the
+        // on-screen arrow appear frozen. Keep both channels explicit: the Android
+        // rotation vector drives the live UI, while only the monitor output may be
+        // persisted as anchor-centre evidence.
+        // TODO(physical-device): add a sensor-injection instrumentation regression
+        // once CI has a deterministic rotation-vector source.
+        _sample.value = PhoneHeadingSample(
+            liveTrueHeadingDegrees = trueHeading,
+            trueHeadingDegrees = observation.headingTrueDegrees,
+            quality = observation.quality,
+            epoch = epoch,
+            sequence = sequence,
+            receivedElapsedRealtime = nowElapsed,
+        )
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {

@@ -350,7 +350,11 @@ class MainViewModel @Inject constructor(
                 cogTrueDegrees=trustedNmeaCourse?.trueDegrees,
                 sogKnots=trustedNmeaCourse?.sogKnots,
                 cogReceivedElapsed=trustedNmeaCourse?.receivedElapsedRealtime,
-                phoneTrueHeadingDegrees=state.phoneHeading.trueHeadingDegrees,
+                // Approach guidance is presentation, not persisted centre-learning
+                // evidence. It must follow the live rotation vector while the phone
+                // is moving; the integrity-gated value remains exclusive to the
+                // accepted-position/estimator path.
+                phoneTrueHeadingDegrees=state.phoneHeading.liveTrueHeadingDegrees,
                 phoneHeadingTrusted=state.phoneHeading.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true,
                 preferredMode=headingMode,
                 cogTrustedBySourcePolicy=trustedNmeaCourse!=null,
