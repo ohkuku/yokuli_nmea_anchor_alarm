@@ -349,7 +349,12 @@ class AnchorWatchRuntime(
     }
 
     suspend fun updateRadius(requestedRadius:Double){
-        val current=session?:return
+        // Commands can arrive immediately after Android recreates the service. The
+        // command actor normally waits for restore, but recovering the active Room
+        // row here makes a safety-critical range change idempotent instead of
+        // silently dropping it if framework lifecycle delivery races restoration.
+        val current=session?:dao.active()?:return
+        if(session==null)session=current
         val previous=lastSnapshot
         val alarmWasActive=previous?.state==AlarmState.ALARM||previous?.state==AlarmState.ACKNOWLEDGED
         val hadRadiusAlarm=alarmWasActive&&previous?.type==AlarmType.ANCHOR_RADIUS_EXCEEDED

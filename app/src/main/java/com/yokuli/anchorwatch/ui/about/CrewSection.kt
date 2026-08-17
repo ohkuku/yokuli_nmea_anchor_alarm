@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yokuli.anchorwatch.R
@@ -22,7 +23,11 @@ internal fun CrewSection() {
     if (ProductCrew.members.isEmpty()) return
     AboutSection(aboutString(R.string.about_crew_eyebrow), aboutString(R.string.about_crew_title)) {
         ProductCrew.members.forEach { member ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.testTag("about_crew_${member.name}"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Surface(Modifier.size(44.dp), shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(member.name.take(1).uppercase(), fontWeight = FontWeight.Bold)

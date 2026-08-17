@@ -3,7 +3,7 @@ package com.yokuli.anchorwatch
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import com.yokuli.anchorwatch.domain.safety.SafetyCheck
 import com.yokuli.anchorwatch.domain.safety.SafetyCheckStatus
 import com.yokuli.anchorwatch.domain.safety.WatchSafetyReport
@@ -21,6 +21,7 @@ class WatchHealthLayoutTest{
         compose.setContent{YokuliTheme{WatchHealthSheet(WatchSafetyReport(checks)) {}}}
 
         compose.onNodeWithTag("watch_health_sheet").assertIsDisplayed()
-        compose.onNodeWithTag("watch_health_sonar").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("watch_health_list").performScrollToIndex(checks.lastIndex)
+        compose.onNodeWithTag("watch_health_sonar").assertIsDisplayed()
     }
 }

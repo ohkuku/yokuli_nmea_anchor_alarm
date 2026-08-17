@@ -104,7 +104,11 @@ fun OnboardingMakerScreen(onContinue: () -> Unit, onLanguageChange: (AppLanguage
                 Card(Modifier.fillMaxWidth().padding(top = 10.dp).testTag("onboarding_crew")) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         ProductCrew.members.forEach { member ->
-                            Text("${member.name} · ${aboutString(member.roleRes)}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "${member.name} · ${aboutString(member.roleRes)}",
+                                modifier = Modifier.testTag("onboarding_crew_${member.name}"),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                         }
                     }
                 }

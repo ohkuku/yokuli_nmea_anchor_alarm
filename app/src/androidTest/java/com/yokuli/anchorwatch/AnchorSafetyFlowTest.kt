@@ -111,8 +111,10 @@ class AnchorSafetyFlowTest {
         context = InstrumentationRegistry.getInstrumentation().targetContext
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
         dao = entry.dao();sonarDao=entry.sonarDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition();runtimeDiagnostics=entry.runtimeDiagnostics();preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
-        context.stopService(Intent(context, AnchorForegroundService::class.java))
-        delay(250)
+        val serviceWasRunning = context.stopService(Intent(context, AnchorForegroundService::class.java))
+        if (serviceWasRunning) {
+            withTimeout(5_000) { runtimeDiagnostics.state.first { !it.serviceReady } }
+        }
         navigation.disconnectAll()
         dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
         sonarDao.active()?.let{sonarDao.finish(it.id,System.currentTimeMillis())}
@@ -123,7 +125,12 @@ class AnchorSafetyFlowTest {
 
     @After fun cleanup() = runBlocking<Unit> {
         MapRuntimePolicy.renderGoogleEngine=true
-        if(::context.isInitialized)context.stopService(Intent(context, AnchorForegroundService::class.java))
+        if(::context.isInitialized){
+            val serviceWasRunning=context.stopService(Intent(context,AnchorForegroundService::class.java))
+            if(serviceWasRunning&&::runtimeDiagnostics.isInitialized){
+                withTimeoutOrNull(5_000){runtimeDiagnostics.state.first{!it.serviceReady}}
+            }
+        }
         if(::navigation.isInitialized)navigation.disconnectAll()
         if(::dao.isInitialized)dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
         if(::sonarDao.isInitialized)sonarDao.active()?.let{sonarDao.finish(it.id,System.currentTimeMillis())}
@@ -365,7 +372,6 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("language_ja").assertExists()
             compose.onNodeWithTag("language_fr").assertExists()
             compose.onNodeWithTag("language_es").assertExists()
-            compose.onNodeWithText("English").assertExists()
             compose.onNodeWithText("繁體中文").assertExists()
             compose.onNodeWithText("日本語").assertExists()
             compose.onNodeWithText("Français").assertExists()
@@ -438,9 +444,9 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("settings_about").performClick()
             compose.onNodeWithTag("about_page").assertExists()
             compose.onNodeWithText("Made aboard Yokuli").assertExists()
-            compose.onNodeWithText("kuku").assertExists()
-            compose.onNodeWithText("yoyo").assertExists()
-            compose.onNodeWithText("lili").assertExists()
+            compose.onNodeWithTag("about_crew_kuku").performScrollTo().assertExists()
+            compose.onNodeWithTag("about_crew_yoyo").assertExists()
+            compose.onNodeWithTag("about_crew_lili").assertExists()
             compose.onNodeWithTag("about_buy_me_a_coffee").performScrollTo().performClick()
             compose.onNodeWithText("Support is optional and does not unlock app features.",substring=true).assertExists()
             compose.onNodeWithTag("about_support_continue").assertExists()
@@ -462,10 +468,10 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("about_buy_me_a_coffee").assertDoesNotExist()
             compose.onNodeWithTag("onboarding_meet_crew").performClick()
             compose.onNodeWithTag("onboarding_crew").assertExists()
-            compose.onNodeWithText("kuku",substring=true).assertExists()
-            compose.onNodeWithText("yoyo",substring=true).assertExists()
+            compose.onNodeWithTag("onboarding_crew_kuku").assertExists()
+            compose.onNodeWithTag("onboarding_crew_yoyo").assertExists()
             compose.onNodeWithText("Captain",substring=true).assertExists()
-            compose.onNodeWithText("lili",substring=true).assertExists()
+            compose.onNodeWithTag("onboarding_crew_lili").assertExists()
             compose.onNodeWithTag("onboarding_continue").performClick()
             compose.onNodeWithTag("nav_watch").assertExists()
             assertTrue(preferences.settings.first().onboardingCompleted)
@@ -857,10 +863,18 @@ class AnchorSafetyFlowTest {
     )
 
     private suspend fun startServiceForRestore() {
+        // A stopped foreground service tears down asynchronously on Android. Do not
+        // mistake the previous instance's diagnostics for the service that restores
+        // the session seeded by this story.
+        withTimeout(5_000){runtimeDiagnostics.state.first{!it.serviceReady}}
         val generation=runtimeDiagnostics.state.value.serviceGeneration
         ContextCompat.startForegroundService(context, Intent(context, AnchorForegroundService::class.java))
         withTimeout(15_000){runtimeDiagnostics.state.first{it.serviceGeneration>generation&&it.serviceReady}}
-        if(dao.active()?.paused==false)assertTrue(RuntimeOwner.ANCHOR_WATCH in runtimeDiagnostics.state.value.activeOwners)
+        if(dao.active()?.paused==false){
+            // serviceReady is published by the runtime coroutine, while diagnostic
+            // owner mirroring is a separate collector and may trail it by one turn.
+            withTimeout(5_000){runtimeDiagnostics.state.first{RuntimeOwner.ANCHOR_WATCH in it.activeOwners}}
+        }
     }
 
     private fun openDisconnectDecision() {

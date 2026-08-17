@@ -128,7 +128,7 @@ internal fun WatchHealthSheet(report:com.yokuli.anchorwatch.domain.safety.WatchS
             }
             HorizontalDivider()
             if(report.checks.isEmpty())Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center){Text(tr("Health checks are still loading.","健康检查仍在加载。"),color=MaterialTheme.colorScheme.onSurfaceVariant)}
-            else LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            else LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("watch_health_list"),contentPadding=PaddingValues(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                 items(report.checks,key={it.id}){check->SafetyHealthRow(check)}
             }
             TextButton(dismiss,Modifier.align(Alignment.End)){Text(tr("Close","关闭"))}
