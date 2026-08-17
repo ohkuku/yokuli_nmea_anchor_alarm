@@ -30,6 +30,7 @@ data class PhoneHeadingSample(
     val receivedElapsedRealtime: Long? = null,
 )
 
+@Suppress("DEPRECATION")
 @Singleton
 class PhoneHeadingRepository @Inject constructor(
     @ApplicationContext context: Context,
@@ -41,6 +42,9 @@ class PhoneHeadingRepository @Inject constructor(
         ?: sensors.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
     private val accelerometer = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     private val magnetometer = sensors.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+    // Some low-cost OEMs expose a working compass only through this deprecated
+    // virtual sensor. It is a last-resort presentation source, never estimator evidence.
+    private val legacyOrientation = sensors.getDefaultSensor(Sensor.TYPE_ORIENTATION)
     private val gyroscope = sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val _sample = MutableStateFlow(PhoneHeadingSample())
     val sample = _sample.asStateFlow()
@@ -52,10 +56,12 @@ class PhoneHeadingRepository @Inject constructor(
     private var lastPublishedElapsed = 0L
     private var lastPublishedHeading:Double?=null
     private var lastRotationVectorElapsed = 0L
+    private var lastRawCompassElapsed = 0L
     private var acceleration = 9.81
     private var angularVelocity = 0.0
     private var accuracy = SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM
     private var magnetometerAccuracy = SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM
+    private var legacyOrientationAccuracy = SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM
     private val accelerometerReading = FloatArray(3)
     private val magnetometerReading = FloatArray(3)
     private var hasAccelerometerReading = false
@@ -67,7 +73,8 @@ class PhoneHeadingRepository @Inject constructor(
     private var sequence = System.currentTimeMillis() * 1_000L
     private var activationEpoch = System.currentTimeMillis()
 
-    fun isAvailable(): Boolean = rotation != null || (accelerometer != null && magnetometer != null)
+    fun isAvailable(): Boolean = rotation != null ||
+        (accelerometer != null && magnetometer != null) || legacyOrientation != null
 
     fun setPosition(latitude: Double, longitude: Double, altitudeMeters: Double?, wallTimeMillis: Long?) {
         this.latitude = latitude
@@ -89,7 +96,8 @@ class PhoneHeadingRepository @Inject constructor(
         val wanted=runtimeDemand||displayDemand||approachDemand
         if(!wanted){
             if(running)sensors.unregisterListener(this)
-            running=false;monitor.reset();lastPublishedElapsed=0L;lastPublishedHeading=null;lastRotationVectorElapsed=0L
+            running=false;monitor.reset();lastPublishedElapsed=0L;lastPublishedHeading=null
+            lastRotationVectorElapsed=0L;lastRawCompassElapsed=0L
             hasAccelerometerReading=false;hasMagnetometerReading=false;_sample.value=PhoneHeadingSample()
             return false
         }
@@ -108,8 +116,11 @@ class PhoneHeadingRepository @Inject constructor(
         val magnetometerRegistered = magnetometer?.let {
             sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         } ?: false
+        val legacyOrientationRegistered = legacyOrientation?.let {
+            sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+        } ?: false
         gyroscope?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
-        running = rotationRegistered || (accelerometerRegistered && magnetometerRegistered)
+        running = rotationRegistered || (accelerometerRegistered && magnetometerRegistered) || legacyOrientationRegistered
         if (!running) {
             sensors.unregisterListener(this)
         }
@@ -130,6 +141,7 @@ class PhoneHeadingRepository @Inject constructor(
                 publishCompassFallbackIfNeeded()
             }
             Sensor.TYPE_GYROSCOPE -> angularVelocity = magnitude(event.values)
+            Sensor.TYPE_ORIENTATION -> publishLegacyOrientationIfNeeded(event.values)
             Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> {
                 lastRotationVectorElapsed = SystemClock.elapsedRealtime()
                 val matrix = FloatArray(9)
@@ -148,7 +160,24 @@ class PhoneHeadingRepository @Inject constructor(
         if (rotation != null && nowElapsed - lastRotationVectorElapsed <= ROTATION_VECTOR_TIMEOUT_MILLIS) return
         val matrix = FloatArray(9)
         if (!SensorManager.getRotationMatrix(matrix, null, accelerometerReading, magnetometerReading)) return
+        lastRawCompassElapsed = nowElapsed
         publishMatrix(matrix, magnetometerAccuracy)
+    }
+
+    private fun publishLegacyOrientationIfNeeded(values: FloatArray) {
+        if (values.isEmpty()) return
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (rotation != null && nowElapsed - lastRotationVectorElapsed <= ROTATION_VECTOR_TIMEOUT_MILLIS) return
+        if (nowElapsed - lastRawCompassElapsed <= RAW_COMPASS_TIMEOUT_MILLIS) return
+        val magnetic = ((values[0].toDouble() + displayRotationDegrees()) % 360.0 + 360.0) % 360.0
+        val pitch = values.getOrNull(1)?.toDouble() ?: 0.0
+        val roll = values.getOrNull(2)?.toDouble() ?: 0.0
+        publishMagneticHeading(
+            magnetic = magnetic,
+            tilt = kotlin.math.hypot(pitch, roll),
+            sensorAccuracy = legacyOrientationAccuracy,
+            allowEstimatorEvidence = false,
+        )
     }
 
     private fun publishMatrix(deviceMatrix: FloatArray, sensorAccuracy: Int) {
@@ -157,17 +186,30 @@ class PhoneHeadingRepository @Inject constructor(
         SensorManager.getOrientation(matrix, orientation)
         val magnetic = (Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0
         val tilt = Math.toDegrees(acos(deviceMatrix[8].toDouble().coerceIn(-1.0, 1.0)))
+        publishMagneticHeading(magnetic, tilt, sensorAccuracy)
+    }
+
+    private fun publishMagneticHeading(
+        magnetic: Double,
+        tilt: Double,
+        sensorAccuracy: Int,
+        allowEstimatorEvidence: Boolean = true,
+    ) {
         val declination = GeomagneticField(latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), wallTime).declination
         val trueHeading = (magnetic + declination + 360.0) % 360.0
         val nowElapsed=SystemClock.elapsedRealtime()
-        val observation = monitor.observe(
-            nowElapsed = nowElapsed,
-            headingTrueDegrees = trueHeading,
-            tiltDegrees = tilt,
-            angularVelocityRadPerSecond = angularVelocity,
-            accelerationMetersPerSecondSquared = acceleration,
-            sensorAccuracy = sensorAccuracy,
-        )
+        val observation = if (allowEstimatorEvidence) {
+            monitor.observe(
+                nowElapsed = nowElapsed,
+                headingTrueDegrees = trueHeading,
+                tiltDegrees = tilt,
+                angularVelocityRadPerSecond = angularVelocity,
+                accelerationMetersPerSecondSquared = acceleration,
+                sensorAccuracy = sensorAccuracy,
+            )
+        } else {
+            PhoneHeadingObservation(HeadingQuality.UNAVAILABLE, null, 0L)
+        }
         val previous=lastPublishedHeading
         val delta=previous?.let{kotlin.math.abs(((trueHeading-it+540.0)%360.0)-180.0)}?:Double.POSITIVE_INFINITY
         if(nowElapsed-lastPublishedElapsed<50L&&delta<1.0)return
@@ -198,7 +240,7 @@ class PhoneHeadingRepository @Inject constructor(
     }
 
     private fun displayAdjustedMatrix(deviceMatrix: FloatArray): FloatArray {
-        val axes = when (displays.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0) {
+        val axes = when (displayRotation()) {
             Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
             Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
             Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
@@ -208,9 +250,19 @@ class PhoneHeadingRepository @Inject constructor(
         return if (SensorManager.remapCoordinateSystem(deviceMatrix, axes.first, axes.second, adjusted)) adjusted else deviceMatrix
     }
 
+    private fun displayRotation(): Int = displays.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
+
+    private fun displayRotationDegrees(): Double = when (displayRotation()) {
+        Surface.ROTATION_90 -> 90.0
+        Surface.ROTATION_180 -> 180.0
+        Surface.ROTATION_270 -> 270.0
+        else -> 0.0
+    }
+
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
         if (sensor?.type == rotation?.type) this.accuracy = accuracy
         if (sensor?.type == Sensor.TYPE_MAGNETIC_FIELD) magnetometerAccuracy = accuracy
+        if (sensor?.type == Sensor.TYPE_ORIENTATION) legacyOrientationAccuracy = accuracy
     }
 
     private fun magnitude(values: FloatArray): Double =
@@ -218,5 +270,6 @@ class PhoneHeadingRepository @Inject constructor(
 
     private companion object {
         const val ROTATION_VECTOR_TIMEOUT_MILLIS = 750L
+        const val RAW_COMPASS_TIMEOUT_MILLIS = 750L
     }
 }
