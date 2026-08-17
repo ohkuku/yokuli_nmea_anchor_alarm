@@ -21,4 +21,10 @@ if grep -nE '^ +\./gradlew .*\\$' "${workflow_files[@]}"; then
   exit 1
 fi
 
+release_workflow="$REPO_ROOT/.github/workflows/release.yml"
+grep -Fq 'group: android-release' "$release_workflow" \
+  || { printf 'Release workflow must serialize immutable publication.\n' >&2; exit 1; }
+grep -Fq 'cancel-in-progress: true' "$release_workflow" \
+  || { printf 'A superseded release must be cancelled.\n' >&2; exit 1; }
+
 printf 'emulator workflow contract checks passed\n'

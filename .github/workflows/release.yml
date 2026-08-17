@@ -14,8 +14,10 @@ on:
         type: string
 
 concurrency:
+  # Release artifacts are immutable. When a corrected tag supersedes a run,
+  # stop the obsolete build instead of spending another emulator allocation.
   group: android-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate-release:
