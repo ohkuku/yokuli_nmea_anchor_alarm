@@ -78,7 +78,10 @@ import java.text.DateFormat
 @Composable internal fun AnchorDragAlarmDialog(state:MainUiState,vm:MainViewModel){
     val active=state.active
     val alarm=state.alarmSnapshot
-    if(alarm.state==AlarmState.ALARM&&alarm.type==AlarmType.ALARM_TEST){AlertDialog(onDismissRequest=vm::stopAlarmTest,confirmButton={Button(vm::stopAlarmTest){Text(tr("Stop test","停止测试"))}},title={Text(tr("Alarm test","警报测试"),color=MaterialTheme.colorScheme.error)},text={Text(tr("If you can hear the alarm, feel vibration and see this dialog, the foreground alarm path is working. Stop closes every part of this test immediately.","如果你能听到警报、感到振动并看到此弹窗，前台报警链路工作正常。点击停止会立即关闭本次测试的全部声音、振动和界面。"))});return}
+    // A test must never open the blocking real-alarm dialog: it would cover the
+    // confirmation controls the user is trying to verify. AnchorApp shows a global,
+    // non-modal banner instead.
+    if(alarm.type==AlarmType.ALARM_TEST)return
     val snoozed=(active?.alarmSnoozedUntil?:0L)>System.currentTimeMillis()
     val visible=active?.paused==false&&!snoozed&&alarm.state==AlarmState.ALARM&&alarm.type!=null
     val radiusAlarm=alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED

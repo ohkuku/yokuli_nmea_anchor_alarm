@@ -398,6 +398,21 @@ class AnchorSafetyFlowTest {
         assertTrue(alarmUi.snapshot.value.type!=AlarmType.ALARM_TEST)
     }
 
+    @Test fun alarmTestRemainsGloballyActiveUntilUserStopsItAndUsesNonModalControls() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.TEST_ALARM))
+            withTimeout(5_000){alarmUi.snapshot.first{snapshot->snapshot.state==AlarmState.ALARM&&snapshot.type==AlarmType.ALARM_TEST}}
+            compose.onNodeWithTag("alarm_test_banner").assertExists()
+            compose.onNodeWithTag("confirm_alarm_audible_banner").assertIsEnabled()
+            compose.onNodeWithTag("stop_alarm_test_banner").assertIsEnabled()
+            delay(1_500)
+            assertEquals(AlarmType.ALARM_TEST,alarmUi.snapshot.value.type)
+            compose.onNodeWithTag("stop_alarm_test_banner").performClick()
+            withTimeout(5_000){alarmUi.snapshot.first{snapshot->snapshot.state==AlarmState.IDLE&&snapshot.type!=AlarmType.ALARM_TEST}}
+        }
+    }
+
     @Test fun disablingPhoneHeadingDuringLearningKeepsHistoricalEvidence() = runBlocking<Unit> {
         val sessionId=seedPhoneHeadingLearningWatch()
         dao.insertPoint(com.yokuli.anchorwatch.data.database.TrackPointEntity(sessionId=sessionId,timestamp=System.currentTimeMillis(),latitude=-36.8485,longitude=174.7633,distanceFromAnchor=0.0,sog=0.1,cog=180.0,heading=123.0,hdop=1.0,headingMeasured=true,headingSampleSequence=17,positionSource=GpsDataSource.NMEA.name,headingSource=HeadingSource.PHONE.name,headingQuality=HeadingQuality.STABLE.name,headingEpoch=4))

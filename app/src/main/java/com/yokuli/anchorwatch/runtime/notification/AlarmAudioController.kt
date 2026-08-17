@@ -6,6 +6,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import com.yokuli.anchorwatch.domain.model.AlarmSound
@@ -49,7 +50,7 @@ class AlarmAudioController @Inject constructor(@ApplicationContext private val c
     private fun play(uri:Uri?):Boolean{
         if(uri==null)return false
         val candidate=MediaPlayer()
-        return runCatching{candidate.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());if(uri.scheme=="file")candidate.setDataSource(requireNotNull(uri.path))else candidate.setDataSource(context,uri);candidate.setVolume(1f,1f);candidate.isLooping=true;candidate.prepare();candidate.start();player=candidate;true}.getOrElse{runCatching{candidate.release()};false}
+        return runCatching{candidate.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());candidate.setWakeMode(context,PowerManager.PARTIAL_WAKE_LOCK);if(uri.scheme=="file")candidate.setDataSource(requireNotNull(uri.path))else candidate.setDataSource(context,uri);candidate.setVolume(1f,1f);candidate.isLooping=true;candidate.prepare();candidate.start();player=candidate;true}.getOrElse{runCatching{candidate.release()};false}
     }
 
     private fun anchorAlarmUri():Uri?=runCatching{

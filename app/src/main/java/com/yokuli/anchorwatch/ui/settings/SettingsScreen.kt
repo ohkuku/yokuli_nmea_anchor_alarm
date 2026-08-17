@@ -65,6 +65,7 @@ import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.sonar.DepthReference
+import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartPolicy
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.location.NmeaSourceAvailability
@@ -93,7 +94,7 @@ private enum class SettingsDestination{ROOT,ALARM,VESSEL,DEPTH_SOUNDER,POSITIONI
   item{PageHeader(tr("Settings","设置"),tr("Choose a section; runtime NMEA and sonar controls stay in Data.","选择要配置的类别；NMEA 与声呐运行操作仍在“数据”页面。"));Spacer(Modifier.height(18.dp))}
   item{SettingsSection(tr("ALARM & WATCH","报警与监控"));SettingsRow(Icons.Default.NotificationsActive,tr("Alarm & notifications","报警与通知"),tr("Anchor alarm · ${state.settings.alarmSnoozeMinutes} min snooze","锚警 · ${state.settings.alarmSnoozeMinutes} 分钟后提醒"),"settings_alarm"){open(SettingsDestination.ALARM)}}
   item{SettingsSection(tr("VESSEL & SENSORS","船舶与传感器"));SettingsRow(Icons.Default.Sailing,tr("Vessel profile","船舶资料"),tr("${state.settings.boatLengthMeters} m · bow ${state.settings.bowRollerHeightMeters} m","${state.settings.boatLengthMeters} 米 · 船艏 ${state.settings.bowRollerHeightMeters} 米"),"settings_vessel"){open(SettingsDestination.VESSEL)};SettingsRow(Icons.Default.Waves,tr("Depth sounder","测深仪"),tr("Depth offset ${signed(state.settings.sounderOffsetMeters)} m","水深修正 ${signed(state.settings.sounderOffsetMeters)} 米"),"settings_depth_sounder"){open(SettingsDestination.DEPTH_SOUNDER)}}
-  item{SettingsSection(tr("POSITION & MAP","定位与地图"));SettingsRow(Icons.Default.GpsFixed,tr("Positioning","定位"),tr("Default: ${state.settings.gpsDataSource.name} GPS","默认：${state.settings.gpsDataSource.name} GPS"),"settings_positioning"){open(SettingsDestination.POSITIONING)};SettingsRow(Icons.Default.Layers,tr("Map & depth","地图与水深"),tr("${if(state.settings.mapType==2)tr("Satellite","卫星")else tr("Default","默认")} · LINZ · Sonar","${if(state.settings.mapType==2)tr("卫星","卫星")else tr("默认","默认")} · LINZ · 声呐"),"settings_map_depth"){open(SettingsDestination.MAP_DEPTH)}}
+  item{SettingsSection(tr("POSITION & MAP","定位与地图"));SettingsRow(Icons.Default.GpsFixed,tr("Positioning","定位"),tr("Default: ${settingsGpsSourceLabel(state.settings.gpsDataSource)}","默认：${settingsGpsSourceLabel(state.settings.gpsDataSource)}"),"settings_positioning"){open(SettingsDestination.POSITIONING)};SettingsRow(Icons.Default.Layers,tr("Map & depth","地图与水深"),tr("${if(state.settings.mapType==2)tr("Satellite","卫星")else tr("Default","默认")} · LINZ · Sonar","${if(state.settings.mapType==2)tr("卫星","卫星")else tr("默认","默认")} · LINZ · 声呐"),"settings_map_depth"){open(SettingsDestination.MAP_DEPTH)}}
   item{SettingsSection(tr("DEVICE & DATA","设备与数据"));SettingsRow(Icons.Default.BatterySaver,tr("Background reliability","后台可靠性"),tr("Permissions, power and Wi-Fi","权限、电源与 Wi-Fi"),"settings_background"){open(SettingsDestination.BACKGROUND)};SettingsRow(Icons.Default.Backup,tr("Data & backup","数据与备份"),tr("Export or replace from a Yokuli backup","导出或从 Yokuli 备份替换恢复"),"settings_data_backup"){open(SettingsDestination.DATA_BACKUP)};SettingsRow(Icons.Default.Storage,tr("Storage & support","存储与支持"),tr("Health, incident log and diagnostics","健康、事件日志与诊断包"),"settings_storage_support"){open(SettingsDestination.STORAGE_SUPPORT)};SettingsRow(Icons.Default.Language,tr("Language","语言"),if(state.settings.appLanguage==AppLanguage.SIMPLIFIED_CHINESE)"中文" else "English","settings_language",language)}
   item{SettingsSection(tr("ADVANCED","高级"));SettingsRow(Icons.Default.DeveloperMode,tr("Developer","开发者"),if(state.settings.demoMode)tr("Demo mode on","演示模式已开启")else tr("Demo mode off","演示模式已关闭"),"settings_developer"){open(SettingsDestination.DEVELOPER)}}
  }
@@ -140,18 +141,20 @@ internal fun signed(value:Double)=if(value>=0)"+${"%.1f".format(value)}" else "%
 
 @Composable private fun MapDepthSettingsPage(state:MainUiState,vm:MainViewModel){
  var showLinzDisclaimer by remember{mutableStateOf(false)};var showSonarDisclaimer by remember{mutableStateOf(false)}
+ val sonarAvailable=SonarSurveyStartPolicy.canEnableLayer(state.settings.demoMode,state.connection)
  Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
   Text(tr("Default base map","默认底图"),style=MaterialTheme.typography.labelLarge);SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){SegmentedButton(state.settings.mapType==1,{vm.setMapType(1)},shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Default","默认"))};SegmentedButton(state.settings.mapType==2,{vm.setMapType(2)},shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("Satellite","卫星"))}}
   HorizontalDivider();SettingSwitch(tr("LINZ chart image","LINZ 海图影像"),if(BuildConfig.LINZ_HYDRO_CONFIGURED)tr("Official hydrographic image overlay","官方水文海图影像叠加层")else tr("Not configured in this build","当前构建未配置"),state.settings.linzHydroEnabled,BuildConfig.LINZ_HYDRO_CONFIGURED){enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))}
   if(state.settings.linzHydroEnabled){Text(tr("LINZ opacity ${"%.0f".format(state.settings.linzHydroOpacity*100)}%","LINZ 不透明度 ${"%.0f".format(state.settings.linzHydroOpacity*100)}%"));Slider(state.settings.linzHydroOpacity.toFloat(),{vm.updateSettings(state.settings.copy(linzHydroOpacity=it.toDouble()))},valueRange=.30f..1f)}
   SettingSwitch(tr("Current-position LINZ depth","当前位置 LINZ 水深"),tr("Vector reference; never presented as live sonar","矢量海图参考；绝不会冒充实时声呐"),state.settings.showLinzDepthReference,BuildConfig.LINZ_API_KEY.isNotBlank()){vm.updateSettings(state.settings.copy(showLinzDepthReference=it))}
-  Text(tr("LINZ vector status: ${state.linzDepth.status.name}","LINZ 矢量状态：${state.linzDepth.status.name}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  HorizontalDivider();SettingSwitch(tr("Personal sonar layer","个人声呐图层"),tr("Only this switch controls whether survey cells are drawn","只有此开关决定是否在地图上绘制调查网格"),state.settings.sonarLayerEnabled){enabled->if(enabled&&!state.settings.sonarDisclaimerAccepted)showSonarDisclaimer=true else vm.updateSettings(state.settings.copy(sonarLayerEnabled=enabled))}
-  if(state.settings.sonarLayerEnabled){Text(tr("Sonar opacity ${"%.0f".format(state.settings.sonarLayerOpacity*100)}%","声呐不透明度 ${"%.0f".format(state.settings.sonarLayerOpacity*100)}%"));Slider(state.settings.sonarLayerOpacity.toFloat(),{vm.updateSettings(state.settings.copy(sonarLayerOpacity=it.toDouble()))},valueRange=.20f..1f)}
+  Text(tr("LINZ vector status: ${linzStatusLabel(state.linzDepth.status.name)}","LINZ 矢量状态：${linzStatusLabel(state.linzDepth.status.name)}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  HorizontalDivider();SettingSwitch(tr("Personal sonar layer","个人声呐图层"),if(sonarAvailable)tr("Only this switch controls whether survey cells are drawn","只有此开关决定是否在地图上绘制调查网格")else tr("Connect NMEA first; Demo mode is the only offline exception","请先连接 NMEA；仅演示模式允许离线开启"),state.settings.sonarLayerEnabled&&sonarAvailable,sonarAvailable){enabled->if(enabled&&!state.settings.sonarDisclaimerAccepted)showSonarDisclaimer=true else vm.setSonarLayerEnabled(enabled)}
+  if(!sonarAvailable)Text(tr("The sonar layer is locked because the NMEA server is disconnected.","NMEA 服务器未连接，声呐图层已锁定。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+  if(state.settings.sonarLayerEnabled&&sonarAvailable){Text(tr("Sonar opacity ${"%.0f".format(state.settings.sonarLayerOpacity*100)}%","声呐不透明度 ${"%.0f".format(state.settings.sonarLayerOpacity*100)}%"));Slider(state.settings.sonarLayerOpacity.toFloat(),{vm.updateSettings(state.settings.copy(sonarLayerOpacity=it.toDouble()))},valueRange=.20f..1f)}
   SettingSwitch(tr("Current-position personal depth","当前位置个人水深"),tr("Show measured/interpolated status in Watch","在监控页显示实测/插值状态"),state.settings.showPersonalMapReference){vm.updateSettings(state.settings.copy(showPersonalMapReference=it))}
  }}
  if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is an aid only and does not replace official charts, Notices to Mariners, depth instruments or a passage plan.","该海图影像层仅供辅助，不能替代官方海图、航海通告、测深仪或航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})
- if(showSonarDisclaimer)SonarSafetyDisclaimerDialog({showSonarDisclaimer=false}){vm.updateSettings(state.settings.copy(sonarLayerEnabled=true,sonarDisclaimerAccepted=true));showSonarDisclaimer=false}
+ if(showSonarDisclaimer)SonarSafetyDisclaimerDialog({showSonarDisclaimer=false}){vm.setSonarLayerEnabled(true,acceptDisclaimer=true);showSonarDisclaimer=false}
 }
 
 @Composable private fun VesselProfileCard(state:MainUiState,vm:MainViewModel){
@@ -190,7 +193,7 @@ internal fun signed(value:Double)=if(value>=0)"+${"%.1f".format(value)}" else "%
    Text(tr("Demo mode locks this App to Demo GPS. System and NMEA choices return after Demo mode is disabled.","演示模式会锁定本应用使用演示 GPS；关闭演示模式后才会重新显示系统与 NMEA 选项。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    GpsSourceRow(tr("Demo GPS · locked","演示 GPS · 已锁定"),tr("Every Set anchor captures the real System-GNSS boat position; the simulated anchor centre is hidden and offset from it.","每次设置锚点都会获取真实系统 GNSS 船位；模拟锚中心会隐藏并与该船位保持偏移。"),true,false,"gps_source_demo"){}
   }else{
-   Text(if(sessionOpen)tr("Source locked to ${lockedSource?.name?:"—"} until Lift anchor. Pausing does not unlock it.","数据源已锁定为 ${lockedSource?.name?:"—"}，起锚结束会话后才能更换；暂停不会解锁。")else tr("Choose the default for the next anchor setup. Start validates the selected source again.","选择下一次锚警的默认来源；启动时还会再次校验。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(if(sessionOpen)tr("Source locked to ${lockedSource?.let{settingsGpsSourceLabel(it)}?:"—"} until Lift anchor. Pausing does not unlock it.","数据源已锁定为 ${lockedSource?.let{settingsGpsSourceLabel(it)}?:"—"}，起锚结束会话后才能更换；暂停不会解锁。")else tr("Choose the default for the next anchor setup. Start validates the selected source again.","选择下一次锚警的默认来源；启动时还会再次校验。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    GpsSourceRow(tr("System GPS","系统 GPS"),if(proxyActive)tr("Unavailable while the global NMEA GPS proxy owns Android location.","全局 NMEA GPS 代理接管 Android 定位时不可使用。") else tr("Use precise phone/tablet GNSS; coarse network location is diagnostics-only.","使用手机或平板精确 GNSS；网络粗略定位仅供诊断。"),lockedSource?.let{it==GpsDataSource.SYSTEM}?: (state.settings.gpsDataSource==GpsDataSource.SYSTEM),!sessionOpen&&!switching&&!proxyActive,"gps_source_system"){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}
    HorizontalDivider()
    GpsSourceRow("NMEA GPS",when(nmeaAvailability){NmeaSourceAvailability.AVAILABLE->tr("Connected with a fresh valid position.","连接正常，且已有新鲜有效的定位。");NmeaSourceAvailability.NOT_CONNECTED->tr("Connect the NMEA server before selecting this source.","请先连接 NMEA 服务器，之后才能选择此数据源。");NmeaSourceAvailability.NO_VALID_FIX->tr("Connected, but waiting for a valid NMEA position.","服务器已连接，但仍在等待有效的 NMEA 定位。");NmeaSourceAvailability.STALE_FIX->tr("The last NMEA position is stale; wait for a fresh fix.","最后一个 NMEA 定位已过期，请等待新定位。")},lockedSource?.let{it==GpsDataSource.NMEA}?: (state.settings.gpsDataSource==GpsDataSource.NMEA),!sessionOpen&&!switching&&nmeaReady,"gps_source_nmea"){vm.switchGpsDataSource(GpsDataSource.NMEA)}
@@ -325,6 +328,9 @@ private fun humanBytes(value:Long):String=when{value>=1024L*1024L*1024L->"%.1f G
  MockGpsState.FAILED->tr("FAILED","失败")
 }
 
+@Composable private fun settingsGpsSourceLabel(source:GpsDataSource):String=when(source){GpsDataSource.SYSTEM->tr("System GPS","系统 GPS");GpsDataSource.NMEA->"NMEA GPS";GpsDataSource.DEMO->tr("Demo GPS","演示 GPS")}
+@Composable private fun linzStatusLabel(value:String):String=when(value){"IDLE"->tr("Idle","待命");"LOADING"->tr("Loading","正在加载");"AVAILABLE"->tr("Available","可用");"NO_DATA"->tr("No data","无数据");"OFFLINE"->tr("Offline","离线");"NOT_CONFIGURED"->tr("Not configured","未配置");"ERROR"->tr("Error","错误");else->value}
+
 @Composable internal fun localizeKnownMessage(message:String):String{
  if(!LocalAppLanguage.current.usesChinese())return message
  return when(message){
@@ -385,6 +391,23 @@ private fun humanBytes(value:Long):String=when{value>=1024L*1024L*1024L->"%.1f G
   "NMEA is feeding Fused Location. Direct GPS compatibility is unavailable."->"NMEA 正在向融合定位提供位置；直接 GPS 兼容模式不可用。"
   "GPS proxy was not enabled. Turn on Developer Options and select Anchor by Yokuli as the location override app."->"GPS 代理未开启。请启用开发者选项，并将 Anchor by Yokuli 设为模拟位置应用。"
   "Android GPS restored to the normal system source."->"Android GPS 已恢复到正常系统数据源。"
+  "Connect the NMEA server before enabling the sonar chart layer. Demo mode is the only offline exception."->"开启声呐海图前必须先连接 NMEA 服务器；演示模式是唯一的离线例外。"
+  "Fresh spatial cache hit"->"已命中新鲜的空间缓存"
+  "Querying LINZ vector depth"->"正在查询 LINZ 矢量水深"
+  "LINZ vector depth available"->"LINZ 矢量水深可用"
+  "Offline · cached LINZ depth"->"离线 · 使用缓存的 LINZ 水深"
+  "LINZ unavailable offline"->"离线状态下 LINZ 不可用"
+  "LINZ vector query failed"->"LINZ 矢量查询失败"
+  "Requesting LINZ chart tiles"->"正在请求 LINZ 海图瓦片"
+  "LINZ chart tile loaded"->"LINZ 海图瓦片已加载"
+  "Listening on all interfaces"->"正在所有网络接口上监听"
+  "Rebinding NMEA Sharing on all interfaces"->"正在所有网络接口上重新绑定 NMEA 共享"
+  "Unable to start NMEA sharing"->"无法启动 NMEA 共享"
+  "NMEA Sharing waiting for input"->"NMEA 共享正在等待输入"
+  "Sharing will not connect a saved NMEA endpoint automatically. Open the NMEA connection when you want to publish boat data."->"共享不会自动连接已保存的 NMEA 端点；需要发布船载数据时，请手动打开 NMEA 连接。"
+  "GPS_SPIKE_CLEARED"->"GPS 跳点已排除"
+  "SUSTAINED_POSITION_CHANGE_CONFIRMED"->"已确认持续位置变化"
+  "AWAITING_FRESH_CONFIRMATION"->"等待新鲜定位确认"
   else->message
  }
 }

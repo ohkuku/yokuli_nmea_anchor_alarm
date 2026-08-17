@@ -67,7 +67,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private lateinit var anchorActor:AnchorRuntimeActor
  private lateinit var proxyActor:SerialRuntimeActor
  private lateinit var anchorRuntime:AnchorWatchRuntime
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val stateReady=CompletableDeferred<Unit>();private val alarmTestGeneration=AtomicLong(0L);private val acceptedIncidentBatch=AtomicLong(0L);private val pendingCommands=AtomicInteger(0);private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;@Volatile private var armPending=false;@Volatile private var appLanguage=AppLanguage.SYSTEM
+ private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val stateReady=CompletableDeferred<Unit>();private val alarmTestGeneration=AtomicLong(0L);private val acceptedIncidentBatch=AtomicLong(0L);private val pendingCommands=AtomicInteger(0);private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;@Volatile private var armPending=false;@Volatile private var alarmTestActive=false;@Volatile private var appLanguage=AppLanguage.SYSTEM
 
  private data class SourcedFix(val source:GpsDataSource,val fix:NavigationFix)
  fun start(host:RuntimeServiceHost){
@@ -166,12 +166,16 @@ class YokuliRuntimeCoordinator @Inject constructor(
   if(anchor.session?.paused==false&&anchor.alarm?.state==AlarmState.ALARM){notifySeparate("Alarm test unavailable","Handle or snooze the active anchor alarm before testing the sound.",true);releaseIfIdle();return}
   silence()
   if(generation!=alarmTestGeneration.get())return
+  // A sound test is itself a foreground safety task. Keep the service alive until
+  // the user stops/confirms it or the safety timeout expires; otherwise the normal
+  // idle cleanup destroys the player as soon as this command returns.
+  alarmTestActive=true
   val playback=sound()
-  if(generation!=alarmTestGeneration.get()){silence();return}
-  alarmUi.publish(AlarmSnapshot(AlarmState.ALARM,AlarmType.ALARM_TEST));notifySeparate("Alarm test",when{!playback.started->"The alarm player could not start. Choose another custom file or use the built-in alarm.";playback.volume==0->"Alarm playback started, but Android alarm volume is muted. Raise Alarm volume, then test again.";else->"Sound, vibration and in-app alarm UI are active. They will stop automatically after 8 seconds."},true)
-  scope.launch{delay(8_000);if(alarmTestGeneration.compareAndSet(generation,generation+1))launchCommand{stopAlarmTest()}}
+  if(generation!=alarmTestGeneration.get()){alarmTestActive=false;silence();return}
+  alarmUi.publish(AlarmSnapshot(AlarmState.ALARM,AlarmType.ALARM_TEST));refreshNotification();notifySeparate("Alarm test",when{!playback.started->"The alarm player could not start. Choose another custom file or use the built-in alarm.";playback.volume==0->"Alarm playback started, but Android alarm volume is muted. Raise Alarm volume, then test again.";else->"Sound and vibration are active globally. Confirm or stop them from the in-app banner; the test stops automatically after 20 seconds."},true)
+  scope.launch{delay(20_000);if(alarmTestGeneration.compareAndSet(generation,generation+1))launchCommand{stopAlarmTest()}}
  }
- private fun stopAlarmTest(){silence();val anchor=anchorRuntime.snapshot();val restore=anchor.alarm;if(anchor.session==null||restore==null)alarmUi.clear()else alarmUi.publish(restore);notificationCoordinator.cancelEvent();refreshNotification();releaseIfIdle()}
+ private fun stopAlarmTest(){alarmTestActive=false;silence();val anchor=anchorRuntime.snapshot();val restore=anchor.alarm;if(anchor.session==null||restore==null)alarmUi.clear()else alarmUi.publish(restore);notificationCoordinator.cancelEvent();refreshNotification();releaseIfIdle()}
 
  private suspend fun stopWatchAndDisconnect(){
   val wasActive=anchorRuntime.activeSession()!=null
@@ -196,6 +200,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private fun refreshNotification(){
   val anchor=anchorRuntime.snapshot();val snapshot=anchor.alarm;val active=anchor.session;val proxy=proxyRuntime.status.value;val now=wallClock.currentTimeMillis();val snoozed=AlarmReminderPolicy.isSnoozed(active?.alarmSnoozedUntil,now);val alarmCondition=active?.paused==false&&snapshot?.type!=null&&(snapshot.state==AlarmState.ALARM||snapshot.state==AlarmState.ACKNOWLEDGED);val remaining=active?.alarmSnoozedUntil?.let{((it-now+59_999)/60_000).coerceAtLeast(1)}
   val base=when{
+   alarmTestActive->l("Alarm test sounding • open the App to confirm or stop","警报测试正在响铃 · 打开应用确认或停止")
    snapshot?.type==AlarmType.GPS_DATA_LOST&&active?.paused==false->l("GPS DATA LOST","GPS 数据丢失")
    snapshot?.type==AlarmType.GPS_QUALITY_BAD&&active?.paused==false->l("GPS QUALITY DEGRADED: ${anchor.positionDegradedReason?:"unknown"}","GPS 质量下降：${anchor.positionDegradedReason?:"未知原因"}")
    snapshot?.type==AlarmType.ANCHOR_RADIUS_EXCEEDED&&active?.paused==false->l("ANCHOR ALARM ${snapshot.distanceMeters?.toInt()} m","锚警：距离 ${snapshot.distanceMeters?.toInt()} 米")
@@ -234,8 +239,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
   if(!result.started)notifySeparate(result.title?:"Sonar survey not started",result.message?:"Sonar runtime rejected the request.",true)
   refreshNotification()
  }
- private fun releaseIfIdle(){if(pendingCommands.get()==0&&anchorRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!sharingRuntime.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending){nmeaRuntime.releaseIfUnowned();host.stopForegroundAndSelf()}}
- private fun cleanup(){alarmTestGeneration.incrementAndGet();silence();resources.releaseAll()}
+ private fun releaseIfIdle(){if(pendingCommands.get()==0&&!alarmTestActive&&anchorRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!sharingRuntime.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending){nmeaRuntime.releaseIfUnowned();host.stopForegroundAndSelf()}}
+ private fun cleanup(){alarmTestGeneration.incrementAndGet();alarmTestActive=false;silence();resources.releaseAll()}
  fun shutdown(){incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();sharingRuntime.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup()}
  private fun channels()=notificationCoordinator.createChannels(l("Anchor and GPS status","锚警与 GPS 状态"),l("Anchor safety events","锚泊安全事件"),l("Anchor alarms with snooze","带稍后提醒的锚警"))
  private fun l(english:String,chinese:String)=localized(appLanguage,english,chinese)
@@ -245,6 +250,12 @@ class YokuliRuntimeCoordinator @Inject constructor(
    message=="Anchor session already open"->"已有锚泊会话"
    message=="Pause, resume or lift the current anchor before starting another session."->"开始新会话前，请暂停、继续或结束当前锚泊。"
    message=="Anchor watch not started"->"锚警未启动"
+   message=="Alarm test"->"警报测试"
+   message=="Alarm test unavailable"->"暂时无法测试警报"
+   message.startsWith("Handle or snooze the active anchor alarm")->"请先处理或稍后提醒当前锚警，再测试声音。"
+   message.startsWith("The alarm player could not start")->"警报播放器无法启动；请选择其他自定义声音或使用内置警报。"
+   message.startsWith("Alarm playback started, but Android alarm volume is muted")->"警报已开始播放，但 Android 的警报音量为静音；请调高警报音量后重试。"
+   message.startsWith("Sound and vibration are active globally")->"声音与振动正在全局运行；请在应用内横幅确认或停止，测试会在 20 秒后自动停止。"
    message.startsWith("A live, current ")->"需要实时且新鲜的 GPS 定位才能启动锚警；现有连接没有改变。"
    message.startsWith("The selected setup requires valid water depth")->"当前设置需要有效的水深、锚链、船艏高度和船长；锚链必须长于总垂直深度。"
    message=="Android GPS proxy not active"->"Android GPS 代理未开启"

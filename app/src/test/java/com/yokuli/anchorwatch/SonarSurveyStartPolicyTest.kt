@@ -7,6 +7,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SonarSurveyStartPolicyTest {
+    @Test fun realSonarLayerRequiresConnectedNmeaButDemoIsAllowed() {
+        assertEquals(false,SonarSurveyStartPolicy.canEnableLayer(false,NmeaConnectionState.DISCONNECTED))
+        assertEquals(false,SonarSurveyStartPolicy.canEnableLayer(false,NmeaConnectionState.CONNECTED_NO_DATA))
+        assertEquals(true,SonarSurveyStartPolicy.canEnableLayer(false,NmeaConnectionState.CONNECTED))
+        assertEquals(true,SonarSurveyStartPolicy.canEnableLayer(true,NmeaConnectionState.DISCONNECTED))
+    }
+
     @Test fun demoDoesNotNeedNmeaOrRealDepth() {
         assertEquals(SonarSurveyStartDecision.ALLOWED,SonarSurveyStartPolicy.evaluate(true,NmeaConnectionState.DISCONNECTED,false))
     }

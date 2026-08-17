@@ -39,6 +39,7 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthDiagnostics
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarGrid
 import com.yokuli.anchorwatch.domain.sonar.DepthUiState
+import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartPolicy
 import com.yokuli.anchorwatch.data.sonar.SonarGridScope
 import com.yokuli.anchorwatch.domain.anchor.AnchorCenterEstimator
 import com.yokuli.anchorwatch.domain.model.AnchorEstimate
@@ -231,6 +232,19 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{incidentLogger.recent.collect{value->_ui.update{it.copy(incidents=value)}}}
         viewModelScope.launch{supportBundleManager.state.collect{value->_ui.update{it.copy(supportBundle=value)}}}
         viewModelScope.launch{offlineMapRepository.state.collect{value->_ui.update{it.copy(offlineMap=value)}}}
+        viewModelScope.launch{
+            combine(
+                prefs.settings.map{it.sonarLayerEnabled to it.demoMode}.distinctUntilChanged(),
+                nav.connectionState,
+            ){setting,connection->Triple(setting.first,setting.second,connection)}.distinctUntilChanged().collect{(enabled,demoMode,connection)->
+                // Persisted/restored settings cannot bypass the same rule enforced by
+                // the switch. Disconnecting a real NMEA source removes the live layer.
+                if(enabled&&!SonarSurveyStartPolicy.canEnableLayer(demoMode,connection)){
+                    val current=prefs.settings.first()
+                    if(current.sonarLayerEnabled) prefs.save(current.copy(sonarLayerEnabled=false))
+                }
+            }
+        }
         viewModelScope.launch{combine(acceptedPosition.state.map{it.acceptedFix}.distinctUntilChanged(),prefs.settings.map{it.showLinzDepthReference}.distinctUntilChanged()){fix,enabled->fix to enabled}.conflate().collect{(fix,enabled)->delay(2_000);if(enabled&&fix?.valid==true)linzDepthRepository.refresh(fix.latitude,fix.longitude)}}
         viewModelScope.launch{while(true){refreshDepthUi();refreshWatchSafety();delay(1_000)}}
         viewModelScope.launch{while(true){refreshStorageHealth();delay(30_000)}}
@@ -339,6 +353,14 @@ class MainViewModel @Inject constructor(
     }
     fun clearConnectionAttempt()=_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     fun updateSettings(settings:AppSettings){_ui.update{it.copy(settings=settings)};viewModelScope.launch{prefs.save(settings)}}
+    fun setSonarLayerEnabled(enabled:Boolean,acceptDisclaimer:Boolean=false){
+        val state=_ui.value
+        if(enabled&&!SonarSurveyStartPolicy.canEnableLayer(state.settings.demoMode,state.connection)){
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Connect the NMEA server before enabling the sonar chart layer. Demo mode is the only offline exception."))}
+            return
+        }
+        updateSettings(state.settings.copy(sonarLayerEnabled=enabled,sonarDisclaimerAccepted=state.settings.sonarDisclaimerAccepted||acceptDisclaimer))
+    }
     fun exportBackup(uri:Uri)=viewModelScope.launch{backupManager.export(uri)}
     fun restoreBackup(uri:Uri)=viewModelScope.launch{backupManager.restore(uri)}
     fun clearBackupResult()=backupManager.clearResult()

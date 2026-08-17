@@ -6,6 +6,10 @@ enum class SonarSurveyStartDecision { ALLOWED, NMEA_NOT_CONNECTED, DEPTH_NOT_FRE
 
 /** One safety rule shared by UI and service; the service remains authoritative. */
 object SonarSurveyStartPolicy {
+    /** A real sonar chart is meaningful only while its same-vessel NMEA source is live. */
+    fun canEnableLayer(demoMode:Boolean,connection:NmeaConnectionState):Boolean =
+        demoMode||connection==NmeaConnectionState.CONNECTED
+
     fun evaluate(
         demoMode: Boolean,
         connection: NmeaConnectionState,
