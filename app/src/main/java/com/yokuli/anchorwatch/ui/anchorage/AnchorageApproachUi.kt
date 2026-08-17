@@ -25,11 +25,15 @@ import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,6 +55,7 @@ import com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterDistance
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionPolicy
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionReference
+import com.yokuli.anchorwatch.domain.anchorage.ApproachHeadingMode
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDistanceFormatter
 import com.yokuli.anchorwatch.domain.anchorage.ApproachPhase
 import com.yokuli.anchorwatch.ui.theme.SafetyColors
@@ -119,8 +124,12 @@ internal fun NearbyAnchorageCard(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 internal fun AnchorageApproachOverlay(
     state: AnchorageApproachState,
+    headingMode: ApproachHeadingMode,
+    vesselHeadingAvailable: Boolean,
+    setHeadingMode: (ApproachHeadingMode) -> Unit,
     details: (AnchorageCluster) -> Unit,
     cancel: () -> Unit,
     setAnchorWatch: (AnchorageSetupReference) -> Unit,
@@ -176,6 +185,27 @@ internal fun AnchorageApproachOverlay(
                         }
                     }
                     else -> {
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal=20.dp)) {
+                            SegmentedButton(
+                                selected=headingMode==ApproachHeadingMode.VESSEL,
+                                onClick={setHeadingMode(ApproachHeadingMode.VESSEL)},
+                                enabled=vesselHeadingAvailable,
+                                shape=SegmentedButtonDefaults.itemShape(0,2),
+                                modifier=Modifier.testTag("approach_heading_vessel"),
+                            ){Text(tr("Vessel direction","船舶方位"))}
+                            SegmentedButton(
+                                selected=headingMode==ApproachHeadingMode.PHONE,
+                                onClick={setHeadingMode(ApproachHeadingMode.PHONE)},
+                                shape=SegmentedButtonDefaults.itemShape(1,2),
+                                modifier=Modifier.testTag("approach_heading_phone"),
+                            ){Text(tr("Phone direction","手机方位"))}
+                        }
+                        if(!vesselHeadingAvailable)Text(
+                            tr("Connect NMEA with HDT/HDG or a stable moving COG to use vessel direction.","连接含 HDT/HDG 或稳定航行 COG 的 NMEA 后才能使用船舶方位。"),
+                            style=MaterialTheme.typography.labelSmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign=TextAlign.Center,
+                        )
                         SmoothDirectionArrow(state.relativeBearingDegrees ?: 0.0, approachColor)
                         state.targetBearingTrueDegrees?.let {
                             Text("%03d°T".format(it.toInt().mod(360)), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)

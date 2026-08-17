@@ -181,6 +181,7 @@ class AnchorageNearbyEpisodeTracker {
 
 enum class ApproachPhase { IDLE, NEARBY, APPROACHING, NEAR, INSIDE_AREA }
 enum class ApproachDirectionReference { HDT, COG, PHONE, NORTH_UP }
+enum class ApproachHeadingMode { VESSEL, PHONE }
 
 data class ApproachDirection(
     val reference: ApproachDirectionReference,
@@ -202,12 +203,15 @@ object ApproachDirectionPolicy {
         cogReceivedElapsed: Long?,
         phoneTrueHeadingDegrees: Double?,
         phoneHeadingTrusted: Boolean,
+        preferredMode: ApproachHeadingMode = ApproachHeadingMode.VESSEL,
+        cogTrustedBySourcePolicy: Boolean = false,
     ): ApproachDirection {
         val nmeaFresh = nmeaHeadingReceivedElapsed != null && nowElapsed - nmeaHeadingReceivedElapsed in 0..FRESH_MILLIS
         val cogFresh = cogReceivedElapsed != null && nowElapsed - cogReceivedElapsed in 0..FRESH_MILLIS
         val (reference, heading) = when {
-            nmeaTrueHeadingDegrees != null && nmeaFresh -> ApproachDirectionReference.HDT to nmeaTrueHeadingDegrees
-            cogTrueDegrees != null && cogFresh && (sogKnots ?: 0.0) >= MIN_COG_SPEED_KNOTS -> ApproachDirectionReference.COG to cogTrueDegrees
+            preferredMode == ApproachHeadingMode.PHONE && phoneTrueHeadingDegrees != null && phoneHeadingTrusted -> ApproachDirectionReference.PHONE to phoneTrueHeadingDegrees
+            preferredMode == ApproachHeadingMode.VESSEL && nmeaTrueHeadingDegrees != null && nmeaFresh -> ApproachDirectionReference.HDT to nmeaTrueHeadingDegrees
+            preferredMode == ApproachHeadingMode.VESSEL && cogTrueDegrees != null && cogFresh && (cogTrustedBySourcePolicy || (sogKnots ?: 0.0) >= MIN_COG_SPEED_KNOTS) -> ApproachDirectionReference.COG to cogTrueDegrees
             phoneTrueHeadingDegrees != null && phoneHeadingTrusted -> ApproachDirectionReference.PHONE to phoneTrueHeadingDegrees
             else -> ApproachDirectionReference.NORTH_UP to null
         }

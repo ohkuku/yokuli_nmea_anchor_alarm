@@ -73,7 +73,7 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthPresentation
 import com.yokuli.anchorwatch.data.linz.LinzDepthStatus
 
 @Composable
-internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,phoneHeading:(Boolean)->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewNearby:(List<Long>)->Unit,nearbyActions:SavedAnchorageCardActions,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit) {
+internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit, adjust:()->Unit,phoneHeading:(Boolean)->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewNearby:(List<Long>)->Unit,nearbyActions:SavedAnchorageCardActions,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit) {
     val fix = state.fix; val active = state.active; val now=android.os.SystemClock.elapsedRealtime()
     var showHealth by remember{mutableStateOf(false)};var showDepthDetails by remember{mutableStateOf(false)};var showConditions by remember{mutableStateOf(false)}
     val freshFix = fix?.valid == true && when(state.settings.gpsDataSource){GpsDataSource.NMEA->state.connection == NmeaConnectionState.CONNECTED && state.diagnostics.lastFixElapsed?.let { now-it < state.settings.gpsLossSeconds * 1000L } == true;GpsDataSource.SYSTEM->now-fix.receivedElapsedRealtime < state.settings.gpsLossSeconds * 1000L;GpsDataSource.DEMO->state.demoGps.signalAvailable&&now-fix.receivedElapsedRealtime < state.settings.gpsLossSeconds * 1000L}
@@ -108,7 +108,7 @@ internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,pho
             modifier=Modifier.testTag("watch_nearby_anchorage"),
         )
         val quality=gpsQualityMetric(state.settings.gpsDataSource,fix)
-        HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Metric(tr("SOG","航速"), fix?.sogKnots?.let { "%.1f kn".format(it) } ?: "—"); Metric(tr("Heading","艏向"), fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix)}?.let { "${it.toInt()}°" } ?: "—"); Metric(quality.first,quality.second) }
+        HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Metric(tr("SOG","航速"), fix?.sogKnots?.let { "%.1f kn".format(it) } ?: "—"); Metric(tr("Heading","艏向"), boatHeading?.let { "${it.toInt()}°" } ?: "—"); Metric(quality.first,quality.second) }
         DepthSummary(state){showDepthDetails=true}
         OutlinedButton({showHealth=true},Modifier.fillMaxWidth().testTag("watch_health_button")){Icon(Icons.Default.HealthAndSafety,null);Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f),horizontalAlignment=Alignment.Start){Text(tr("Continuous watch health","持续监控健康"));Text(tr("Open every live safety check","查看全部实时安全检查"),style=MaterialTheme.typography.labelSmall)};Text(watchHealthStatus(state.watchSafety),color=watchHealthColor(state.watchSafety),style=MaterialTheme.typography.labelMedium)}
     } }

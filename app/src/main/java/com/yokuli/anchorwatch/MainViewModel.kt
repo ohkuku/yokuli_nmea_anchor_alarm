@@ -92,7 +92,9 @@ import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterDistance
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyEpisodeTracker
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyPolicy
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionPolicy
-import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.anchorage.ApproachHeadingMode
+import com.yokuli.anchorwatch.domain.navigation.NmeaCourseTrustGate
+import com.yokuli.anchorwatch.domain.navigation.TrustedNmeaCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -160,6 +162,10 @@ data class MainUiState(
     val offlineMap:OfflineMapInfo=OfflineMapInfo(),
     /** Live orientation is intentionally separate from GPS publication cadence. */
     val phoneHeading:PhoneHeadingSample=PhoneHeadingSample(),
+    /** NMEA COG accepted only after the anti-wander speed/time gate. */
+    val trustedNmeaCourse:TrustedNmeaCourse?=null,
+    val approachHeadingMode:ApproachHeadingMode=ApproachHeadingMode.PHONE,
+    val vesselApproachHeadingAvailable:Boolean=false,
     val liveDepth:LiveDepthState=LiveDepthState(),
     val liveWind:LiveWindState=LiveWindState(),
     val conditions:ConditionRuntimeSnapshot=ConditionRuntimeSnapshot(),
@@ -214,7 +220,9 @@ class MainViewModel @Inject constructor(
     private var sonarSamplesJob:Job?=null
     private var observedSonarSurveyId:Long?=null
     private val anchorageNearbyTracker=AnchorageNearbyEpisodeTracker()
+    private val nmeaCourseTrustGate=NmeaCourseTrustGate()
     private var selectedApproachClusterId:String?=null
+    private var lastApproachHeadingRefreshElapsed=0L
 
     init{
         // Safety and recording repositories consume the full provider rate. Compose/map only
@@ -246,15 +254,25 @@ class MainViewModel @Inject constructor(
                 @Suppress("UNCHECKED_CAST") val sessions=values[4] as List<AnchorSessionEntity>
                 val active=sessions.firstOrNull{it.active}
                 val connection=values[1] as NmeaConnectionState
-                _ui.update{it.copy(nmeaFix=position.nmea,nmeaConnectionStartedElapsed=values[2] as Long?,systemFix=position.system,connection=connection,diagnostics=values[3] as NmeaDiagnostics,settings=position.settings,settingsReady=true,sessions=sessions,active=active,demoGps=sourceAndDemo.second)}
+                val nowElapsed=android.os.SystemClock.elapsedRealtime()
+                val trustedNmeaCourse=nmeaCourseTrustGate.update(position.nmea,nowElapsed)
+                _ui.update{it.copy(nmeaFix=position.nmea,trustedNmeaCourse=trustedNmeaCourse,nmeaConnectionStartedElapsed=values[2] as Long?,systemFix=position.system,connection=connection,diagnostics=values[3] as NmeaDiagnostics,settings=position.settings,settingsReady=true,sessions=sessions,active=active,demoGps=sourceAndDemo.second)}
                 observePoints(active)
+                if(selectedApproachClusterId!=null)refreshAnchorageApproach(nowElapsed)
             }
         }
         viewModelScope.launch{acceptedPosition.state.map{accepted->delay(UI_POSITION_FRAME_MILLIS);accepted}.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)};refreshDepthUi()}}
         // Rotation-vector sensors commonly publish much faster than Android GNSS. Keeping
         // this stream independent makes the boat symbol turn immediately while the
         // estimator still receives phone-heading evidence only with accepted positions.
-        viewModelScope.launch{phoneHeadingRepository.sample.collect{sample->_ui.update{it.copy(phoneHeading=sample)}}}
+        viewModelScope.launch{phoneHeadingRepository.sample.collect{sample->
+            _ui.update{it.copy(phoneHeading=sample)}
+            val nowElapsed=android.os.SystemClock.elapsedRealtime()
+            if(selectedApproachClusterId!=null&&nowElapsed-lastApproachHeadingRefreshElapsed>=100L){
+                lastApproachHeadingRefreshElapsed=nowElapsed
+                refreshAnchorageApproach(nowElapsed)
+            }
+        }}
         viewModelScope.launch{liveDepthRepository.state.collect{value->_ui.update{it.copy(liveDepth=value)}}}
         viewModelScope.launch{liveWindRepository.state.collect{value->_ui.update{it.copy(liveWind=value)}}}
         viewModelScope.launch{conditionRuntime.state.collect{value->_ui.update{it.copy(conditions=value)}}}
@@ -309,6 +327,15 @@ class MainViewModel @Inject constructor(
         val accepted=state.fix?.takeIf{
             it.valid&&state.positionHealth!=com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST
         }
+        val physicalNmeaHeadingFresh=state.nmeaFix?.let{fix->
+            fix.headingSource==com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL&&
+                fix.headingTrueDegrees!=null&&
+                (fix.headingReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{nowElapsed-it in 0L..ApproachDirectionPolicy.FRESH_MILLIS}
+        }==true
+        val trustedNmeaCourse=state.trustedNmeaCourse?.takeIf{it.isFresh(nowElapsed)}
+        val vesselHeadingAvailable=state.connection==NmeaConnectionState.CONNECTED&&
+            (physicalNmeaHeadingFresh||trustedNmeaCourse!=null)
+        val headingMode=if(state.approachHeadingMode==ApproachHeadingMode.VESSEL&&!vesselHeadingAvailable)ApproachHeadingMode.PHONE else state.approachHeadingMode
         val approach=AnchorageApproachEngine.evaluate(
             clusters=state.anchorageClusters,
             selectedClusterId=selectedApproachClusterId,
@@ -319,12 +346,14 @@ class MainViewModel @Inject constructor(
                 nowElapsed=nowElapsed,
                 targetBearingDegrees=bearing,
                 nmeaTrueHeadingDegrees=state.nmeaFix?.headingTrueDegrees,
-                nmeaHeadingReceivedElapsed=state.nmeaFix?.headingReceivedElapsedRealtime,
-                cogTrueDegrees=accepted?.cogTrueDegrees,
-                sogKnots=accepted?.sogKnots,
-                cogReceivedElapsed=accepted?.cogReceivedElapsedRealtime?:accepted?.receivedElapsedRealtime,
+                nmeaHeadingReceivedElapsed=state.nmeaFix?.headingReceivedElapsedRealtime?:state.nmeaFix?.receivedElapsedRealtime,
+                cogTrueDegrees=trustedNmeaCourse?.trueDegrees,
+                sogKnots=trustedNmeaCourse?.sogKnots,
+                cogReceivedElapsed=trustedNmeaCourse?.receivedElapsedRealtime,
                 phoneTrueHeadingDegrees=state.phoneHeading.trueHeadingDegrees,
-                phoneHeadingTrusted=state.phoneHeading.quality==HeadingQuality.STABLE,
+                phoneHeadingTrusted=state.phoneHeading.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true,
+                preferredMode=headingMode,
+                cogTrustedBySourcePolicy=trustedNmeaCourse!=null,
             )
         }
         val allDistances=if(accepted==null)emptyList() else AnchorageNearbyPolicy.distances(
@@ -335,7 +364,7 @@ class MainViewModel @Inject constructor(
             automaticPromptEnabled=state.active==null&&selectedApproachClusterId==null,
         )
         val prompt=allDistances.filter{it.cluster.id in promptIds}
-        _ui.update{it.copy(anchorageApproach=approach,nearbyAnchoragePrompt=prompt)}
+        _ui.update{it.copy(anchorageApproach=approach,nearbyAnchoragePrompt=prompt,approachHeadingMode=headingMode,vesselApproachHeadingAvailable=vesselHeadingAvailable)}
     }
 
     private fun refreshStorageHealth()=viewModelScope.launch{
@@ -587,7 +616,14 @@ class MainViewModel @Inject constructor(
         selectedApproachClusterId=clusterId
         phoneHeadingRepository.setApproachDemand(true)
         anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
-        _ui.update{it.copy(page=0,approachDisclaimerTargetId=null,nearbyAnchoragePrompt=emptyList())}
+        _ui.update{it.copy(page=0,approachDisclaimerTargetId=null,nearbyAnchoragePrompt=emptyList(),approachHeadingMode=if(it.vesselApproachHeadingAvailable)ApproachHeadingMode.VESSEL else ApproachHeadingMode.PHONE)}
+        refreshAnchorageApproach()
+    }
+    fun setApproachHeadingMode(mode:ApproachHeadingMode){
+        val state=_ui.value
+        if(selectedApproachClusterId==null)return
+        if(mode==ApproachHeadingMode.VESSEL&&!state.vesselApproachHeadingAvailable)return
+        _ui.update{it.copy(approachHeadingMode=mode)}
         refreshAnchorageApproach()
     }
     fun cancelAnchorageApproach(){selectedApproachClusterId=null;phoneHeadingRepository.setApproachDemand(false);refreshAnchorageApproach()}

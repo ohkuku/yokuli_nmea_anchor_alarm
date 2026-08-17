@@ -212,6 +212,12 @@ jobs:
         run: |
           test -n "$SIGNING_KEY_BASE64"
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/anchor-watch-release.jks"
+      - name: Validate keystore, alias and private-key password
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: bash .github/scripts/validate_release_signing.sh "$RUNNER_TEMP/anchor-watch-release.jks"
       - name: Verify and build signed Release APK
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
@@ -220,7 +226,6 @@ jobs:
           ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/anchor-watch-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           VERSION_NAME: ${{ needs.validate-release.outputs.version_name }}
           VERSION_CODE: ${{ needs.validate-release.outputs.version_code }}
         run: ./gradlew --no-daemon testDebugUnitTest lintRelease assembleRelease bundleRelease --stacktrace

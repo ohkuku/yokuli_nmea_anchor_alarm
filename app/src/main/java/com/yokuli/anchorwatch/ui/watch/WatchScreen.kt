@@ -128,6 +128,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     val fix = state.fix; val active = state.active
+    val boatHeading=fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix,trustedNmeaCourse=state.trustedNmeaCourse)}
     DisposableEffect(Unit){vm.setMapHeadingDisplayActive(true);onDispose{vm.setMapHeadingDisplayActive(false)}}
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -213,7 +214,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
         sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
+        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -263,7 +264,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                                 )
                             }
                         }
-                        fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(displayHeading(position,active,state.points,state.phoneHeading,state.nmeaFix)?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
+                        fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(boatHeading?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
                         active?.let { session ->
                             if(session.centerStatus==AnchorCenterStatus.RESOLVED.name){val anchor=LatLng(session.anchorLatitude,session.anchorLongitude)
                              Marker(state=remember(session.anchorLatitude,session.anchorLongitude){MarkerState(anchor)},title=tr("Anchor","锚点"),icon=anchorIcon,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.ANCHOR)
@@ -304,6 +305,9 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
             if(active?.candidateDecision==CandidateDecision.AVAILABLE.name)Box(Modifier.align(Alignment.BottomCenter).padding(bottom=112.dp,start=12.dp,end=12.dp)){EstimatedCenterBanner(state,vm,active)}
             AnchorageApproachOverlay(
                 state=state.anchorageApproach,
+                headingMode=state.approachHeadingMode,
+                vesselHeadingAvailable=state.vesselApproachHeadingAvailable,
+                setHeadingMode=vm::setApproachHeadingMode,
                 details={openAnchorageDetails(listOf(it))},
                 cancel=vm::cancelAnchorageApproach,
                 setAnchorWatch={reference->setupReference=reference;vm.cancelAnchorageApproach();showPreflight=true},

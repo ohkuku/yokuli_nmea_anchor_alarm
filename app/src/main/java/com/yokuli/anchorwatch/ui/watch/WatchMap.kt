@@ -61,6 +61,8 @@ import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.domain.navigation.NmeaCourseTrustGate
+import com.yokuli.anchorwatch.domain.navigation.TrustedNmeaCourse
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.location.NmeaSourceAvailability
@@ -83,23 +85,35 @@ import java.text.DateFormat
 
 @Composable internal fun MapNotConfigured() { Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Card { Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Default.Map, null, Modifier.size(40.dp)); Text(tr("Google Maps is not configured","Google 地图尚未配置"), style = MaterialTheme.typography.titleMedium); Text(tr("Add a Maps SDK key at build time, then rebuild the app.","请在编译阶段加入 Maps SDK 密钥后重新构建应用。")) } } } }
 
-internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFix,session:AnchorSessionEntity?,points:List<com.yokuli.anchorwatch.data.database.TrackPointEntity>,livePhoneHeading:com.yokuli.anchorwatch.location.PhoneHeadingSample?=null,nmeaHeadingFix:com.yokuli.anchorwatch.domain.model.NavigationFix?=null,nowElapsed:Long=android.os.SystemClock.elapsedRealtime()):Double?{
+internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFix,session:AnchorSessionEntity?,points:List<com.yokuli.anchorwatch.data.database.TrackPointEntity>,livePhoneHeading:com.yokuli.anchorwatch.location.PhoneHeadingSample?=null,nmeaHeadingFix:com.yokuli.anchorwatch.domain.model.NavigationFix?=null,nowElapsed:Long=android.os.SystemClock.elapsedRealtime(),trustedNmeaCourse:TrustedNmeaCourse?=null):Double?{
     // Presentation heading is intentionally independent from estimator evidence.
-    // A fresh physical NMEA heading is authoritative. Otherwise the live phone
-    // rotation vector turns the boat immediately, whether or not the user elected
-    // to persist phone-heading samples into centre estimation.
+    // A fresh physical NMEA heading is authoritative. A speed-gated NMEA COG is
+    // next; the live phone rotation vector remains the responsive fallback.
     val physicalNmea=listOfNotNull(nmeaHeadingFix,fix).firstOrNull{candidate->
         candidate.headingSource==com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL&&
             candidate.headingTrueDegrees!=null&&
             (candidate.headingReceivedElapsedRealtime?:candidate.receivedElapsedRealtime).let{received->nowElapsed-received in 0L..3_000L}
     }
     if(physicalNmea!=null)return physicalNmea.headingTrueDegrees
+    trustedNmeaCourse?.takeIf{it.isFresh(nowElapsed)}?.let{course->
+        val reversingBackdown=session?.placementMode==AnchorPlacementMode.BACKDOWN.name&&
+            session.centerStatus!=AnchorCenterStatus.RESOLVED.name&&
+            session.anchorPositionMode==AnchorPositionMode.ESTIMATE.name
+        return if(reversingBackdown)(course.trueDegrees+180.0)%360.0 else course.trueDegrees
+    }
+    val freshNmeaWind=nmeaHeadingFix?.let{candidate->
+        nowElapsed-candidate.receivedElapsedRealtime in 0L..5_000L&&
+            listOf(candidate.windDirectionTrueDegrees,candidate.apparentWindAngleDegrees,candidate.trueWindAngleDegrees,candidate.trueWindSpeedKnots,candidate.apparentWindSpeedKnots).any{it!=null}
+    }==true
+    val windHeading=if(freshNmeaWind)WindAnchorEvidence.summarize(points.takeLast(300).map{point->WindAnchorEvidence.Sample(point.timestamp,point.latitude,point.longitude,point.sog,point.cog,point.heading.takeIf{point.headingMeasured},point.windDirectionTrue,point.trueWindAngle,point.apparentWindAngle,point.trueWindSpeedKnots,point.apparentWindSpeedKnots,point.headingSampleSequence,point.windSampleSequence)}).observations.lastOrNull{it.source!=WindAnchorEvidence.Source.PHYSICAL_HEADING&&it.source!=WindAnchorEvidence.Source.BACKDOWN_COG}?.headingToAnchorDegrees else null
+    if(windHeading!=null)return windHeading
     val phoneFresh=livePhoneHeading?.trueHeadingDegrees!=null&&livePhoneHeading.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true
     if(phoneFresh)return livePhoneHeading?.trueHeadingDegrees
-    fix.headingTrueDegrees?.let{return it}
-    val windHeading=WindAnchorEvidence.summarize(points.takeLast(300).map{point->WindAnchorEvidence.Sample(point.timestamp,point.latitude,point.longitude,point.sog,point.cog,point.heading.takeIf{point.headingMeasured},point.windDirectionTrue,point.trueWindAngle,point.apparentWindAngle,point.trueWindSpeedKnots,point.apparentWindSpeedKnots,point.headingSampleSequence,point.windSampleSequence)}).observations.lastOrNull{it.source!=WindAnchorEvidence.Source.PHYSICAL_HEADING&&it.source!=WindAnchorEvidence.Source.BACKDOWN_COG}?.headingToAnchorDegrees
-    if(windHeading!=null)return windHeading
-    return if(session?.placementMode==AnchorPlacementMode.BACKDOWN.name&&fix.cogTrueDegrees!=null&&(fix.sogKnots?:0.0)>=.8)(fix.cogTrueDegrees+180.0)%360.0 else fix.cogTrueDegrees?.takeIf{(fix.sogKnots?:0.0)>=.8}
+    val selectedHeadingFresh=fix.headingTrueDegrees!=null&&(fix.headingReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{nowElapsed-it in 0L..3_000L}
+    if(selectedHeadingFresh)return fix.headingTrueDegrees
+    val selectedCogFresh=fix.positionProvider!=com.yokuli.anchorwatch.domain.model.PositionProvider.NMEA&&fix.cogTrueDegrees!=null&&
+        (fix.cogReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{nowElapsed-it in 0L..3_000L}
+    return fix.cogTrueDegrees?.takeIf{selectedCogFresh&&(fix.sogKnots?:0.0)>=NmeaCourseTrustGate.ENTER_SPEED_KNOTS}
 }
 
 internal data class FadingTrailChunk(val points:List<LatLng>,val alpha:Float)
