@@ -35,13 +35,7 @@ jobs:
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
-        run: |
-          ./gradlew --no-daemon testDebugUnitTest \
-            --tests com.yokuli.anchorwatch.LongRunningFaultStoryTest \
-            --tests com.yokuli.anchorwatch.NmeaTransportFaultTest \
-            --tests com.yokuli.anchorwatch.TidePredictionTest \
-            --tests com.yokuli.anchorwatch.RuntimeWallClockSoakTest \
-            --stacktrace
+        run: ./gradlew --no-daemon testDebugUnitTest --tests com.yokuli.anchorwatch.LongRunningFaultStoryTest --tests com.yokuli.anchorwatch.NmeaTransportFaultTest --tests com.yokuli.anchorwatch.TidePredictionTest --tests com.yokuli.anchorwatch.RuntimeWallClockSoakTest --stacktrace
       - name: Reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -64,6 +58,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v6
+      - name: Enable KVM hardware acceleration
+        run: bash .github/scripts/enable_kvm.sh
       - name: Device story chain
         uses: reactivecircus/android-emulator-runner@v2.38.0
         env:
@@ -78,8 +74,7 @@ jobs:
           script: |
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
-            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.yokuli.anchorwatch.BackupRestoreStoryTest,com.yokuli.anchorwatch.BackupHighVolumeStoryTest,com.yokuli.anchorwatch.Migration5To6Test,com.yokuli.anchorwatch.AnchorSafetyFlowTest,com.yokuli.anchorwatch.SonarIncrementalGridTest,com.yokuli.anchorwatch.SonarTileScaleTest,com.yokuli.anchorwatch.AccessibilityLayoutTest
+            bash .github/scripts/run_device_tests.sh soak
       - name: Device reports
         if: always()
         uses: actions/upload-artifact@v6

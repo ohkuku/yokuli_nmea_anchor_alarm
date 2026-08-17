@@ -50,7 +50,31 @@ gitGraph
 - **Beta**：功能冻结，只修发布阻断缺陷。来源是 `codex/release/*`（特殊情况下 main），tag 为 `vX.Y.Z-beta.N`。
 - **Stable**：来源只能是 `main`，tag 必须是 `vX.Y.Z`，不能带预发布后缀。
 
-GitHub 的 `Publish Anchor Watch Release` 手动 Action 会验证“当前分支 + channel + tag”组合；组合不合法会在构建和签名前直接失败。之后它会跑完整设备 story、Unit、Release Lint，生成签名 APK/AAB、校验签名和 SHA‑256，再创建 GitHub Release。
+发布由 Git tag 驱动：`scripts/release/manage-release.sh publish TAG` 会验证当前分支干净且已完整
+推送，然后只创建并推送不可变 tag。GitHub 的 `Publish Anchor Watch Release` Action 会自动识别
+channel 和版本号，运行完整设备 story、Unit、Release Lint，生成签名 APK/AAB、校验签名和
+SHA‑256，再创建可下载的 GitHub Release。本机不负责编译正式包。网页上的手动 Action 仍是
+兜底入口，只需选择正确来源分支并填写同样格式的 tag。
+
+```bash
+# codex/develop：自动发布 alpha
+scripts/release/manage-release.sh publish v1.1.0-alpha.1
+
+# codex/release/1.1.0：自动发布 beta
+scripts/release/manage-release.sh publish v1.1.0-beta.1
+
+# main：自动发布 stable
+scripts/release/manage-release.sh publish v1.1.0
+```
+
+Android `versionName` 直接取 tag 去掉 `v`；`versionCode` 由语义版本和发布阶段确定性计算，保证
+同一版本 `alpha < beta < stable`，不再需要手工维护 Action 输入值。
+
+日常推荐直接打开[可视化版本发布台](RELEASE_CONSOLE.md)：
+
+```bash
+scripts/release/manage-release.sh console
+```
 
 ### 版本合并规则
 
@@ -58,7 +82,9 @@ GitHub 的 `Publish Anchor Watch Release` 手动 Action 会验证“当前分支
 - hotfix 从 main 开始，修复后同时合回 main 与 develop。
 - 不对共享分支 force-push；不删除 main 上的正式 tag。
 - Android `versionCode` 永远递增；`versionName` 与 tag 去掉开头 `v` 后一致。
-- Release signing key 只存在于 GitHub Actions secrets，不提交进仓库。
+- Release signing key 的权威副本保存在本机受保护 vault 和离线加密备份；GitHub Actions Secrets
+  只保存 CI 所需副本，任何签名材料都不提交进仓库。初始化、备份及 Secret 配置见
+  [正式版签名管理](RELEASE_SIGNING.md)。
 
 ### 下载开发包
 
@@ -95,12 +121,36 @@ Debug APK 使用调试签名，不能覆盖由正式签名安装的 stable APK�
 - beta: `codex/release/*` or main; `vX.Y.Z-beta.N`
 - stable: main only; `vX.Y.Z`
 
-The release workflow performs the full device story gate before signing. It then runs JVM tests and Release Lint, builds signed APK/AAB files, verifies the APK signature, emits SHA‑256 checksums, and creates a GitHub Release. Non-stable channels are always marked as pre-releases.
+Releases are tag-driven. `scripts/release/manage-release.sh publish TAG` validates that the selected
+branch is clean and exactly matches its remote, then creates and pushes only an immutable tag. GitHub
+Actions derives the channel, `versionName`, and monotonic `versionCode`, performs the full device story
+gate, runs JVM tests and Release Lint, builds signed APK/AAB files, verifies the signature, emits
+SHA‑256 checksums, and creates a downloadable GitHub Release. The web-based manual action remains a
+fallback and requires only the tag. Non-stable channels are marked as pre-releases.
+
+For routine publishing, open the [visual Release Console](RELEASE_CONSOLE.md):
+
+```bash
+scripts/release/manage-release.sh console
+```
+
+```bash
+# codex/develop
+scripts/release/manage-release.sh publish v1.1.0-alpha.1
+
+# codex/release/1.1.0
+scripts/release/manage-release.sh publish v1.1.0-beta.1
+
+# main
+scripts/release/manage-release.sh publish v1.1.0
+```
 
 ### Recovery rules
 
 - Never force-push shared integration/release branches.
 - Hotfix from main and merge the fix into both main and develop.
 - Keep production tags immutable.
-- Keep signing material only in GitHub Actions secrets.
+- Keep the authoritative signing key in the protected local vault plus encrypted offline backups;
+  GitHub Actions Secrets contain only the CI copy. Never commit signing material. See
+  [Release signing management](RELEASE_SIGNING.md).
 - A failing build may expose a clearly named `UNVERIFIED` diagnostic APK for troubleshooting; it is not a distributable test release.

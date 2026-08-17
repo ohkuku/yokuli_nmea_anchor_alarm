@@ -1,29 +1,17 @@
 name: Publish Anchor Watch Release
 
 on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
   workflow_dispatch:
     inputs:
       tag:
-        description: Git tag, for example v1.0.0
+        description: Git tag; version and channel are derived automatically
         required: true
         type: string
-      version_name:
-        description: Android version name, for example 1.0.0
-        required: true
-        type: string
-      version_code:
-        description: Monotonically increasing Android version code
-        required: true
-        type: number
-      channel:
-        description: Release channel; stable is permitted only from main
-        required: true
-        default: alpha
-        type: choice
-        options:
-          - alpha
-          - beta
-          - stable
 
 concurrency:
   group: android-release
@@ -35,26 +23,53 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.tag }}
+      version_name: ${{ steps.metadata.outputs.version_name }}
+      version_code: ${{ steps.metadata.outputs.version_code }}
+      release_channel: ${{ steps.metadata.outputs.channel }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Resolve release metadata
+        id: metadata
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+        run: bash .github/scripts/resolve_release_metadata.sh
       - name: Enforce release topology
         env:
+          RELEASE_EVENT: ${{ github.event_name }}
           RELEASE_REF: ${{ github.ref }}
-          RELEASE_TAG: ${{ inputs.tag }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_CHANNEL: ${{ steps.metadata.outputs.channel }}
         run: |
+          if [ "$RELEASE_EVENT" = "workflow_dispatch" ]; then
+            case "$RELEASE_CHANNEL" in
+              alpha) [[ "$RELEASE_REF" == "refs/heads/codex/develop" || "$RELEASE_REF" == refs/heads/codex/release/* ]] ;;
+              beta) [[ "$RELEASE_REF" == refs/heads/codex/release/* || "$RELEASE_REF" == "refs/heads/main" ]] ;;
+              stable) [[ "$RELEASE_REF" == "refs/heads/main" ]] ;;
+              *) exit 1 ;;
+            esac
+            exit 0
+          fi
+
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          is_on_branch() {
+            git merge-base --is-ancestor "$RELEASE_SHA" "refs/remotes/origin/$1" 2>/dev/null
+          }
+          is_on_release_branch() {
+            while IFS= read -r release_branch; do
+              if git merge-base --is-ancestor "$RELEASE_SHA" "$release_branch"; then return 0; fi
+            done < <(git for-each-ref --format='%(refname)' 'refs/remotes/origin/codex/release/*')
+            return 1
+          }
           case "$RELEASE_CHANNEL" in
-            alpha)
-              [[ "$RELEASE_REF" == "refs/heads/codex/develop" || "$RELEASE_REF" == refs/heads/codex/release/* ]]
-              [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
-              ;;
-            beta)
-              [[ "$RELEASE_REF" == refs/heads/codex/release/* || "$RELEASE_REF" == "refs/heads/main" ]]
-              [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]
-              ;;
-            stable)
-              [[ "$RELEASE_REF" == "refs/heads/main" ]]
-              [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-              ;;
+            alpha) is_on_branch codex/develop || is_on_release_branch ;;
+            beta) is_on_release_branch || is_on_branch main ;;
+            stable) is_on_branch main ;;
             *) exit 1 ;;
           esac
 
@@ -73,6 +88,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v6
+      - name: Enable KVM hardware acceleration
+        run: bash .github/scripts/enable_kvm.sh
       - name: Full device story chain
         uses: reactivecircus/android-emulator-runner@v2.38.0
         env:
@@ -90,7 +107,7 @@ jobs:
           script: |
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
-            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace
+            bash .github/scripts/run_device_tests.sh all
 
   api36-smoke:
     name: Release API 36 launch smoke
@@ -107,6 +124,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v6
+      - name: Enable KVM hardware acceleration
+        run: bash .github/scripts/enable_kvm.sh
       - name: Android 16 launch and accessibility smoke
         uses: reactivecircus/android-emulator-runner@v2.38.0
         env:
@@ -124,11 +143,10 @@ jobs:
           script: |
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
-            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.yokuli.anchorwatch.AppLaunchTest,com.yokuli.anchorwatch.AccessibilityLayoutTest
+            bash .github/scripts/run_device_tests.sh smoke
 
   publish:
-    needs: [device-quality, api36-smoke]
+    needs: [validate-release, device-quality, api36-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -143,6 +161,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Product identity and free-feature policy guard
         run: bash .github/scripts/product_policy_guard.sh
+      - name: Validate release signing secrets
+        env:
+          ANDROID_SIGNING_KEY_BASE64: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in ANDROID_SIGNING_KEY_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions secret: $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
       - name: Restore release signing key
         env:
           SIGNING_KEY_BASE64: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
@@ -158,8 +191,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          VERSION_NAME: ${{ inputs.version_name }}
-          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ needs.validate-release.outputs.version_name }}
+          VERSION_CODE: ${{ needs.validate-release.outputs.version_code }}
         run: ./gradlew --no-daemon testDebugUnitTest lintRelease assembleRelease bundleRelease --stacktrace
       - name: Verify APK signature and create checksums
         run: |
@@ -170,11 +203,21 @@ jobs:
             app/build/outputs/apk/release/app-release.apk \
             app/build/outputs/bundle/release/app-release.aab \
             > SHA256SUMS.txt
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: anchor-watch-${{ needs.validate-release.outputs.release_tag }}-signed
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/bundle/release/app-release.aab
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_TAG: ${{ needs.validate-release.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ needs.validate-release.outputs.release_channel }}
         run: |
           prerelease_flag=""
           if [ "$RELEASE_CHANNEL" != "stable" ]; then prerelease_flag="--prerelease"; fi

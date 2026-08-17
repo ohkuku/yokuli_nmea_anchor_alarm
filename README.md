@@ -122,7 +122,7 @@ JDK 17 and Android SDK 36 are required. API credentials are not committed. Put l
 ./gradlew connectedDebugAndroidTest
 ```
 
-The main workflow runs unit tests, lint, Debug compilation, three Android 14 device-story shards, and an Android 16/API 36 launch and accessibility smoke. A downloadable `anchor-watch-debug-verified-<commit SHA>` artifact is published only after every gate passes. Production publishing is a separate manual signed release workflow.
+The main workflow runs unit tests, lint, Debug compilation, three Android 14 device-story shards, and an Android 16/API 36 launch and accessibility smoke. A downloadable `anchor-watch-debug-verified-<commit SHA>` artifact is published only after every gate passes. Signed releases are built and published online when a validated version tag is pushed; a tag-only manual workflow remains as fallback.
 
 Local project policy is to write tests with changes but run them only when explicitly requested. The commit-specific GitHub Actions result is the authoritative full quality gate.
 
@@ -133,6 +133,8 @@ Branch and release conventions are documented in [Branching and releases](docs/B
 - [Product identity](docs/PRODUCT_IDENTITY.md)
 - [Support policy](docs/SUPPORT_POLICY.md)
 - [Privacy and data flow](docs/PRIVACY_DATA_FLOW.md)
+- [Visual Release Console](docs/RELEASE_CONSOLE.md)
+- [Release signing management](docs/RELEASE_SIGNING.md)
 - [Play release checklist](docs/PLAY_RELEASE_CHECKLIST.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 

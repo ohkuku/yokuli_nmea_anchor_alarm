@@ -2,6 +2,8 @@ name: Anchor Watch Android CI
 
 on:
   push:
+    branches:
+      - '**'
   pull_request:
   workflow_dispatch:
 
@@ -142,6 +144,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
+      - name: Enable KVM hardware acceleration
+        run: bash .github/scripts/enable_kvm.sh
       - name: Instrumented integration tests
         uses: reactivecircus/android-emulator-runner@v2.38.0
         env:
@@ -162,9 +166,7 @@ jobs:
             adb shell settings put global transition_animation_scale 0
             adb shell settings put global animator_duration_scale 0
             adb emu geo fix 174.7633 -36.8485
-            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.numShards=3 \
-              -Pandroid.testInstrumentationRunnerArguments.shardIndex=${{ matrix.shard_index }}
+            bash .github/scripts/run_device_tests.sh shard 3 ${{ matrix.shard_index }}
       - name: Upload integration reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -200,6 +202,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: true
+      - name: Enable KVM hardware acceleration
+        run: bash .github/scripts/enable_kvm.sh
       - name: API 36 launch and accessibility smoke
         uses: reactivecircus/android-emulator-runner@v2.38.0
         env:
@@ -217,8 +221,7 @@ jobs:
           script: |
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
-            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.yokuli.anchorwatch.AppLaunchTest,com.yokuli.anchorwatch.AccessibilityLayoutTest
+            bash .github/scripts/run_device_tests.sh smoke
       - name: Upload API 36 smoke reports
         if: always()
         uses: actions/upload-artifact@v6

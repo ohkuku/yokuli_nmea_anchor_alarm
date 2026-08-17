@@ -7,3 +7,6 @@ captures/
 .DS_Store
 *.jks
 *.keystore
+.signing/
+__pycache__/
+*.pyc

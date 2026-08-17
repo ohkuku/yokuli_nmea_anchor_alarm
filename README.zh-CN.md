@@ -122,7 +122,7 @@ Session 与调查数据保存在本机。项目没有账号、分析统计、广
 ./gradlew connectedDebugAndroidTest
 ```
 
-主 workflow 会运行单元测试、lint、Debug 编译、三个 Android 14 设备 story 分片，以及 Android 16/API 36 启动和无障碍 smoke。只有全部通过后才会发布可下载的 `anchor-watch-debug-verified-<commit SHA>` 产物；正式签名发布使用独立的手动 workflow。
+主 workflow 会运行单元测试、lint、Debug 编译、三个 Android 14 设备 story 分片，以及 Android 16/API 36 启动和无障碍 smoke。只有全部通过后才会发布可下载的 `anchor-watch-debug-verified-<commit SHA>` 产物；推送通过校验的版本 tag 后，正式签名包会完全在线构建并发布，网页手动 workflow 作为只需填写 tag 的兜底入口。
 
 本项目本地规则是“修改时写测试，但只有用户明确要求时才运行”。当前 commit 对应的 GitHub Actions 结果才是完整质量门禁的权威结果。
 
@@ -133,6 +133,8 @@ Session 与调查数据保存在本机。项目没有账号、分析统计、广
 - [产品身份](docs/PRODUCT_IDENTITY.md)
 - [支持政策](docs/SUPPORT_POLICY.md)
 - [隐私与数据流](docs/PRIVACY_DATA_FLOW.md)
+- [可视化版本发布台](docs/RELEASE_CONSOLE.md)
+- [正式版签名管理](docs/RELEASE_SIGNING.md)
 - [Play 发布清单](docs/PLAY_RELEASE_CHECKLIST.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)
 

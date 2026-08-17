@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Anchor Watch Release Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="brand-lockup">
+        <img src="/logo.png" alt="Anchor Watch" class="logo">
+        <div>
+          <p class="eyebrow">DEVELOPED ON SV YOKULI</p>
+          <h1>Release Console</h1>
+          <p class="lede">Choose a version here. GitHub handles the safety gates, signing, build and download.</p>
+        </div>
+      </div>
+      <button id="refreshButton" class="quiet-button" type="button">Refresh status</button>
+    </header>
+
+    <section aria-labelledby="readinessTitle">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">STEP 1</p>
+          <h2 id="readinessTitle">Ready to release?</h2>
+        </div>
+        <span id="readyBadge" class="badge neutral">Checking…</span>
+      </div>
+      <div class="status-grid">
+        <article class="status-card">
+          <span class="status-name">Branch</span>
+          <strong id="branchValue">—</strong>
+          <small id="commitValue">—</small>
+        </article>
+        <article class="status-card">
+          <span class="status-name">Local changes</span>
+          <strong id="worktreeValue">—</strong>
+          <small>Release tags require a clean worktree.</small>
+        </article>
+        <article class="status-card">
+          <span class="status-name">GitHub sync</span>
+          <strong id="syncValue">—</strong>
+          <small id="upstreamValue">—</small>
+        </article>
+        <article class="status-card">
+          <span class="status-name">Signing</span>
+          <strong>Online vault</strong>
+          <small id="signingValue">Checked before every build.</small>
+        </article>
+      </div>
+      <p id="readinessHelp" class="notice" role="status"></p>
+    </section>
+
+    <section aria-labelledby="channelTitle">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">STEP 2</p>
+          <h2 id="channelTitle">Choose the release channel</h2>
+        </div>
+      </div>
+      <div id="channelButtons" class="channel-grid" role="radiogroup" aria-label="Release channel"></div>
+    </section>
+
+    <section aria-labelledby="versionTitle" class="release-panel">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">STEP 3</p>
+          <h2 id="versionTitle">Confirm the version</h2>
+        </div>
+      </div>
+      <label for="tagInput">Release tag</label>
+      <div class="tag-row">
+        <input id="tagInput" type="text" autocomplete="off" spellcheck="false" placeholder="v1.0.0-alpha.1">
+        <button id="suggestButton" class="quiet-button" type="button">Use suggestion</button>
+      </div>
+      <p id="tagHelp" class="field-help">The tag controls channel, version name and Android version code.</p>
+
+      <div class="release-summary">
+        <div>
+          <span>Build location</span>
+          <strong>GitHub Actions</strong>
+        </div>
+        <div>
+          <span>Outputs</span>
+          <strong>Signed APK + AAB + SHA-256</strong>
+        </div>
+        <div>
+          <span>Publication</span>
+          <strong id="publicationValue">Pre-release</strong>
+        </div>
+      </div>
+
+      <button id="publishButton" class="publish-button" type="button" disabled>Publish online</button>
+      <pre id="resultBox" class="result-box" hidden aria-live="polite"></pre>
+    </section>
+
+    <footer>
+      <a id="actionsLink" href="https://github.com/ohkuku/yokuli_nmea_anchor_alarm/actions/workflows/release.yml" target="_blank" rel="noreferrer">Open Release Actions</a>
+      <a id="releasesLink" href="https://github.com/ohkuku/yokuli_nmea_anchor_alarm/releases" target="_blank" rel="noreferrer">Open downloads</a>
+      <span>Runs only on 127.0.0.1 · Control-C stops the console</span>
+    </footer>
+  </main>
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
