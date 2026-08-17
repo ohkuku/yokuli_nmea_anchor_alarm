@@ -66,10 +66,16 @@ class RuntimeActorTest {
 
     @Test fun telemetryMailboxIsBoundedWhileExecuteWaitsForCapacity() = runBlocking {
         val restore = CompletableDeferred<Unit>()
+        val restoreEntered = CompletableDeferred<Unit>()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val actor = SerialRuntimeActor(scope, { restore.await() }, mailboxCapacity = 2, onFailure = { throw it })
+        val actor = SerialRuntimeActor(scope, {
+            restoreEntered.complete(Unit)
+            restore.await()
+        }, mailboxCapacity = 2, onFailure = { throw it })
         assertTrue(actor.submit { })
-        yield()
+        // Wait for the actor to consume the first item. `yield()` only hints to the
+        // scheduler and was racy on slower GitHub runners.
+        withTimeout(2_000) { restoreEntered.await() }
         assertTrue(actor.submit { })
         assertTrue(actor.submit { })
         assertFalse(actor.submit { })

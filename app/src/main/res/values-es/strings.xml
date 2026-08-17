@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">Anchor Watch</string>
+    <string name="about_page_title">Acerca de y soporte</string>
+    <string name="about_back">Atrás</string>
+    <string name="about_logo_description">Logotipo de ancla pixel art de Anchor Watch</string>
+    <string name="about_maker_line">Creado a bordo de Yokuli</string>
+    <string name="about_core_line">Creado entre fondeaderos.\nMoldeado por el mar que hay al otro lado de nuestra escotilla.</string>
+    <string name="about_tagline">Una vigilancia de fondeo gratuita y práctica, nacida de la vida a bordo de Yokuli.</string>
+    <string name="about_crew_eyebrow">LA TRIPULACIÓN</string>
+    <string name="about_crew_title">Quiénes somos</string>
+    <string name="about_crew_role_developer">Desarrollador · tripulación de Yokuli</string>
+    <string name="about_crew_role_captain">Capitana · tripulación de Yokuli</string>
+    <string name="about_crew_role_member">Tripulación de Yokuli</string>
+    <string name="about_link_failed">Ninguna aplicación puede abrir este enlace seguro.</string>
+    <string name="onboarding_maker_body">Antes del mar, kuku escribía software. En Nueva Zelanda, nuestra tripulación restauró Yokuli, un Lotus 10.6 diseñado por Alan Wright, y empezó a crear las herramientas que realmente quería para el viaje.</string>
+    <string name="onboarding_meet_crew">Conocer a la tripulación</string>
+    <string name="onboarding_watch_yokuli">Ver Yokuli</string>
+    <string name="onboarding_continue">Entrar en Anchor Watch</string>
+    <string name="onboarding_no_support">Todas las funciones son gratuitas. Esta introducción nunca pide apoyo.</string>
+    <string name="feedback_title">Comentarios y solicitudes de funciones</string>
+    <string name="feedback_intro_title">Cuéntale a kuku qué te ayudaría a bordo</string>
+    <string name="feedback_open_email">Abrir la aplicación de correo</string>
+</resources>

@@ -45,10 +45,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.yokuli.anchorwatch.R
 import com.yokuli.anchorwatch.LocalAppLanguage
+import com.yokuli.anchorwatch.LanguagePickerDialog
 import com.yokuli.anchorwatch.brand.ProductBrand
 import com.yokuli.anchorwatch.brand.ProductCrew
 import com.yokuli.anchorwatch.domain.model.AppLanguage
-import com.yokuli.anchorwatch.localization.usesChinese
+import com.yokuli.anchorwatch.localization.nativeName
 import kotlinx.coroutines.launch
 
 /** The calm, non-commercial last page of first-run onboarding. */
@@ -60,6 +61,7 @@ fun OnboardingMakerScreen(onContinue: () -> Unit, onLanguageChange: (AppLanguage
     val scope = rememberCoroutineScope()
     val linkFailed = aboutString(R.string.about_link_failed)
     var showCrew by remember { mutableStateOf(false) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(
@@ -68,15 +70,14 @@ fun OnboardingMakerScreen(onContinue: () -> Unit, onLanguageChange: (AppLanguage
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            val chinese=LocalAppLanguage.current.usesChinese()
             Box(Modifier.fillMaxWidth()){
                 OutlinedButton(
-                    onClick={onLanguageChange(if(chinese)AppLanguage.ENGLISH else AppLanguage.SIMPLIFIED_CHINESE)},
+                    onClick={showLanguagePicker=true},
                     modifier=Modifier.align(Alignment.CenterEnd).testTag("onboarding_language"),
                 ){
                     Icon(Icons.Default.Language,null)
                     Spacer(Modifier.size(6.dp))
-                    Text(if(chinese)"English" else "中文")
+                    Text(LocalAppLanguage.current.nativeName)
                 }
             }
             Image(
@@ -134,4 +135,5 @@ fun OnboardingMakerScreen(onContinue: () -> Unit, onLanguageChange: (AppLanguage
             )
         }
     }
+    if(showLanguagePicker)LanguagePickerDialog(LocalAppLanguage.current,{showLanguagePicker=false}){language->onLanguageChange(language);showLanguagePicker=false}
 }

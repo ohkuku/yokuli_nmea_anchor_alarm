@@ -24,10 +24,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -72,51 +70,48 @@ fun AnchorageCluster.setupReference() = AnchorageSetupReference(
 @Composable
 internal fun NearbyAnchorageCard(
     nearby: List<AnchorageClusterDistance>,
-    details: (AnchorageCluster) -> Unit,
-    approach: (AnchorageCluster) -> Unit,
-    dismiss: () -> Unit,
+    savedAnchorages: List<SavedAnchorageEntity>,
+    actions: SavedAnchorageCardActions,
+    openList: (List<Long>) -> Unit,
+    dismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (nearby.isEmpty()) return
-    ElevatedCard(modifier.fillMaxWidth().testTag("anchorage_nearby_prompt")) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Anchor, null, tint = ApproachTeal)
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (nearby.size == 1) tr("SAVED ANCHORAGE NEARBY", "收藏锚地在附近")
-                        else tr("${nearby.size} SAVED ANCHORING AREAS NEARBY", "附近有 ${nearby.size} 个收藏锚地范围"),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
+    val ids=nearby.flatMap{it.cluster.savedAnchorageIds}.distinct()
+    val members=ids.mapNotNull{id->savedAnchorages.firstOrNull{it.id==id}}
+    if(members.isEmpty())return
+    val distanceById=nearby.flatMap{candidate->candidate.cluster.savedAnchorageIds.map{it to candidate.distanceToAreaMeters}}.toMap()
+    Box(modifier.fillMaxWidth().testTag("anchorage_nearby_prompt")){
+        if(members.size==1){
+            val saved=members.single()
+            ElevatedCard(Modifier.fillMaxWidth().testTag("saved_anchorage_card_${saved.id}")){
+                Box(Modifier.fillMaxWidth()){
+                    SavedAnchorageDetailsContent(
+                        saved=saved,
+                        actions=actions,
+                        modifier=Modifier.fillMaxWidth().padding(14.dp).padding(end=if(dismiss!=null)36.dp else 0.dp),
+                        distanceText=distanceById[saved.id]?.let(ApproachDistanceFormatter::format),
                     )
-                    Text(
-                        tr("Direct reference only · not navigation", "仅提供直线参考 · 不是导航"),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(dismiss, Modifier.testTag("anchorage_nearby_dismiss")) {
-                    Icon(Icons.Default.Close, tr("Dismiss", "忽略"))
+                    dismiss?.let{close->IconButton(close,Modifier.align(Alignment.TopEnd).testTag("anchorage_nearby_dismiss")){
+                        Icon(Icons.Default.Close,tr("Dismiss","忽略"))
+                    }}
                 }
             }
-            nearby.forEach { candidate ->
-                if (nearby.size > 1) HorizontalDivider()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(candidate.cluster.displayName, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "${ApproachDistanceFormatter.format(candidate.distanceToAreaMeters)} · " +
-                                tr("${candidate.cluster.savedPointCount} saved anchor points", "${candidate.cluster.savedPointCount} 个收藏锚点"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+        }else{
+            ElevatedCard(Modifier.fillMaxWidth()){
+                Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        Icon(Icons.Default.Anchor,null,tint=ApproachTeal)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)){
+                            Text(tr("${members.size} SAVED ANCHORAGES NEARBY","附近有 ${members.size} 个收藏锚地"),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
+                            Text(tr("Open the list to view each saved anchorage card.","打开列表可直接查看每个收藏锚地卡片。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        dismiss?.let{close->IconButton(close,Modifier.testTag("anchorage_nearby_dismiss")){Icon(Icons.Default.Close,tr("Dismiss","忽略"))}}
                     }
-                    TextButton({ details(candidate.cluster) }) { Text(tr("Details", "详情")) }
-                    Button(
-                        { approach(candidate.cluster) },
-                        Modifier.testTag("approach_${candidate.cluster.id}"),
-                    ) { Text(tr("Approach", "接近指引")) }
+                    Button({openList(ids)},Modifier.fillMaxWidth().testTag("nearby_anchorage_list")){
+                        Text(tr("View ${members.size} anchorage cards","查看 ${members.size} 个锚地卡片"))
+                    }
                 }
             }
         }
@@ -248,39 +243,29 @@ internal fun AnchorageApproachDisclaimerDialog(confirm: () -> Unit, dismiss: () 
 }
 
 @Composable
-internal fun AnchorageClusterDetailsDialog(
-    cluster: AnchorageCluster,
+internal fun AnchorageListDialog(
     members: List<SavedAnchorageEntity>,
     dismiss: () -> Unit,
-    approach: () -> Unit,
-    openMember: (SavedAnchorageEntity) -> Unit,
+    actions: SavedAnchorageCardActions,
 ) {
     AlertDialog(
         onDismissRequest = dismiss,
-        title = { Text(cluster.displayName) },
+        title = { Text(tr("Saved anchorages nearby", "附近收藏锚地")) },
         confirmButton = { TextButton(dismiss) { Text(tr("Close", "关闭")) } },
         text = {
             Column(
                 Modifier.heightIn(max = 600.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(tr("${cluster.savedPointCount} saved anchor points", "${cluster.savedPointCount} 个收藏锚点"), style = MaterialTheme.typography.titleMedium)
-                HistoricalReferenceSummary(cluster)
-                if (cluster.radiusEstimated) Text(tr("Reference area estimated at 40 m", "参考范围按 40 米估算"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                HorizontalDivider()
-                Text(tr("SAVED ANCHOR POINTS", "收藏锚点"), style = MaterialTheme.typography.labelLarge)
+                Text(
+                    tr("Each saved anchorage is shown as its complete card.", "每个收藏锚地都直接显示为完整卡片。"),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 members.forEach { saved ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(saved.name, fontWeight = FontWeight.SemiBold)
-                                Text("%.5f, %.5f".format(saved.latitude, saved.longitude), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            TextButton({ openMember(saved) }) { Text(tr("View", "查看")) }
-                        }
+                    Box(Modifier.fillMaxWidth().testTag("anchorage_list_item_${saved.id}")){
+                        SavedAnchorageCard(saved,actions)
                     }
                 }
-                Button(approach, Modifier.fillMaxWidth()) { Text(tr("Approach", "接近指引")) }
             }
         },
     )

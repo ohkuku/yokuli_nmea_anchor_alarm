@@ -10,6 +10,8 @@ import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachEngine
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterer
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyPolicy
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDistanceFormatter
 import com.yokuli.anchorwatch.domain.anchorage.ApproachPhase
@@ -111,6 +113,7 @@ class AnchorageApproachStoryTest {
         }
         val clusters = AnchorageClusterer.cluster(listOf(saved(1, 0.0), saved(2, 600.0)))
         assertEquals(2, clusters.size)
+        assertEquals(AnchorageDetailsTarget.AnchorageList(listOf(1L,2L)),AnchorageDetailsPolicy.resolve(clusters))
         val boat = AnchorGeometry.project(-36.8, 175.1, 90.0, 300.0)
         assertEquals(2, AnchorageNearbyPolicy.distances(boat.first, boat.second, clusters).count { it.distanceToAreaMeters <= 1852.0 })
 

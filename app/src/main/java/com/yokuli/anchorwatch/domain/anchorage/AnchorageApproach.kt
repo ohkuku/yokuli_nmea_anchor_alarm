@@ -281,11 +281,28 @@ object AnchorageApproachEngine {
 
 object ApproachDistanceFormatter {
     private const val NAUTICAL_MILE_METERS = 1852.0
-    private const val METRES_THRESHOLD = .2 * NAUTICAL_MILE_METERS
+    // Keep the display boundary literal. `.2 * 1852.0` evaluates a fraction above
+    // 370.4 on the JVM, so an exact 0.2 NM fix could incorrectly fall through to metres.
+    private const val METRES_THRESHOLD = 370.4
 
     fun format(meters: Double): String = if (meters >= METRES_THRESHOLD) {
         "%.1f NM".format(java.util.Locale.US, meters / NAUTICAL_MILE_METERS)
     } else {
         "${meters.coerceAtLeast(0.0).roundToInt()} m"
+    }
+}
+
+sealed interface AnchorageDetailsTarget {
+    data class SavedAnchorage(val id: Long) : AnchorageDetailsTarget
+    data class AnchorageList(val ids: List<Long>) : AnchorageDetailsTarget
+}
+
+object AnchorageDetailsPolicy {
+    fun resolve(cluster: AnchorageCluster): AnchorageDetailsTarget = resolve(listOf(cluster))
+
+    fun resolve(clusters: List<AnchorageCluster>): AnchorageDetailsTarget {
+        val ids = clusters.flatMap { it.savedAnchorageIds }.distinct()
+        return ids.singleOrNull()?.let(AnchorageDetailsTarget::SavedAnchorage)
+            ?: AnchorageDetailsTarget.AnchorageList(ids)
     }
 }

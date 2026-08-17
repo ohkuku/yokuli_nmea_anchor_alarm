@@ -73,14 +73,18 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthPresentation
 import com.yokuli.anchorwatch.data.linz.LinzDepthStatus
 
 @Composable
-internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,phoneHeading:(Boolean)->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewSaved:(com.yokuli.anchorwatch.data.database.SavedAnchorageEntity)->Unit,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit) {
+internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,phoneHeading:(Boolean)->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewNearby:(List<Long>)->Unit,nearbyActions:SavedAnchorageCardActions,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit) {
     val fix = state.fix; val active = state.active; val now=android.os.SystemClock.elapsedRealtime()
     var showHealth by remember{mutableStateOf(false)};var showDepthDetails by remember{mutableStateOf(false)};var showConditions by remember{mutableStateOf(false)}
     val freshFix = fix?.valid == true && when(state.settings.gpsDataSource){GpsDataSource.NMEA->state.connection == NmeaConnectionState.CONNECTED && state.diagnostics.lastFixElapsed?.let { now-it < state.settings.gpsLossSeconds * 1000L } == true;GpsDataSource.SYSTEM->now-fix.receivedElapsedRealtime < state.settings.gpsLossSeconds * 1000L;GpsDataSource.DEMO->state.demoGps.signalAvailable&&now-fix.receivedElapsedRealtime < state.settings.gpsLossSeconds * 1000L}
     val centerReady=active?.centerStatus==AnchorCenterStatus.RESOLVED.name
     val learningDistance=if(fix!=null&&active!=null&&!centerReady)AnchorGeometry.distanceMeters(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,fix.latitude,fix.longitude)else null
     val distance = if (fix != null && active != null&&centerReady) AnchorGeometry.distanceMeters(active.anchorLatitude, active.anchorLongitude, fix.latitude, fix.longitude) else null
-    val nearby=if(active==null&&fix!=null)state.savedAnchorages.map{it to AnchorGeometry.distanceMeters(fix.latitude,fix.longitude,it.latitude,it.longitude)}.filter{it.second<=250.0}.minByOrNull{it.second}else null
+    // The one-shot map prompt may be dismissed for the current approach episode,
+    // but Watch must retain a discoverable reference while the boat remains within
+    // the same 1 NM policy used by the approach engine. Do not reintroduce the old
+    // 250 m point-distance rule here: the saved object is an anchoring area.
+    val nearby=if(active==null)state.anchorageApproach.nearbyClusters else emptyList()
     Surface(tonalElevation = 3.dp) { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) {
             Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
@@ -96,7 +100,13 @@ internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,pho
         if(active==null)Button(arm,Modifier.fillMaxWidth(),enabled=state.settingsReady){Text(tr("Set anchor","设置锚点"))}
         else{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(if(active.paused)resume else pause,Modifier.weight(1f)){Icon(if(active.paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(6.dp));Text(if(active.paused)tr("Resume","继续") else tr("Pause","暂停"))};OutlinedButton(adjust,Modifier.weight(1f)){Icon(Icons.Default.Tune,null);Spacer(Modifier.width(6.dp));Text(tr("Adjust range","调整范围"))}};OutlinedButton({showConditions=true},Modifier.fillMaxWidth()){Icon(Icons.Default.Air,null);Spacer(Modifier.width(6.dp));Text(tr("Condition alerts","环境警戒"))};if(centerReady)OutlinedButton(openAnchorMap,Modifier.fillMaxWidth().testTag("open_anchor_google_maps")){Icon(Icons.Default.Place,null);Spacer(Modifier.width(6.dp));Text(tr("Open anchor in Google Maps","在 Google 地图中打开锚点"))};TextButton(lift,Modifier.align(Alignment.End),colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Anchor,null);Spacer(Modifier.width(6.dp));Text(tr("Lift anchor","起锚"))}}
         if(active!=null&&(active.depthGuardEnabled||active.windGuardEnabled||active.windShiftEnabled)){val conditions=state.conditions;val depthStatus=depthGuardLabel(conditions.depth.status);val windStatus=windGuardLabel(conditions.windSpeed.status);val shiftStatus=shiftGuardLabel(conditions.windShift.status);Text(buildString{if(active.depthGuardEnabled)append(tr("Depth","水深")+" ${conditions.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:"—"} · $depthStatus");if(active.windGuardEnabled){if(isNotEmpty())append("\n");append(tr("Wind","风速")+" ${conditions.windSpeed.filteredSpeedKnots?.let{"%.1f kn".format(it)}?:"—"} ${conditions.windSpeed.source?:""} · $windStatus")};if(active.windShiftEnabled){if(isNotEmpty())append("\n");append(tr("Shift","风向变化")+" ${conditions.windShift.shiftDegrees?.let{"${it.toInt()}°"}?:"—"} · $shiftStatus")}},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        nearby?.let{(saved,metres)->Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(tr("Near saved anchorage","附近有收藏锚地"),style=MaterialTheme.typography.labelLarge);Text("${saved.name} · ${metres.toInt()} ${tr("m away","米")}",fontWeight=FontWeight.SemiBold);Text(tr("Open the saved notes and parameters for reference. Set the anchor only after you actually arrive and deploy it.","可查看收藏的介绍与参数作为参考；请在真正抵达并完成下锚后再设置锚警。"),style=MaterialTheme.typography.bodySmall);OutlinedButton({viewSaved(saved)},Modifier.fillMaxWidth()){Text(tr("View details","查看详情"))}}}}
+        if(nearby.isNotEmpty())NearbyAnchorageCard(
+            nearby=nearby,
+            savedAnchorages=state.savedAnchorages,
+            actions=nearbyActions,
+            openList=viewNearby,
+            modifier=Modifier.testTag("watch_nearby_anchorage"),
+        )
         val quality=gpsQualityMetric(state.settings.gpsDataSource,fix)
         HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Metric(tr("SOG","航速"), fix?.sogKnots?.let { "%.1f kn".format(it) } ?: "—"); Metric(tr("Heading","艏向"), fix?.let{displayHeading(it,active,state.points,state.phoneHeading)}?.let { "${it.toInt()}°" } ?: "—"); Metric(quality.first,quality.second) }
         DepthSummary(state){showDepthDetails=true}

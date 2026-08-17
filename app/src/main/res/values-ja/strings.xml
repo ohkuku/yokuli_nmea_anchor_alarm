@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">Anchor Watch</string>
+    <string name="about_page_title">アプリ情報とサポート</string>
+    <string name="about_back">戻る</string>
+    <string name="about_logo_description">Anchor Watch のピクセルアート風アンカーロゴ</string>
+    <string name="about_maker_line">Yokuli 船上で開発</string>
+    <string name="about_core_line">錨泊地から錨泊地へ。\n自分たちのハッチの外にある海が形にしました。</string>
+    <string name="about_tagline">Yokuli での船上生活から生まれた、無料で実用的なアンカー監視アプリです。</string>
+    <string name="about_crew_eyebrow">クルー</string>
+    <string name="about_crew_title">私たちについて</string>
+    <string name="about_crew_role_developer">開発者 · Yokuli クルー</string>
+    <string name="about_crew_role_captain">船長 · Yokuli クルー</string>
+    <string name="about_crew_role_member">Yokuli クルー</string>
+    <string name="about_link_failed">この安全なリンクを開けるアプリがありません。</string>
+    <string name="onboarding_maker_body">海へ向かう前、kuku はソフトウェアを作っていました。ニュージーランドで私たちは、Alan Wright 設計の Lotus 10.6「Yokuli」を改装し、これからの航海で本当に使いたい道具を作り始めました。</string>
+    <string name="onboarding_meet_crew">クルー紹介</string>
+    <string name="onboarding_watch_yokuli">Yokuli を見る</string>
+    <string name="onboarding_continue">Anchor Watch を開始</string>
+    <string name="onboarding_no_support">すべての機能は無料です。この紹介画面で支援を求めることはありません。</string>
+    <string name="feedback_title">フィードバックと機能要望</string>
+    <string name="feedback_intro_title">船上で役立つことを kuku に伝える</string>
+    <string name="feedback_open_email">メールアプリを開く</string>
+</resources>

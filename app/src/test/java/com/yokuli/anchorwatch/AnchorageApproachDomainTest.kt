@@ -5,6 +5,8 @@ import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachEngine
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterDistance
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterer
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyEpisodeTracker
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyPolicy
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionPolicy
@@ -97,6 +99,39 @@ class AnchorageClusterRadiusTest {
     }
 }
 
+class AnchorageDetailsPolicyTest {
+    @Test fun oneSavedAnchorageOpensItsRealDetailsDirectly() {
+        val target = AnchorageDetailsPolicy.resolve(singleCluster())
+        assertEquals(AnchorageDetailsTarget.SavedAnchorage(1L), target)
+    }
+
+    @Test fun multipleSavedAnchoragesOpenASelectionList() {
+        val cluster = AnchorageClusterer.cluster(listOf(reference(1), reference(2, eastMeters = 30.0))).single()
+        val target = AnchorageDetailsPolicy.resolve(cluster)
+        assertEquals(AnchorageDetailsTarget.AnchorageList(listOf(1L, 2L)), target)
+    }
+
+    @Test fun multipleNearbyAreasAlsoOpenOneCombinedSelectionList() {
+        val clusters = AnchorageClusterer.cluster(listOf(reference(1), reference(2, eastMeters = 500.0)))
+        assertEquals(2, clusters.size)
+        assertEquals(
+            AnchorageDetailsTarget.AnchorageList(listOf(1L, 2L)),
+            AnchorageDetailsPolicy.resolve(clusters),
+        )
+    }
+}
+
+class ApproachSheetPolicyTest {
+    @Test fun approachTargetCollapsesTheAnchorWatchSheetToRevealTheGuidance() {
+        assertTrue(ApproachSheetPolicy.shouldCollapse("saved:1"))
+    }
+
+    @Test fun idleNearbyDiscoveryDoesNotMoveTheAnchorWatchSheet() {
+        assertFalse(ApproachSheetPolicy.shouldCollapse(null))
+        assertFalse(ApproachSheetPolicy.shouldCollapse(""))
+    }
+}
+
 class AnchorageNearbyPolicyTest {
     @Test fun nearbyUsesDistanceToTheReferenceAreaBoundary() {
         val cluster = singleCluster(50.0)
@@ -168,6 +203,21 @@ class ApproachDistanceTest {
         assertEquals(target.id, state.selectedClusterId)
         assertEquals(ApproachPhase.APPROACHING, state.phase)
         assertTrue(requireNotNull(state.distanceToAreaMeters) > 9.0 * 1852.0)
+    }
+
+    @Test fun dismissingTheOneShotPromptDoesNotHideThePersistentWatchReference() {
+        val target = singleCluster(50.0)
+        val boat = AnchorGeometry.project(target.centerLatitude, target.centerLongitude, 0.0, 353.0)
+        val distance = AnchorageNearbyPolicy.distances(boat.first, boat.second, listOf(target)).single()
+        val tracker = AnchorageNearbyEpisodeTracker()
+
+        assertEquals(listOf(target.id), tracker.update(listOf(distance), automaticPromptEnabled = true))
+        tracker.dismiss(listOf(target.id))
+        assertTrue(tracker.update(listOf(distance), automaticPromptEnabled = true).isEmpty())
+
+        val persistent = AnchorageApproachEngine.evaluate(listOf(target), null, boat.first, boat.second)
+        assertEquals(listOf(target.id), persistent.nearbyClusters.map { it.cluster.id })
+        assertEquals(303.0, persistent.nearbyClusters.single().distanceToAreaMeters, 0.1)
     }
 }
 

@@ -102,12 +102,31 @@ private data class SonarMapInspection(
     val grid:com.yokuli.anchorwatch.domain.sonar.SonarInspection,
 )
 
+internal object ApproachSheetPolicy{
+    fun shouldCollapse(targetClusterId:String?)=!targetClusterId.isNullOrBlank()
+}
+
 @Composable @OptIn(ExperimentalMaterial3Api::class)
 internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
-    var anchorageClusterDetails by remember{mutableStateOf<com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster?>(null)}
+    var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
     var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
+    val openAnchorageList:(List<Long>)->Unit={ids->anchorageDetails=null;anchorageListDetails=ids.distinct()}
+    val nearbyActions=SavedAnchorageCardActions(
+        approach={saved->anchorageListDetails=null;vm.approachSavedAnchorage(saved.id)},
+        openGoogleMaps=vm::openAnchorageInGoogleMaps,
+        shareQr=vm::shareAnchorageQr,
+    )
+    val openAnchorageDetails:(List<com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster>)->Unit={clusters->
+        when(val target=com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy.resolve(clusters)){
+            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.SavedAnchorage->{
+                val saved=state.savedAnchorages.firstOrNull{it.id==target.id}
+                if(saved!=null){anchorageListDetails=null;anchorageDetails=saved}else openAnchorageList(listOf(target.id))
+            }
+            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.AnchorageList->openAnchorageList(target.ids)
+        }
+    }
     val fix = state.fix; val active = state.active
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -184,13 +203,16 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     }
     val bottomSheetState=rememberStandardBottomSheetState(initialValue=SheetValue.PartiallyExpanded,skipHiddenState=true)
     val scaffoldState=rememberBottomSheetScaffoldState(bottomSheetState=bottomSheetState)
+    LaunchedEffect(state.anchorageApproach.selectedClusterId){
+        if(ApproachSheetPolicy.shouldCollapse(state.anchorageApproach.selectedClusterId))bottomSheetState.partialExpand()
+    }
     BottomSheetScaffold(
         modifier=Modifier.fillMaxSize(),
         scaffoldState=scaffoldState,
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
         sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,{anchorageDetails=it},vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
+        sheetContent={WatchPanel(state,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -226,7 +248,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                                 alpha=if(selected)1f else .78f,
                                 anchor=Offset(.5f,.5f),
                                 zIndex=MapOverlayZ.HISTORICAL_ANCHOR,
-                                onClick={anchorageClusterDetails=cluster;true},
+                                onClick={openAnchorageDetails(listOf(cluster));true},
                             )
                         }
                         state.anchorageApproach.target?.let{target->
@@ -262,8 +284,9 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
             CompactWatchStatus(state,Modifier.align(Alignment.TopStart).padding(12.dp))
             NearbyAnchorageCard(
                 nearby=state.nearbyAnchoragePrompt,
-                details={anchorageClusterDetails=it},
-                approach={vm.approachAnchorage(it.id)},
+                savedAnchorages=state.savedAnchorages,
+                actions=nearbyActions,
+                openList=openAnchorageList,
                 dismiss=vm::dismissNearbyAnchorage,
                 modifier=Modifier.align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=76.dp),
             )
@@ -280,7 +303,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
             if(active?.candidateDecision==CandidateDecision.AVAILABLE.name)Box(Modifier.align(Alignment.BottomCenter).padding(bottom=112.dp,start=12.dp,end=12.dp)){EstimatedCenterBanner(state,vm,active)}
             AnchorageApproachOverlay(
                 state=state.anchorageApproach,
-                details={anchorageClusterDetails=it},
+                details={openAnchorageDetails(listOf(it))},
                 cancel=vm::cancelAnchorageApproach,
                 setAnchorWatch={reference->setupReference=reference;vm.cancelAnchorageApproach();showPreflight=true},
             )
@@ -293,12 +316,10 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
     if (confirmLift) AlertDialog({ confirmLift = false }, confirmButton = { Button({ vm.liftAnchor(); confirmLift = false },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text(tr("Lift anchor","起锚")) } }, dismissButton = { TextButton({ confirmLift = false }) { Text(tr("Cancel","取消")) } }, title = { Text(tr("End this anchoring session?","结束本次锚泊？")) }, text = { Text(tr("Lift anchor permanently closes this session. Its track remains in History, but it cannot be resumed.","起锚会永久结束本次锚泊。轨迹仍保留在历史记录中，但不能再恢复。")) })
     anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{anchorageDetails=null;vm.approachSavedAnchorage(saved.id)})}
-    anchorageClusterDetails?.let{cluster->AnchorageClusterDetailsDialog(
-        cluster=cluster,
-        members=state.savedAnchorages.filter{it.id in cluster.savedAnchorageIds},
-        dismiss={anchorageClusterDetails=null},
-        approach={anchorageClusterDetails=null;vm.approachAnchorage(cluster.id)},
-        openMember={anchorageClusterDetails=null;anchorageDetails=it},
+    anchorageListDetails?.let{ids->AnchorageListDialog(
+        members=ids.mapNotNull{id->state.savedAnchorages.firstOrNull{it.id==id}},
+        dismiss={anchorageListDetails=null},
+        actions=nearbyActions,
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})

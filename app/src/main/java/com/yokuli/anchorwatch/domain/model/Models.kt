@@ -40,7 +40,16 @@ enum class FixTrust { TRUSTED, DEGRADED, QUARANTINED, REJECTED }
 enum class PositionHealth { GPS_OK, GPS_DEGRADED, GPS_LOST }
 enum class HeadingSource { NONE, NMEA_PHYSICAL, PHONE }
 enum class HeadingQuality { UNAVAILABLE, STABLE, MOVING, DISTURBED, RECOVERING }
-enum class AppLanguage { SYSTEM, ENGLISH, SIMPLIFIED_CHINESE }
+/** SYSTEM is retained for backup compatibility; new installs and the picker use explicit languages. */
+enum class AppLanguage {
+    SYSTEM,
+    ENGLISH,
+    SIMPLIFIED_CHINESE,
+    TRADITIONAL_CHINESE,
+    JAPANESE,
+    FRENCH,
+    SPANISH,
+}
 enum class AlarmSound { SYSTEM_ALARM, SYSTEM_RINGTONE, SYSTEM_NOTIFICATION, CUSTOM }
 enum class DemoScenario { SAFE_SWING, ANCHOR_DRAG, WIND_SHIFT, GPS_DROPOUT, DEPTH_SHALLOW, DEPTH_DEEP, WIND_ALARM }
 

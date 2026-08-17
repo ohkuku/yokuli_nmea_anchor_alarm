@@ -136,24 +136,88 @@ internal fun AnchorageDetailDialog(saved:SavedAnchorageEntity,dismiss:()->Unit,o
         onDismissRequest=dismiss,
         title={Column{Text(saved.name);Text("${"%.7f".format(saved.latitude)}, ${"%.7f".format(saved.longitude)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
         confirmButton={TextButton(dismiss){Text(tr("Close","关闭"))}},
-        text={Column(Modifier.heightIn(max=590.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
-            Text(tr("Saved anchorage details","收藏锚地详情"),style=MaterialTheme.typography.labelLarge)
-            DetailLine(tr("Alarm radius","报警半径"),saved.preferredAlarmRadiusMeters?.let{"${it.toInt()} m"}?:"—")
-            DetailLine(tr("Water depth","水深"),saved.typicalWaterDepthMeters?.let{"%.1f m".format(it)}?:"—")
-            DetailLine(tr("Rode / chain","锚缆 / 锚链"),saved.typicalRodeLengthMeters?.let{"${it.toInt()} m"}?:"—")
-            DetailLine(tr("Seabed","底质"),seabedLabel(saved))
-            DetailLine(tr("Rating","评分"),saved.rating?.let{"★".repeat(it)}?:"—")
-            if(saved.notes.isNotBlank()){HorizontalDivider();Text(tr("Notes","备注"),style=MaterialTheme.typography.labelLarge);Text(saved.notes)}
-            HorizontalDivider()
-            Text(tr("This is a personal reference, not a verified safe anchoring position. Arrive, assess conditions and deploy the anchor before starting a watch.","这是个人参考记录，并非经验证的安全锚位。请抵达现场、判断环境并完成下锚后再启动锚警。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(approach,Modifier.fillMaxWidth().testTag("anchorage_detail_approach")){Text(tr("Approach","接近指引"))}
-            Button(openGoogleMaps,Modifier.fillMaxWidth()){Text(tr("Open in Google Maps","在 Google 地图中打开"))}
-            OutlinedButton(shareQr,Modifier.fillMaxWidth()){Text(tr("Share coordinate QR image","分享坐标二维码图片"))}
-        }},
+        text={SavedAnchorageDetailsContent(
+            saved=saved,
+            actions=SavedAnchorageCardActions({approach()},{openGoogleMaps()},{shareQr()}),
+            modifier=Modifier.heightIn(max=590.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            showHeading=false,
+        )},
     )
 }
 
-@Composable private fun DetailLine(label:String,value:String){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(label,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value,fontWeight=FontWeight.Medium)}}
+internal data class SavedAnchorageCardActions(
+    val approach:(SavedAnchorageEntity)->Unit,
+    val openGoogleMaps:(SavedAnchorageEntity)->Unit,
+    val shareQr:(SavedAnchorageEntity)->Unit,
+)
+
+@Composable
+internal fun SavedAnchorageCard(
+    saved:SavedAnchorageEntity,
+    actions:SavedAnchorageCardActions,
+    modifier:Modifier=Modifier,
+    distanceText:String?=null,
+){
+    Card(modifier.fillMaxWidth().testTag("saved_anchorage_card_${saved.id}")){
+        SavedAnchorageDetailsContent(
+            saved=saved,
+            actions=actions,
+            modifier=Modifier.fillMaxWidth().padding(12.dp),
+            showHeading=true,
+            distanceText=distanceText,
+        )
+    }
+}
+
+@Composable
+internal fun SavedAnchorageDetailsContent(
+    saved:SavedAnchorageEntity,
+    actions:SavedAnchorageCardActions,
+    modifier:Modifier=Modifier,
+    showHeading:Boolean=true,
+    distanceText:String?=null,
+){
+    Column(modifier,verticalArrangement=Arrangement.spacedBy(9.dp)){
+        if(showHeading){
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){
+                    Text(saved.name,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                    Text("${"%.6f".format(saved.latitude)}, ${"%.6f".format(saved.longitude)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                distanceText?.let{Text(it,style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)}
+            }
+        }
+        AnchorageDetailLine(tr("Alarm radius","报警半径"),saved.preferredAlarmRadiusMeters?.let{"${it.toInt()} m"}?:"—")
+        AnchorageDetailLine(tr("Water depth","水深"),saved.typicalWaterDepthMeters?.let{"%.1f m".format(it)}?:"—")
+        AnchorageDetailLine(tr("Rode / chain","锚缆 / 锚链"),saved.typicalRodeLengthMeters?.let{"${it.toInt()} m"}?:"—")
+        AnchorageDetailLine(tr("Seabed","底质"),seabedLabel(saved))
+        AnchorageDetailLine(tr("Rating","评分"),saved.rating?.let{"★".repeat(it)}?:"—")
+        if(saved.notes.isNotBlank()){
+            HorizontalDivider()
+            Text(tr("Notes","备注"),style=MaterialTheme.typography.labelLarge)
+            Text(saved.notes,style=MaterialTheme.typography.bodyMedium)
+        }
+        HorizontalDivider()
+        Text(
+            tr("Personal reference only. Check present depth, traffic, weather and surroundings before anchoring.","仅供个人参考。下锚前请重新确认当前水深、周围船只、天气和环境。"),
+            style=MaterialTheme.typography.bodySmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button({actions.approach(saved)},Modifier.fillMaxWidth().testTag("saved_anchorage_approach_${saved.id}")){
+            Text(tr("Approach","接近指引"))
+        }
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            OutlinedButton({actions.openGoogleMaps(saved)},Modifier.weight(1f).testTag("saved_anchorage_maps_${saved.id}")){
+                Text(tr("Google Maps","Google 地图"))
+            }
+            OutlinedButton({actions.shareQr(saved)},Modifier.weight(1f).testTag("saved_anchorage_share_${saved.id}")){
+                Text(tr("Share QR","分享二维码"))
+            }
+        }
+    }
+}
+
+@Composable private fun AnchorageDetailLine(label:String,value:String){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(label,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value,fontWeight=FontWeight.Medium)}}
 
 @Composable private fun AnchorageEditor(initial:SavedAnchorageEntity,dismiss:()->Unit,save:(SavedAnchorageEntity)->Unit){
     var name by remember(initial.id){mutableStateOf(initial.name)};var radius by remember(initial.id){mutableStateOf(initial.preferredAlarmRadiusMeters?.toString()?:"")};var depth by remember(initial.id){mutableStateOf(initial.typicalWaterDepthMeters?.toString()?:"")};var rode by remember(initial.id){mutableStateOf(initial.typicalRodeLengthMeters?.toString()?:"")};var seabed by remember(initial.id){mutableStateOf(runCatching{SeabedType.valueOf(initial.seabedType)}.getOrDefault(SeabedType.UNKNOWN))};var customSeabed by remember(initial.id){mutableStateOf(initial.customSeabedText?:"")};var rating by remember(initial.id){mutableStateOf(initial.rating)};var notes by remember(initial.id){mutableStateOf(initial.notes)}
