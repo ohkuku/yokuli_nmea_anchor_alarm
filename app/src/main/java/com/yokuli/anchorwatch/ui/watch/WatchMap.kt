@@ -125,3 +125,12 @@ internal fun anchorMarkerIcon():BitmapDescriptor{
     val bitmap=Bitmap.createBitmap(72,72,Bitmap.Config.ARGB_8888);val canvas=AndroidCanvas(bitmap);val background=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.rgb(255,183,77);style=Paint.Style.FILL};val line=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.rgb(25,31,43);style=Paint.Style.STROKE;strokeWidth=6f;strokeCap=Paint.Cap.ROUND};canvas.drawCircle(36f,36f,31f,background);canvas.drawCircle(36f,18f,6f,line);canvas.drawLine(36f,24f,36f,54f,line);canvas.drawLine(20f,35f,52f,35f,line);canvas.drawArc(19f,36f,53f,61f,0f,180f,false,line)
     return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
+
+internal fun savedAnchorageMarkerIcon():BitmapDescriptor{
+    val bitmap=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);val canvas=AndroidCanvas(bitmap)
+    val background=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.rgb(187,232,234);style=Paint.Style.FILL}
+    val outline=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.rgb(8,93,102);style=Paint.Style.STROKE;strokeWidth=5f;strokeCap=Paint.Cap.ROUND}
+    canvas.drawCircle(32f,32f,27f,background);canvas.drawCircle(32f,32f,27f,outline)
+    canvas.drawCircle(32f,18f,5f,outline);canvas.drawLine(32f,23f,32f,48f,outline);canvas.drawLine(19f,31f,45f,31f,outline);canvas.drawArc(18f,31f,46f,53f,0f,180f,false,outline)
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
+}

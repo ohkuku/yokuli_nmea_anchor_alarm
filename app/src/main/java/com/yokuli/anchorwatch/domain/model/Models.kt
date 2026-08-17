@@ -9,6 +9,8 @@ data class NavigationFix(
     val cogTrueDegrees: Double? = null,
     val headingTrueDegrees: Double? = null,
     val headingMagneticDegrees: Double? = null,
+    val cogReceivedElapsedRealtime: Long? = null,
+    val headingReceivedElapsedRealtime: Long? = null,
     val hdop: Double? = null,
     val fixQuality: Int? = null,
     val satellites: Int? = null,

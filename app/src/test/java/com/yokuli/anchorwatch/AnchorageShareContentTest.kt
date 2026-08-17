@@ -7,6 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AnchorageShareContentTest{
+    @Test fun shareImageUsesTheRequestedYokuliBrandLine(){
+        assertEquals("Developed on SV Yokuli",AnchorageShareContent.BRANDING_LINE)
+    }
+
     @Test fun googleMapsQrPayloadUsesStableLocaleIndependentCoordinates(){
         assertEquals(
             "https://www.google.com/maps/search/?api=1&query=-36.8123456,174.7123456",

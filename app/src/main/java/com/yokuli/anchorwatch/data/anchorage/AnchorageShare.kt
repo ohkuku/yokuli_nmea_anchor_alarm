@@ -5,6 +5,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.BitmapFactory
+import android.graphics.RectF
+import com.yokuli.anchorwatch.R
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -17,6 +20,7 @@ import javax.inject.Singleton
 
 /** Share payloads contain only the saved coordinate and user-entered description. */
 object AnchorageShareContent {
+    const val BRANDING_LINE="Developed on SV Yokuli"
     fun coordinates(latitude:Double,longitude:Double):String=
         String.format(Locale.US,"%.7f,%.7f",latitude,longitude)
 
@@ -61,13 +65,15 @@ class AnchorageQrImageGenerator @Inject constructor(
         canvas.drawColor(Color.rgb(242,250,250))
         paint.color=Color.rgb(11,105,118)
         canvas.drawRect(0f,0f,IMAGE_WIDTH.toFloat(),HEADER_HEIGHT.toFloat(),paint)
+        val logo=BitmapFactory.decodeResource(context.resources,R.drawable.anchor_watch_logo)
+        canvas.drawBitmap(logo,null,RectF(30f,18f,154f,142f),paint)
         paint.color=Color.WHITE
-        paint.textSize=56f
+        paint.textSize=50f
         paint.isFakeBoldText=true
-        canvas.drawText("Anchor by Yokuli",PADDING.toFloat(),82f,paint)
+        canvas.drawText("Anchor Watch",180f,74f,paint)
         paint.isFakeBoldText=false
-        paint.textSize=30f
-        canvas.drawText(if(chinese)"分享的收藏锚地" else "Shared saved anchorage",PADDING.toFloat(),128f,paint)
+        paint.textSize=28f
+        canvas.drawText(AnchorageShareContent.BRANDING_LINE,180f,120f,paint)
 
         paint.color=Color.rgb(12,46,52)
         paint.textSize=50f
@@ -99,6 +105,7 @@ class AnchorageQrImageGenerator @Inject constructor(
         file.outputStream().use{image.compress(Bitmap.CompressFormat.PNG,100,it)}
         image.recycle()
         qr.recycle()
+        logo.recycle()
         return file
     }
 

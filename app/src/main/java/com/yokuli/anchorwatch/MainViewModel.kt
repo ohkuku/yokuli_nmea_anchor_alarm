@@ -79,11 +79,20 @@ import com.yokuli.anchorwatch.data.condition.LiveWindRepository
 import com.yokuli.anchorwatch.data.condition.LiveWindState
 import com.yokuli.anchorwatch.runtime.condition.ConditionRuntime
 import com.yokuli.anchorwatch.data.anchorage.AnchorageRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageApproachRepository
 import com.yokuli.anchorwatch.data.anchorage.AnchorageQrImageGenerator
 import com.yokuli.anchorwatch.data.anchorage.AnchorageShareContent
 import com.yokuli.anchorwatch.data.anchorage.DuplicateAnchorageException
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.localization.usesChinese
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachEngine
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachState
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterDistance
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyEpisodeTracker
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyPolicy
+import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionPolicy
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -155,6 +164,10 @@ data class MainUiState(
     val liveWind:LiveWindState=LiveWindState(),
     val conditions:ConditionRuntimeSnapshot=ConditionRuntimeSnapshot(),
     val savedAnchorages:List<SavedAnchorageEntity> = emptyList(),
+    val anchorageClusters:List<AnchorageCluster> = emptyList(),
+    val anchorageApproach:AnchorageApproachState = AnchorageApproachState(),
+    val nearbyAnchoragePrompt:List<AnchorageClusterDistance> = emptyList(),
+    val approachDisclaimerTargetId:String?=null,
     val anchorageDuplicateExisting:SavedAnchorageEntity?=null,
     val anchorageOperationError:String?=null,
 )
@@ -192,6 +205,7 @@ class MainViewModel @Inject constructor(
     private val liveWindRepository:LiveWindRepository,
     private val conditionRuntime:ConditionRuntime,
     private val anchorageRepository:AnchorageRepository,
+    private val anchorageApproachRepository:AnchorageApproachRepository,
     private val anchorageQrImageGenerator:AnchorageQrImageGenerator,
 ):AndroidViewModel(app){
     private val _ui=MutableStateFlow(MainUiState());val ui=_ui.asStateFlow()
@@ -199,6 +213,8 @@ class MainViewModel @Inject constructor(
     private var observedSessionId:Long?=null
     private var sonarSamplesJob:Job?=null
     private var observedSonarSurveyId:Long?=null
+    private val anchorageNearbyTracker=AnchorageNearbyEpisodeTracker()
+    private var selectedApproachClusterId:String?=null
 
     init{
         // Safety and recording repositories consume the full provider rate. Compose/map only
@@ -243,6 +259,11 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{liveWindRepository.state.collect{value->_ui.update{it.copy(liveWind=value)}}}
         viewModelScope.launch{conditionRuntime.state.collect{value->_ui.update{it.copy(conditions=value)}}}
         viewModelScope.launch{anchorageRepository.anchorages.collect{value->_ui.update{it.copy(savedAnchorages=value)}}}
+        viewModelScope.launch{anchorageApproachRepository.clusters.collect{clusters->
+            if(selectedApproachClusterId!=null&&clusters.none{it.id==selectedApproachClusterId})selectedApproachClusterId=null
+            _ui.update{it.copy(anchorageClusters=clusters)}
+            refreshAnchorageApproach()
+        }}
         viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{systemLocation.setAppEnabled(it==GpsDataSource.SYSTEM||it==GpsDataSource.DEMO)}}
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
@@ -266,7 +287,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{supportBundleManager.state.collect{value->_ui.update{it.copy(supportBundle=value)}}}
         viewModelScope.launch{offlineMapRepository.state.collect{value->_ui.update{it.copy(offlineMap=value)}}}
         viewModelScope.launch{combine(acceptedPosition.state.map{it.acceptedFix}.distinctUntilChanged(),prefs.settings.map{it.showLinzDepthReference}.distinctUntilChanged()){fix,enabled->fix to enabled}.conflate().collect{(fix,enabled)->delay(2_000);if(enabled&&fix?.valid==true)linzDepthRepository.refresh(fix.latitude,fix.longitude)}}
-        viewModelScope.launch{while(true){refreshDepthUi();refreshWatchSafety();delay(1_000)}}
+        viewModelScope.launch{while(true){refreshDepthUi();refreshWatchSafety();refreshAnchorageApproach();delay(1_000)}}
         viewModelScope.launch{while(true){refreshStorageHealth();delay(30_000)}}
         incidentLogger.record("app","UI_STARTED")
     }
@@ -280,6 +301,41 @@ class MainViewModel @Inject constructor(
             selectedFix=if(state.active==null&&state.settings.demoMode)state.systemFix else state.fix,nmeaConnection=state.connection,device=safetyProbe.snapshot(),sonar=state.sonarRecorder,
         ))
         _ui.update{it.copy(watchSafety=report)}
+    }
+
+    private fun refreshAnchorageApproach(nowElapsed:Long=android.os.SystemClock.elapsedRealtime()){
+        val state=_ui.value
+        if(state.active!=null&&selectedApproachClusterId!=null)selectedApproachClusterId=null
+        val accepted=state.fix?.takeIf{
+            it.valid&&state.positionHealth!=com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST
+        }
+        val approach=AnchorageApproachEngine.evaluate(
+            clusters=state.anchorageClusters,
+            selectedClusterId=selectedApproachClusterId,
+            positionLatitude=accepted?.latitude,
+            positionLongitude=accepted?.longitude,
+        ){bearing->
+            ApproachDirectionPolicy.resolve(
+                nowElapsed=nowElapsed,
+                targetBearingDegrees=bearing,
+                nmeaTrueHeadingDegrees=state.nmeaFix?.headingTrueDegrees,
+                nmeaHeadingReceivedElapsed=state.nmeaFix?.headingReceivedElapsedRealtime,
+                cogTrueDegrees=accepted?.cogTrueDegrees,
+                sogKnots=accepted?.sogKnots,
+                cogReceivedElapsed=accepted?.cogReceivedElapsedRealtime?:accepted?.receivedElapsedRealtime,
+                phoneTrueHeadingDegrees=state.phoneHeading.trueHeadingDegrees,
+                phoneHeadingTrusted=state.phoneHeading.quality==HeadingQuality.STABLE,
+            )
+        }
+        val allDistances=if(accepted==null)emptyList() else AnchorageNearbyPolicy.distances(
+            accepted.latitude,accepted.longitude,state.anchorageClusters,
+        )
+        val promptIds=anchorageNearbyTracker.update(
+            allDistances,
+            automaticPromptEnabled=state.active==null&&selectedApproachClusterId==null,
+        )
+        val prompt=allDistances.filter{it.cluster.id in promptIds}
+        _ui.update{it.copy(anchorageApproach=approach,nearbyAnchoragePrompt=prompt)}
     }
 
     private fun refreshStorageHealth()=viewModelScope.launch{
@@ -510,6 +566,35 @@ class MainViewModel @Inject constructor(
         openCoordinatesInGoogleMaps(session.anchorLatitude,session.anchorLongitude)
     }
     fun openAnchorageInGoogleMaps(value:SavedAnchorageEntity)=openCoordinatesInGoogleMaps(value.latitude,value.longitude)
+    fun approachSavedAnchorage(savedAnchorageId:Long){
+        val cluster=_ui.value.anchorageClusters.firstOrNull{savedAnchorageId in it.savedAnchorageIds}?:return
+        approachAnchorage(cluster.id)
+    }
+    fun approachAnchorage(clusterId:String){
+        if(_ui.value.anchorageClusters.none{it.id==clusterId})return
+        if(_ui.value.settings.anchorageApproachDisclaimerAccepted)startAnchorageApproach(clusterId)
+        else _ui.update{it.copy(page=0,approachDisclaimerTargetId=clusterId)}
+    }
+    fun confirmAnchorageApproachDisclaimer(){
+        val target=_ui.value.approachDisclaimerTargetId?:return
+        val updated=_ui.value.settings.copy(anchorageApproachDisclaimerAccepted=true)
+        _ui.update{it.copy(settings=updated,approachDisclaimerTargetId=null)}
+        viewModelScope.launch{prefs.save(updated)}
+        startAnchorageApproach(target)
+    }
+    fun dismissAnchorageApproachDisclaimer()=_ui.update{it.copy(approachDisclaimerTargetId=null)}
+    private fun startAnchorageApproach(clusterId:String){
+        selectedApproachClusterId=clusterId
+        if(_ui.value.active==null)phoneHeadingRepository.start()
+        anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
+        _ui.update{it.copy(page=0,approachDisclaimerTargetId=null,nearbyAnchoragePrompt=emptyList())}
+        refreshAnchorageApproach()
+    }
+    fun cancelAnchorageApproach(){selectedApproachClusterId=null;if(_ui.value.active==null)phoneHeadingRepository.stop();refreshAnchorageApproach()}
+    fun dismissNearbyAnchorage(){
+        anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
+        _ui.update{it.copy(nearbyAnchoragePrompt=emptyList())}
+    }
     private fun openCoordinatesInGoogleMaps(latitude:Double,longitude:Double){
         val uri=android.net.Uri.parse(AnchorageShareContent.googleMapsUrl(latitude,longitude))
         val google=Intent(Intent.ACTION_VIEW,uri).setPackage("com.google.android.apps.maps").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -578,5 +663,5 @@ class MainViewModel @Inject constructor(
     }
     private fun shareExport(file:java.io.File,mime:String){val uri=androidx.core.content.FileProvider.getUriForFile(app,"${app.packageName}.files",file);val intent=Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK);runCatching{app.startActivity(Intent.createChooser(intent,"Export anchor session").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure{_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"No app is available to receive the export."))}}}
     private fun xmlEscape(value:String)=value.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
-    override fun onCleared(){systemLocation.setAppEnabled(false);super.onCleared()}
+    override fun onCleared(){if(_ui.value.active==null&&selectedApproachClusterId!=null)phoneHeadingRepository.stop();systemLocation.setAppEnabled(false);super.onCleared()}
 }

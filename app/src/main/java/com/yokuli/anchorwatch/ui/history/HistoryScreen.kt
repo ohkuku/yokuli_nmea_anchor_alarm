@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
@@ -104,7 +105,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
                 Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(saved.name,fontWeight=FontWeight.SemiBold);Text("${"%.5f".format(saved.latitude)}, ${"%.5f".format(saved.longitude)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(saved.rating?.let{"★".repeat(it)}?:"—",color=MaterialTheme.colorScheme.primary)}
                 Text(listOfNotNull(saved.preferredAlarmRadiusMeters?.let{tr("${it.toInt()} m radius","${it.toInt()} 米范围")},saved.typicalWaterDepthMeters?.let{tr("${"%.1f".format(it)} m depth","${"%.1f".format(it)} 米水深")},saved.typicalRodeLengthMeters?.let{tr("${it.toInt()} m rode","${it.toInt()} 米锚链")}).joinToString(" · ").ifBlank{tr("No setup values saved","未保存设置参数")},style=MaterialTheme.typography.bodySmall)
                 if(saved.notes.isNotBlank())Text(saved.notes.replace('\n',' ').take(120),maxLines=2,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton({detailAnchorage=saved},Modifier.fillMaxWidth()){Text(tr("View details","查看详情"))}
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton({detailAnchorage=saved},Modifier.weight(1f)){Text(tr("View details","查看详情"))};Button({vm.approachSavedAnchorage(saved.id)},Modifier.weight(1f).testTag("saved_anchorage_approach_${saved.id}")){Text(tr("Approach","接近指引"))}}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){TextButton({editingAnchorage=saved}){Text(tr("Edit","编辑"))};IconButton({pendingAnchorageDelete=saved}){Icon(Icons.Default.DeleteForever,tr("Delete anchorage","删除锚地"),tint=MaterialTheme.colorScheme.error)}}
             }}
         }
@@ -112,7 +113,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
     pendingDelete?.let{session->AlertDialog(onDismissRequest={pendingDelete=null},title={Text(tr("Delete this anchor history?","删除这条锚泊历史？"))},text={Text(tr("The session, its complete track and event timeline will be permanently deleted.","该会话、完整轨迹和事件时间线都会被永久删除。"))},confirmButton={Button({vm.deleteHistorySession(session);if(expanded==session.id)expanded=null;pendingDelete=null},colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Delete","删除"))}},dismissButton={TextButton({pendingDelete=null}){Text(tr("Cancel","取消"))}})}
     saveSession?.let{session->AnchorageEditor(initial=SavedAnchorageEntity(name="",latitude=session.anchorLatitude,longitude=session.anchorLongitude,createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis(),preferredAlarmRadiusMeters=session.alarmRadiusMeters,typicalWaterDepthMeters=session.waterDepthMeters?:session.minObservedDepthMeters,typicalRodeLengthMeters=session.rodeLengthMeters,sourceSessionId=session.id),dismiss={saveSession=null}){value->vm.saveAnchorage(value);saveSession=null;tab=1}}
     editingAnchorage?.let{value->AnchorageEditor(value,{editingAnchorage=null}){vm.saveAnchorage(it);editingAnchorage=null}}
-    detailAnchorage?.let{saved->AnchorageDetailDialog(saved,{detailAnchorage=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)})}
+    detailAnchorage?.let{saved->AnchorageDetailDialog(saved,{detailAnchorage=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{detailAnchorage=null;vm.approachSavedAnchorage(saved.id)})}
     pendingAnchorageDelete?.let{value->AlertDialog(onDismissRequest={pendingAnchorageDelete=null},title={Text(tr("Delete saved anchorage?","删除收藏锚地？"))},text={Text(tr("This removes only the saved place. Anchor session history is unchanged.","只会删除收藏地点，不影响锚泊会话历史。"))},confirmButton={Button({vm.deleteAnchorage(value.id);pendingAnchorageDelete=null},colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Delete","删除"))}},dismissButton={TextButton({pendingAnchorageDelete=null}){Text(tr("Cancel","取消"))}})}
     state.anchorageDuplicateExisting?.let{existing->AlertDialog(
         onDismissRequest=vm::dismissAnchorageDuplicate,
@@ -130,7 +131,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
 }
 
 @Composable
-internal fun AnchorageDetailDialog(saved:SavedAnchorageEntity,dismiss:()->Unit,openGoogleMaps:()->Unit,shareQr:()->Unit){
+internal fun AnchorageDetailDialog(saved:SavedAnchorageEntity,dismiss:()->Unit,openGoogleMaps:()->Unit,shareQr:()->Unit,approach:()->Unit){
     AlertDialog(
         onDismissRequest=dismiss,
         title={Column{Text(saved.name);Text("${"%.7f".format(saved.latitude)}, ${"%.7f".format(saved.longitude)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
@@ -145,6 +146,7 @@ internal fun AnchorageDetailDialog(saved:SavedAnchorageEntity,dismiss:()->Unit,o
             if(saved.notes.isNotBlank()){HorizontalDivider();Text(tr("Notes","备注"),style=MaterialTheme.typography.labelLarge);Text(saved.notes)}
             HorizontalDivider()
             Text(tr("This is a personal reference, not a verified safe anchoring position. Arrive, assess conditions and deploy the anchor before starting a watch.","这是个人参考记录，并非经验证的安全锚位。请抵达现场、判断环境并完成下锚后再启动锚警。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(approach,Modifier.fillMaxWidth().testTag("anchorage_detail_approach")){Text(tr("Approach","接近指引"))}
             Button(openGoogleMaps,Modifier.fillMaxWidth()){Text(tr("Open in Google Maps","在 Google 地图中打开"))}
             OutlinedButton(shareQr,Modifier.fillMaxWidth()){Text(tr("Share coordinate QR image","分享坐标二维码图片"))}
         }},

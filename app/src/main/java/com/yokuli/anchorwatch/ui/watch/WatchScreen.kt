@@ -106,6 +106,8 @@ private data class SonarMapInspection(
 internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
+    var anchorageClusterDetails by remember{mutableStateOf<com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster?>(null)}
+    var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
     val fix = state.fix; val active = state.active
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -188,7 +190,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
         sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,{showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,{anchorageDetails=it},vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
+        sheetContent={WatchPanel(state,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,{anchorageDetails=it},vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -200,11 +202,44 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                         // BitmapDescriptorFactory is initialized by the GoogleMap instance.
                         // Creating descriptors before entering this content lambda races cold
                         // Maps startup and crashes with "IBitmapDescriptorFactory is not initialized".
-                        val boatIcon=remember{boatMarkerIcon()};val anchorIcon=remember{anchorMarkerIcon()}
+                        val boatIcon=remember{boatMarkerIcon()};val anchorIcon=remember{anchorMarkerIcon()};val savedAnchorIcon=remember{savedAnchorageMarkerIcon()}
                         if(state.settings.offlineMapEnabled&&offlineTileProvider!=null)TileOverlay(tileProvider=offlineTileProvider,fadeIn=false,transparency=(1.0-state.settings.offlineMapOpacity.coerceIn(.30,1.0)).toFloat(),visible=true,zIndex=MapOverlayZ.OFFLINE_CHART)
                         if(mapChartUiState.localDepthVisible)linzTileProviders.forEach{provider->TileOverlay(tileProvider=provider,fadeIn=true,transparency=LinzHydroConfiguration.transparency(mapChartUiState.localDepthOpacity),visible=true,zIndex=MapOverlayZ.LINZ_CHART)}
                         if(sonarOverlayMounted)TileOverlay(tileProvider=sonarTileProvider,state=sonarTileOverlayState,fadeIn=false,transparency=.25f,visible=true,zIndex=MapOverlayZ.SONAR)
                         if(baseMapPolicy.showSeamarks)TileOverlay(tileProvider=nauticalTileProvider,fadeIn=true,transparency=0f,visible=true,zIndex=MapOverlayZ.NAUTICAL_SEAMARKS)
+                        state.anchorageClusters.forEach{cluster->
+                            val centre=LatLng(cluster.centerLatitude,cluster.centerLongitude)
+                            val selected=cluster.id==state.anchorageApproach.selectedClusterId
+                            Circle(
+                                center=centre,
+                                radius=cluster.radiusMeters,
+                                strokeColor=Color(0xFF087F8C).copy(alpha=if(selected).90f else .55f),
+                                fillColor=Color(0xFF087F8C).copy(alpha=if(selected).10f else .045f),
+                                strokeWidth=if(selected)4f else 2f,
+                                zIndex=MapOverlayZ.HISTORICAL_AREA,
+                            )
+                            Marker(
+                                state=remember(cluster.id,cluster.centerLatitude,cluster.centerLongitude){MarkerState(centre)},
+                                title=if(cluster.savedPointCount==1)cluster.displayName else "${cluster.displayName} · ⚓ ×${cluster.savedPointCount}",
+                                snippet=tr("Saved anchorage reference","收藏锚地参考"),
+                                icon=savedAnchorIcon,
+                                alpha=if(selected)1f else .78f,
+                                anchor=Offset(.5f,.5f),
+                                zIndex=MapOverlayZ.HISTORICAL_ANCHOR,
+                                onClick={anchorageClusterDetails=cluster;true},
+                            )
+                        }
+                        state.anchorageApproach.target?.let{target->
+                            fix?.takeIf{it.valid}?.let{position->
+                                Polyline(
+                                    points=listOf(LatLng(position.latitude,position.longitude),LatLng(target.centerLatitude,target.centerLongitude)),
+                                    color=Color(0xFF087F8C).copy(alpha=.85f),
+                                    width=4f,
+                                    pattern=listOf(Dash(24f),Gap(14f)),
+                                    zIndex=.9f,
+                                )
+                            }
+                        }
                         fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(displayHeading(position,active,state.points,state.phoneHeading)?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
                         active?.let { session ->
                             if(session.centerStatus==AnchorCenterStatus.RESOLVED.name){val anchor=LatLng(session.anchorLatitude,session.anchorLongitude)
@@ -225,6 +260,13 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
             } else if(!BuildConfig.MAPS_CONFIGURED) MapNotConfigured()
             else Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).testTag("map_test_surface"))
             CompactWatchStatus(state,Modifier.align(Alignment.TopStart).padding(12.dp))
+            NearbyAnchorageCard(
+                nearby=state.nearbyAnchoragePrompt,
+                details={anchorageClusterDetails=it},
+                approach={vm.approachAnchorage(it.id)},
+                dismiss=vm::dismissNearbyAnchorage,
+                modifier=Modifier.align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=76.dp),
+            )
             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalIconButton(onClick={mapLocked=!mapLocked;if(mapLocked){hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)}else vm.follow(false)},modifier=Modifier.testTag("map_lock_toggle")){Icon(if(mapLocked)Icons.Default.Lock else Icons.Default.LockOpen,if(mapLocked)tr("Auto-return to boat · pan and zoom remain available","自动回到船位 · 仍可拖动缩放")else tr("Free map browsing","地图自由浏览"))}
                 FilledTonalIconButton(onClick={hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)},modifier=Modifier.testTag("map_recenter")) { Icon(Icons.Default.MyLocation, tr("Recenter on boat","回到船位")) }
@@ -236,15 +278,29 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                 Surface(Modifier.align(Alignment.TopCenter).padding(start=16.dp,top=72.dp,end=16.dp).clickable{sonarInspection=null},color=MaterialTheme.colorScheme.surface.copy(alpha=.96f),shape=MaterialTheme.shapes.medium,shadowElevation=4.dp){Column(Modifier.padding(horizontal=12.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(if(inspection.grid.measured)tr("Measured depth","实测水深")else tr("Estimated from nearby sonar samples","由附近声呐样本插值得到"),fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));Icon(Icons.Default.Close,tr("Close","关闭"),Modifier.size(16.dp))};Text("${"%.2f".format(inspection.grid.depthMeters)} ${tr("m","米")} · ±${"%.2f".format(inspection.grid.uncertaintyMeters)} ${tr("m","米")} · ${inspection.grid.sampleCount} ${tr("samples","个样本")}",style=MaterialTheme.typography.bodySmall);survey?.let{Text("${it.name} · ${DateFormat.getDateInstance(DateFormat.SHORT).format(java.util.Date(it.startedAt))}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
             }
             if(active?.candidateDecision==CandidateDecision.AVAILABLE.name)Box(Modifier.align(Alignment.BottomCenter).padding(bottom=112.dp,start=12.dp,end=12.dp)){EstimatedCenterBanner(state,vm,active)}
+            AnchorageApproachOverlay(
+                state=state.anchorageApproach,
+                details={anchorageClusterDetails=it},
+                cancel=vm::cancelAnchorageApproach,
+                setAnchorWatch={reference->setupReference=reference;vm.cancelAnchorageApproach();showPreflight=true},
+            )
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false}){lat,lon,input->vm.arm(lat,lon,input);showSetup=false}
+        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input);showSetup=false;setupReference=null}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
     if (confirmLift) AlertDialog({ confirmLift = false }, confirmButton = { Button({ vm.liftAnchor(); confirmLift = false },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text(tr("Lift anchor","起锚")) } }, dismissButton = { TextButton({ confirmLift = false }) { Text(tr("Cancel","取消")) } }, title = { Text(tr("End this anchoring session?","结束本次锚泊？")) }, text = { Text(tr("Lift anchor permanently closes this session. Its track remains in History, but it cannot be resumed.","起锚会永久结束本次锚泊。轨迹仍保留在历史记录中，但不能再恢复。")) })
-    anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)})}
+    anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{anchorageDetails=null;vm.approachSavedAnchorage(saved.id)})}
+    anchorageClusterDetails?.let{cluster->AnchorageClusterDetailsDialog(
+        cluster=cluster,
+        members=state.savedAnchorages.filter{it.id in cluster.savedAnchorageIds},
+        dismiss={anchorageClusterDetails=null},
+        approach={anchorageClusterDetails=null;vm.approachAnchorage(cluster.id)},
+        openMember={anchorageClusterDetails=null;anchorageDetails=it},
+    )}
+    if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})
     if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is a navigation aid only. It may be unavailable or outdated and does not replace official charts, Notices to Mariners, depth instruments or a proper passage plan.","该海图影像层仅供辅助参考，可能不可用或已过期，不能替代官方海图、航海通告、测深仪或正规的航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})

@@ -55,6 +55,7 @@ We hope first to explore New Zealand's islands and bays and, if wind, time and l
 - Watch Preflight and continuous Watch Health for GPS, NMEA, alarm audibility, notifications, battery/background restrictions, network, storage and sonar.
 - Raw NMEA inspection, parsed values, checksum diagnostics and connection statistics.
 - Local anchorage library with details, Google Maps opening and coordinate-QR image sharing. Saved places are references, never remote Set anchor commands.
+- Saved-anchorage Approach: only explicitly saved places form reference clusters, show a once-per-episode prompt within 1 NM of the area boundary, and provide a large direct-bearing/distance guide. It is not route planning or safe-passage advice.
 - NMEA Sharing server for trusted boat LAN/VPN clients, with regenerated accepted position sentences and bounded per-client queues.
 - Personal sonar surveys using depth and position from the **same NMEA server**. System GPS is intentionally not used to locate real soundings.
 - Map, Satellite and Nautical styles, a regional LINZ Local depth chart, bounded legal non-Google caches, and licensed raster MBTiles import.
@@ -72,6 +73,7 @@ We hope first to explore New Zealand's islands and bays and, if wind, time and l
 7. During the watch, adjust only the alarm radius, Pause without losing the session, or Lift anchor to end it permanently.
 8. If an open NMEA-backed watch loses its connection, the session remains intact, warns immediately and attempts to reconnect. It never silently changes GPS source.
 9. After a centre is resolved, open it in Google Maps for inspection or coordinate copying.
+10. When returning to an explicitly saved anchorage, choose **Approach** for direct bearing and distance. The guide stops at the saved reference-area boundary; re-check current depth, traffic, weather and hazards before setting a new watch.
 
 ## Range and centre estimation
 
