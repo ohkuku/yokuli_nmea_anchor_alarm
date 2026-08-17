@@ -75,6 +75,9 @@ jobs:
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
             bash .github/scripts/run_device_tests.sh soak
+      - name: Expose device-story failures
+        if: failure()
+        run: python3 .github/scripts/report_android_test_failures.py
       - name: Device reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -83,6 +86,7 @@ jobs:
           path: |
             app/build/reports/androidTests/**
             app/build/outputs/androidTest-results/**
+            build/ci-device-tests.log
           retention-days: 30
 
   wall-clock:

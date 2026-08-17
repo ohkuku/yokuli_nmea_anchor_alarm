@@ -38,4 +38,9 @@ case "$MODE" in
 esac
 
 cd "$REPO_ROOT"
-exec ./gradlew "${gradle_args[@]}"
+mkdir -p "$REPO_ROOT/build"
+set +e
+./gradlew "${gradle_args[@]}" 2>&1 | tee "$REPO_ROOT/build/ci-device-tests.log"
+gradle_status="${PIPESTATUS[0]}"
+set -e
+exit "$gradle_status"

@@ -167,6 +167,9 @@ jobs:
             adb shell settings put global animator_duration_scale 0
             adb emu geo fix 174.7633 -36.8485
             bash .github/scripts/run_device_tests.sh shard 3 ${{ matrix.shard_index }}
+      - name: Expose instrumented test failures
+        if: failure()
+        run: python3 .github/scripts/report_android_test_failures.py
       - name: Upload integration reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -175,6 +178,7 @@ jobs:
           path: |
             app/build/reports/androidTests/**
             app/build/outputs/androidTest-results/**
+            build/ci-device-tests.log
           if-no-files-found: warn
           retention-days: 14
       - name: Device-test summary
@@ -222,6 +226,9 @@ jobs:
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
             bash .github/scripts/run_device_tests.sh smoke
+      - name: Expose API 36 smoke failures
+        if: failure()
+        run: python3 .github/scripts/report_android_test_failures.py
       - name: Upload API 36 smoke reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -230,6 +237,7 @@ jobs:
           path: |
             app/build/reports/androidTests/**
             app/build/outputs/androidTest-results/**
+            build/ci-device-tests.log
           if-no-files-found: warn
           retention-days: 14
 

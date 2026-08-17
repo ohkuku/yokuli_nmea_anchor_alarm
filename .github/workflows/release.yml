@@ -108,6 +108,20 @@ jobs:
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
             bash .github/scripts/run_device_tests.sh all
+      - name: Expose release device-test failures
+        if: failure()
+        run: python3 .github/scripts/report_android_test_failures.py
+      - name: Upload release device-test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: anchor-watch-release-device-reports-${{ github.sha }}
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+            build/ci-device-tests.log
+          if-no-files-found: warn
+          retention-days: 30
 
   api36-smoke:
     name: Release API 36 launch smoke
@@ -144,6 +158,20 @@ jobs:
             adb wait-for-device
             adb emu geo fix 174.7633 -36.8485
             bash .github/scripts/run_device_tests.sh smoke
+      - name: Expose release API 36 failures
+        if: failure()
+        run: python3 .github/scripts/report_android_test_failures.py
+      - name: Upload release API 36 reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: anchor-watch-release-api36-reports-${{ github.sha }}
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+            build/ci-device-tests.log
+          if-no-files-found: warn
+          retention-days: 30
 
   publish:
     needs: [validate-release, device-quality, api36-smoke]
