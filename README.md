@@ -5,137 +5,115 @@
 </p>
 
 <p align="center">
-  <a href="README.zh-CN.md">简体中文</a>
-  ·
+  <a href="README.zh-CN.md">简体中文</a> ·
   <a href="https://github.com/ohkuku/yokuli_nmea_anchor_alarm/actions/workflows/android.yml">
     <img src="https://github.com/ohkuku/yokuli_nmea_anchor_alarm/actions/workflows/android.yml/badge.svg" alt="Android CI">
   </a>
 </p>
 
-Anchor Watch is an Android anchor-watch and NMEA 0183 navigation companion. It accepts live TCP or UDP NMEA, monitors anchor drag and data loss, displays the vessel track and raw source data, maps personal sonar soundings, and can share or proxy accepted GPS positions when the user explicitly enables those features.
+Anchor Watch is an Android app for people who want one clear place to watch the boat after anchoring. Set an alarm area, see where the boat has moved, and receive a loud warning if the boat leaves that area or reliable position data disappears.
 
-> **Safety:** Anchor Watch is an auxiliary aid. It does not replace proper watchkeeping, seamanship, official charts, depth instruments, or an independent alarm. GPS, power, Wi-Fi, NMEA equipment and Android background execution can all fail.
+It works with the phone's GPS on a simple boat, or with live NMEA 0183 data on a more connected one. NMEA can also add heading, wind and depth, feed a personal depth map, and be shared with other equipment aboard.
 
-The app starts in English. Switch between 🇬🇧 and 🇨🇳 from the welcome screen or Settings.
+> **Safety:** Anchor Watch is an extra aid, not a substitute for watchkeeping, seamanship, official charts, a depth instrument or an independent alarm. GPS, power, Wi-Fi, NMEA equipment and Android background execution can all fail.
 
-## Product gallery
+## A quick look
 
-These are real screens from the current Android 14 Debug build. The gallery now uses the latest English product captures rather than the older mixed-language UI set.
+These are existing product captures; the gallery will be refreshed separately.
 
-| Watch map | Settings |
+| Anchor watch | Live boat data |
 |---|---|
-| <img src="docs/images/watch-current-en.png" width="320" alt="Anchor Watch map and vessel position"> | <img src="docs/images/settings-current-en.png" width="320" alt="Anchor Watch settings sections and visible support entry"> |
+| <img src="docs/images/watch-current-en.png" width="320" alt="Anchor Watch map and boat position"> | <img src="docs/images/data-final-en.png" width="320" alt="NMEA connection and live-data page"> |
 
-| NMEA input | Same-stream sonar gate |
-|---|---|
-| <img src="docs/images/data-final-en.png" width="320" alt="Validated NMEA connection settings"> | <img src="docs/images/sonar-final-en.png" width="320" alt="Personal sonar survey requires same-stream NMEA position and depth"> |
+## What the app helps you do
+
+### Keep an anchor watch
+
+- Set a known anchor position, or let the app conservatively learn a possible centre while the boat moves around it.
+- Use System GPS or a verified NMEA GPS source. NMEA stays unavailable until the server is connected and supplying a fresh valid position.
+- See the alarm boundary, boat direction and a 24-hour breadcrumb whose newest part remains easy to see.
+- Adjust the alarm radius while watching, pause without losing the session, resume later, or use **Lift anchor** to end it.
+- Get a looping alarm, notification and in-app action dialog. Acknowledging can snooze continuing danger; changing the range, pausing or lifting the anchor ends the current sounding state.
+- Optionally watch shallow/deep water, wind speed and wind shifts when the required NMEA data is actually available.
+
+### Know whether the watch is healthy
+
+- **Watch Preflight** checks position freshness and accuracy, NMEA, notification access, alarm audibility, battery/background restrictions, power, network, storage and sonar before arming.
+- **Watch Health** keeps the same checks visible during the session.
+- Unexpected NMEA loss never silently changes the watch to another GPS source.
+- A bounded Incident Log records recent safety-state changes. A privacy-safe Support Bundle helps investigate a problem without including raw NMEA or exact positions by default.
+
+### Use boat data without hiding it
+
+- Connect as a TCP client or UDP listener. **Test, save & connect** succeeds only after usable NMEA traffic is received.
+- Inspect raw sentences, parsed values, checksum failures and connection health.
+- Supported sentences include RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT, DBT, MWD and MWV across common talker IDs.
+- Share accepted positions and boat instruments with trusted LAN/VPN clients through the bounded NMEA Sharing server.
+- Optionally proxy accepted NMEA position into Android's global mock-location provider, with developer-setting guidance and loop prevention.
+
+### Use maps, saved anchorages and depth
+
+- Switch on the map between **Map**, **Satellite** and **Nautical**. Following the boat still permits temporary pan/zoom before returning automatically; free-browse mode keeps the chosen view.
+- Add the regional LINZ local-depth layer, recently used legal non-Google tile caches, or a licensed raster MBTiles file. Google tiles are never cached by the app.
+- Save an anchorage for later reference, view its notes and setup, open it in Google Maps, or share a branded coordinate QR image.
+- Near a saved anchorage, use the direct distance/bearing guide. Choose vessel direction when usable NMEA HDT/HDG or trusted moving COG exists, otherwise use phone direction. This is not route planning or safe-passage advice.
+- Record a personal depth chart only when depth and position come from the **same connected NMEA server**. The anchor-watch GPS choice does not move real sonar samples.
+- Apply no, manual, or automatic LINZ tide correction to sonar surveys and keep chart-datum-corrected history available offline.
+
+## Getting started
+
+1. Grant precise location and notification permissions.
+2. Open **Settings → Alarm & notifications**, test the alarm, and confirm it is audible. Select the standard anchor alarm or a custom audio file.
+3. If using phone GPS, go straight to Watch. For boat data, open **Data → NMEA**, enter the TCP/UDP endpoint, then choose **Test, save & connect**.
+4. Check **Data → Raw data** to make sure the values belong to your boat and keep updating.
+5. On the Watch map, choose the map view and tap **Set anchor**.
+6. Complete Watch Preflight, choose a known centre or automatic estimation, and set the alarm radius.
+7. Keep the phone on reliable power and review **Settings → Background reliability** before an overnight watch.
+8. During the watch, use **Adjust range**, **Pause**, **Resume** or **Lift anchor** deliberately; do not dismiss a warning without checking the boat.
+
+## Automatic centre estimation
+
+A straight back-down track cannot uniquely reveal an anchor centre, so the app does not treat one line of GPS points as a solution. It starts with a deliberately broad possible-centre region derived from depth, rode and bow height, then narrows it only when compatible position discs, genuinely different bearing sectors, reversals and repeated direction evidence agree. Heading and wind can strengthen a candidate but cannot confirm one by themselves. The user must accept a high-confidence candidate before it replaces the working centre.
+
+See [Anchor centre estimation](docs/ANCHOR_CENTRE_ESTIMATION.md) for the mathematical, physical and implementation design.
+
+## Demo, languages and privacy
+
+Developer Demo mode lets a user learn the UI without a live NMEA server. Every new demo anchor starts from a fresh System-GNSS position, then generates a gradual noisy boat track and matching demo sonar. Demo GPS remains locked while the mode or its session is active so real and simulated data cannot be mixed accidentally.
+
+The app starts in English. The welcome screen and Settings language list support English, Simplified Chinese, Traditional Chinese, Japanese, French and Spanish.
+
+Sessions and surveys stay on the device. There is no account, analytics, advertising or project-owned cloud backend. Data leaves only through an export or sharing action started by the user.
+
+## Build, CI and downloads
+
+JDK 17 and Android SDK 36 are required.
+
+```bash
+./gradlew assembleDebug
+```
+
+The main Android workflow builds and verifies downloadable Debug artifacts. Long device-story integration is separate from the signed-release path, while Release still requires signing preflight, unit tests, release lint, compilation, checksums and launch smoke. The current workflow publishes GitHub Releases; it does not upload to Google Play.
+
+API values are never committed. See [CI secrets setup](docs/CI_SECRETS.md) for the exact map, LINZ and signing values and the safe clipboard helper. Branch and release conventions are in [Branching and releases](docs/BRANCHING_AND_RELEASES.md).
 
 ## Made aboard Yokuli
 
 Before turning his life towards the sea, **kuku** worked as a programmer. In New Zealand, our crew refitted **Yokuli**, a **Lotus 10.6** designed by New Zealand yacht designer **Alan Wright**. **Yoyo is the captain**; kuku and lili complete the crew.
 
-We hope first to explore New Zealand's islands and bays and, if wind, time and life allow, one day sail farther into the world. Anchor Watch grew from that life aboard. The complete anchor-watch, NMEA, sonar and offline-map feature set remains free, with no account, ads, paid unlocks or supporter-only features.
+We hope first to explore New Zealand's islands and bays and, if wind, time and life allow, one day sail farther into the world. Anchor Watch grew from that life aboard. Every anchor-watch, NMEA, sonar and offline-map feature remains free, with no account, ads, paid unlocks or supporter-only functions.
 
 - [Watch Yokuli on YouTube](https://www.youtube.com/@yokuli_ocean_diary)
 - [Voluntarily support the crew on Buy Me a Coffee](https://buymeacoffee.com/ukus3yya8a) — support unlocks no features.
-- Feature requests and feedback: `kuku.the.developer@gmail.com`
+- Send feedback to `kuku.the.developer@gmail.com`, or use the in-app Feedback page.
 
-## Highlights
+## More documentation
 
-- Validated NMEA TCP client and UDP listener. An endpoint is not accepted until the app receives usable NMEA traffic.
-- RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT, DBT, MWD and MWV support across common talker IDs.
-- A single accepted-position pipeline that quarantines one-off GPS jumps before alarms, centre estimation, sharing or sonar mapping.
-- System GPS and NMEA GPS in normal operation. NMEA cannot be selected without a connected source and a fresh valid fix.
-- Persistent anchor sessions with Pause, safe Resume, live radius adjustment and permanent Lift anchor actions.
-- Known-centre placement from the current fix, decimal coordinates or a dedicated map picker.
-- Conservative automatic centre estimation using rode geometry, multi-sector GPS coverage, physical heading and corroborated wind evidence.
-- Session-bound shallow/deep water, wind speed and wind-shift guards. Save buttons enable only when the validated values differ from the stored configuration.
-- A 24-hour breadcrumb: the newest section stays strongly visible before distance-based fading; retained calculation points are not deleted by rendering simplification.
-- Foreground drag alarm dialog plus looping alarm, notification, Snooze, Adjust range, Pause and Lift anchor actions.
-- Watch Preflight and continuous Watch Health for GPS, NMEA, alarm audibility, notifications, battery/background restrictions, network, storage and sonar.
-- Raw NMEA inspection, parsed values, checksum diagnostics and connection statistics.
-- Local anchorage library with details, Google Maps opening and coordinate-QR image sharing. Saved places are references, never remote Set anchor commands.
-- Saved-anchorage Approach: only explicitly saved places form reference clusters, show a once-per-episode prompt within 1 NM of the area boundary, and provide a large direct-bearing/distance guide. It is not route planning or safe-passage advice.
-- NMEA Sharing server for trusted boat LAN/VPN clients, with regenerated accepted position sentences and bounded per-client queues.
-- Personal sonar surveys using depth and position from the **same NMEA server**. System GPS is intentionally not used to locate real soundings.
-- Map, Satellite and Nautical styles, a regional LINZ Local depth chart, bounded legal non-Google caches, and licensed raster MBTiles import.
-- Exported Room schemas, tested migrations, bounded incident history, storage health tools, backup/restore and a privacy-safe Support Bundle.
-- Optional Android global NMEA GPS proxy with explicit developer/mock-location preflight and loop prevention.
-
-## How to use
-
-1. Grant precise location and notification permissions. Review **Settings → Background reliability** and remove manufacturer battery restrictions before an overnight watch.
-2. Open **Data → NMEA**, select TCP or UDP, enter the endpoint, then choose **Test, save & connect**.
-3. Confirm live sentences and parsed coordinates in **Data → Raw data**. A verified position stream automatically selects NMEA GPS.
-4. On the Watch map, choose Map, Satellite or Nautical and enable the Local depth chart only where coverage is available.
-5. Tap **Set anchor** and complete Watch Preflight. Blockers prevent arming; warnings explain the risk that must be accepted.
-6. Choose a known centre or conservative automatic estimation, then set the alarm radius and required geometry.
-7. During the watch, adjust only the alarm radius, Pause without losing the session, or Lift anchor to end it permanently.
-8. If an open NMEA-backed watch loses its connection, the session remains intact, warns immediately and attempts to reconnect. It never silently changes GPS source.
-9. After a centre is resolved, open it in Google Maps for inspection or coordinate copying.
-10. When returning to an explicitly saved anchorage, choose **Approach** for direct bearing and distance. The guide stops at the saved reference-area boundary; re-check current depth, traffic, weather and hazards before setting a new watch.
-
-## Range and centre estimation
-
-For a known anchor, Basic uses a manual radius. Advanced can calculate a radius from depth, rode, bow height and a Strict/Balanced/Tolerant preset.
-
-Automatic centre estimation has no Basic/Advanced split. The radius is set directly; depth, rode and bow height constrain the possible centre. Horizontal rode is:
-
-```text
-sqrt(rode² - (depth + bowHeight)²)
-```
-
-The possible-centre region begins conservatively, then tightens only after enough compatible GPS discs and genuinely different bearing sectors exist. Direction evidence changes likelihood but cannot resolve a centre on its own. The fastest corroborated path still needs multi-angle coverage and reversal; GPS-only learning takes longer. The user must accept a high-confidence candidate before the working centre moves.
-
-See [Anchor centre estimation](docs/ANCHOR_CENTRE_ESTIMATION.md) for the mathematical, physical and implementation design.
-
-## Maps, depth and offline use
-
-- Google content is never prefetched or cached.
-- Nautical mode uses a quiet base style plus OpenSeaMap seamarks.
-- The LINZ Local depth chart is a separate regional overlay and is the only chart layer with an opacity control.
-- Recently viewed OpenSeaMap and LINZ tiles use separate bounded caches and may remain as stale offline fallbacks.
-- Users may import raster MBTiles that they are licensed to store and use.
-- Personal sonar cells remain available offline after a survey.
-
-See [Offline map strategy](docs/OFFLINE_MAPS.md) and [Regional data providers](docs/REGIONAL_DATA_PROVIDERS.md).
-
-## Background safety, diagnostics and data
-
-The same safety model runs before and throughout a watch. A full device reboot cannot honestly promise uninterrupted Android location monitoring: an unfinished watch is recovered into a safe paused state and the user is asked to verify GPS, NMEA, alarm volume, power and network before resuming.
-
-The incident ring retains a bounded recent history of service lifecycle, GPS disposition, NMEA reconnects, alarm transitions, battery, centre, sonar and sharing events. Exported Support Bundles omit raw NMEA, API credentials and exact positions by default.
-
-Sessions and surveys stay on the device. There is no account, analytics, advertising or project-owned cloud backend. Data leaves only through user-initiated backup, survey, QR or diagnostic exports.
-
-## Build, CI and downloads
-
-JDK 17 and Android SDK 36 are required. API credentials are not committed. Put local development values in untracked `local.properties`; use GitHub Actions Secrets for CI:
-
-- `MAPS_API_KEY`
-- `LINZ_API_KEY` (optional)
-- `LINZ_HYDRO_TILE_TEMPLATE` (optional HTTPS template containing `{z}`, `{x}` and `{y}`)
-
-```bash
-./gradlew assembleDebug
-./gradlew testDebugUnitTest lintDebug
-./gradlew connectedDebugAndroidTest
-```
-
-The main workflow runs unit tests, lint, Debug compilation, three Android 14 device-story shards, and an Android 16/API 36 launch and accessibility smoke. A downloadable `anchor-watch-debug-verified-<commit SHA>` artifact is published only after every gate passes. Signed releases are built and published online when a validated version tag is pushed; a tag-only manual workflow remains as fallback.
-
-Local project policy is to write tests with changes but run them only when explicitly requested. The commit-specific GitHub Actions result is the authoritative full quality gate.
-
-Branch and release conventions are documented in [Branching and releases](docs/BRANCHING_AND_RELEASES.md). Before a real overnight release candidate, complete the [physical-device and 72-hour boat soak checklist](docs/PHYSICAL_SOAK_CHECKLIST.md).
-
-## Project references
-
-- [Product identity](docs/PRODUCT_IDENTITY.md)
-- [Support policy](docs/SUPPORT_POLICY.md)
+- [Offline maps](docs/OFFLINE_MAPS.md)
+- [Regional data providers](docs/REGIONAL_DATA_PROVIDERS.md)
 - [Privacy and data flow](docs/PRIVACY_DATA_FLOW.md)
-- [Visual Release Console](docs/RELEASE_CONSOLE.md)
-- [Release signing management](docs/RELEASE_SIGNING.md)
-- [Play release checklist](docs/PLAY_RELEASE_CHECKLIST.md)
+- [Release signing](docs/RELEASE_SIGNING.md)
+- [Physical-device and 72-hour boat soak checklist](docs/PHYSICAL_SOAK_CHECKLIST.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 The software licence remains an owner decision; no licence is implied by the absence of a licence file.
