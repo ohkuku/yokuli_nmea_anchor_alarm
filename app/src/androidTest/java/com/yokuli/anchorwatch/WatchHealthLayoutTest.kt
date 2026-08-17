@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import com.yokuli.anchorwatch.domain.safety.SafetyCheck
 import com.yokuli.anchorwatch.domain.safety.SafetyCheckStatus
@@ -22,6 +23,8 @@ class WatchHealthLayoutTest{
 
         compose.onNodeWithTag("watch_health_sheet").assertIsDisplayed()
         compose.onNodeWithTag("watch_health_list").performScrollToIndex(checks.lastIndex)
-        compose.onNodeWithTag("watch_health_sonar").assertIsDisplayed()
+        // LazyColumn must first compose the last row; once it exists, request the
+        // exact child bounds so a tall wrapped row is not left only partly visible.
+        compose.onNodeWithTag("watch_health_sonar").performScrollTo().assertIsDisplayed()
     }
 }
