@@ -12,8 +12,9 @@ class SonarSurveyStartPolicyTest {
     }
 
     @Test fun realSurveyRequiresConnectedNmeaAndFreshDepth() {
-        assertEquals(SonarSurveyStartDecision.NMEA_NOT_CONNECTED,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED_NO_DATA,true))
-        assertEquals(SonarSurveyStartDecision.DEPTH_NOT_FRESH,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED,false))
-        assertEquals(SonarSurveyStartDecision.ALLOWED,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED,true))
+        assertEquals(SonarSurveyStartDecision.NMEA_NOT_CONNECTED,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED_NO_DATA,true,true))
+        assertEquals(SonarSurveyStartDecision.DEPTH_NOT_FRESH,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED,false,true))
+        assertEquals(SonarSurveyStartDecision.NMEA_POSITION_NOT_FRESH,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED,true,false))
+        assertEquals(SonarSurveyStartDecision.ALLOWED,SonarSurveyStartPolicy.evaluate(false,NmeaConnectionState.CONNECTED,true,true))
     }
 }

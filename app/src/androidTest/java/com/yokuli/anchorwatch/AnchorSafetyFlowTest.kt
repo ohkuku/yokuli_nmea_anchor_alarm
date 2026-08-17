@@ -4,16 +4,19 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.printToString
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -32,6 +35,7 @@ import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.SharingServerState
+import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.di.AnchorWatchEntryPoint
 import com.yokuli.anchorwatch.domain.model.AnchorCenterStatus
 import com.yokuli.anchorwatch.domain.model.AnchorCenterSource
@@ -49,6 +53,7 @@ import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
+import com.yokuli.anchorwatch.map.MapRuntimePolicy
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import dagger.hilt.android.EntryPointAccessors
 import java.io.Closeable
@@ -68,8 +73,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -92,12 +99,14 @@ class AnchorSafetyFlowTest {
     private lateinit var alarmUi:AlarmUiRepository
     private lateinit var sharingServer:NmeaSharingServer
     private lateinit var sonarDao:SonarDao
+    private lateinit var sonarRecorder:SonarSurveyRecorder
     private lateinit var acceptedPosition:AcceptedPositionRepository
 
     @Before fun prepare() = runBlocking<Unit> {
+        MapRuntimePolicy.renderGoogleEngine=false
         context = InstrumentationRegistry.getInstrumentation().targetContext
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
-        dao = entry.dao();sonarDao=entry.sonarDao();acceptedPosition=entry.acceptedPosition(); preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
+        dao = entry.dao();sonarDao=entry.sonarDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition(); preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
         context.stopService(Intent(context, AnchorForegroundService::class.java))
         delay(250)
         navigation.disconnectAll()
@@ -109,6 +118,7 @@ class AnchorSafetyFlowTest {
     }
 
     @After fun cleanup() = runBlocking<Unit> {
+        MapRuntimePolicy.renderGoogleEngine=true
         if(::context.isInitialized)context.stopService(Intent(context, AnchorForegroundService::class.java))
         if(::navigation.isInitialized)navigation.disconnectAll()
         if(::dao.isInitialized)dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
@@ -148,7 +158,15 @@ class AnchorSafetyFlowTest {
                 assertEquals(sessionId,dao.active()?.id)
                 val pointsAtPause=dao.points(sessionId).first().size;delay(1_500);assertEquals(pointsAtPause,dao.points(sessionId).first().size)
                 ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.RESUME_WATCH))
-                withTimeout(8_000){while(dao.active()?.paused!=false)delay(50)}
+                val resumed=withTimeoutOrNull(20_000){while(dao.active()?.paused!=false)delay(50);dao.active()}
+                val latestFix=navigation.fix.value
+                assertNotNull(
+                    "Watch did not resume; session=${dao.active()}; connection=${navigation.connectionState.value}; " +
+                        "acceptedSockets=${server.accepted.get()}; fix=$latestFix; " +
+                        "fixAge=${latestFix?.let{android.os.SystemClock.elapsedRealtime()-it.receivedElapsedRealtime}}; " +
+                        "events=${dao.events(sessionId).first().takeLast(8)}",
+                    resumed,
+                )
                 assertEquals(sessionId,dao.active()?.id)
                 assertEquals(-36.8485,dao.active()!!.anchorLatitude,0.000001)
             }
@@ -187,8 +205,8 @@ class AnchorSafetyFlowTest {
     @Test fun satelliteLayerCanBeSelectedBeforeNmeaConnects() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.NMEA,mapType=1))
         ActivityScenario.launch(MainActivity::class.java).use {
-            compose.waitUntil(5_000){compose.onAllNodesWithText("Layers").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithText("Layers").performClick()
+            compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("map_layers").fetchSemanticsNode();true}.getOrDefault(false)}
+            compose.onNodeWithTag("map_layers").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithText("Satellite").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Satellite").performClick()
             assertEquals(2,withTimeout(5_000){preferences.settings.first{it.mapType==2}}.mapType)
@@ -229,8 +247,20 @@ class AnchorSafetyFlowTest {
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
                 compose.onNodeWithText("Data").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
-                compose.onNodeWithText("Test, save & connect").performClick()
-                val selected=withTimeout(15_000){preferences.settings.first{it.gpsDataSource==GpsDataSource.NMEA}}
+                compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
+                compose.onNodeWithText("127.0.0.1").assertExists()
+                compose.onNodeWithText(server.port.toString()).assertExists()
+                compose.onNodeWithText("Test, save & connect").performScrollTo().performClick()
+                val selected=withTimeoutOrNull(15_000){preferences.settings.first{it.gpsDataSource==GpsDataSource.NMEA}}
+                val attemptNode=compose.onAllNodesWithTag("nmea_connection_attempt",useUnmergedTree=true).fetchSemanticsNodes().firstOrNull()
+                val attemptText=attemptNode?.let{node->runCatching{node.config[SemanticsProperties.Text].joinToString()}.getOrNull()}
+                assertNotNull(
+                    "Save/connect did not select NMEA; acceptedSockets=${server.accepted.get()}, " +
+                        "connection=${navigation.connectionState.value}, attempt=$attemptText, settings=${preferences.settings.first()}" +
+                        "\nsemantics=${compose.onRoot(useUnmergedTree=true).printToString(maxDepth=12)}",
+                    selected,
+                )
+                requireNotNull(selected)
                 assertEquals(GpsDataSource.NMEA,selected.gpsDataSource)
                 assertTrue(!selected.demoMode)
                 compose.onNodeWithText("Settings").performClick()
@@ -270,7 +300,8 @@ class AnchorSafetyFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 compose.onNodeWithText("Data").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
-                compose.onNodeWithText("Test, save & connect").performClick()
+                compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
+                compose.onNodeWithText("Test, save & connect").performScrollTo().performClick()
                 withTimeout(15_000){navigation.connectionState.first{it==NmeaConnectionState.CONNECTED}}
                 assertEquals(GpsDataSource.DEMO,preferences.settings.first().gpsDataSource)
                 compose.onNodeWithText("Settings").performClick()
@@ -340,6 +371,7 @@ class AnchorSafetyFlowTest {
                 "settings_positioning" to 3,
                 "settings_map_depth" to 3,
                 "settings_background" to 4,
+                "settings_storage_support" to 4,
                 "settings_developer" to 5,
             )
             pages.forEach{(tag,index)->
@@ -446,8 +478,7 @@ class AnchorSafetyFlowTest {
             assertEquals(-36.8485,active.learningReferenceLatitude!!,0.000001)
             assertTrue(active.provisionalAnchorLatitude!=null&&active.provisionalRadiusMeters!=null)
             assertTrue(active.provisionalRadiusMeters!!>35.0)
-            delay(3_000)
-            val learning=dao.active()!!
+            val learning=withTimeout(10_000){while((dao.active()?.centerSampleCount?:0)<=0)delay(50);dao.active()!!}
             assertEquals(AnchorCenterStatus.LEARNING.name,learning.centerStatus)
             assertTrue(learning.centerSampleCount>0)
             assertTrue(dao.events(active.id).first().any{it.type=="SESSION_STARTED_CENTER_LEARNING"})
@@ -621,9 +652,9 @@ class AnchorSafetyFlowTest {
     }
 
     @Test fun sharingAndLinzPreferencesRoundTrip() = runBlocking<Unit> {
-        preferences.save(AppSettings(nmeaSharingEnabled=true,nmeaSharingPort=12001,linzHydroEnabled=true,linzHydroOpacity=.55,linzHydroDisclaimerAccepted=true,sounderOffsetMeters=.4,showLinzDepthReference=false,showPersonalMapReference=false))
+        preferences.save(AppSettings(nmeaSharingEnabled=true,nmeaSharingPort=12001,linzHydroEnabled=true,linzHydroOpacity=.55,linzHydroDisclaimerAccepted=true,offlineMapEnabled=true,offlineMapName="Harbour.mbtiles",offlineMapAttribution="Licensed test chart",alarmAudibleConfirmedAt=1234,sounderOffsetMeters=.4,showLinzDepthReference=false,showPersonalMapReference=false))
         val restored=withTimeout(5_000){preferences.settings.first{it.nmeaSharingEnabled&&it.nmeaSharingPort==12001&&it.linzHydroEnabled}}
-        assertEquals(.55,restored.linzHydroOpacity,.001);assertTrue(restored.linzHydroDisclaimerAccepted);assertEquals(.4,restored.sounderOffsetMeters,.001);assertTrue(!restored.showLinzDepthReference&&!restored.showPersonalMapReference)
+        assertEquals(.55,restored.linzHydroOpacity,.001);assertTrue(restored.linzHydroDisclaimerAccepted);assertTrue(restored.offlineMapEnabled);assertEquals("Harbour.mbtiles",restored.offlineMapName);assertEquals("Licensed test chart",restored.offlineMapAttribution);assertEquals(1234L,restored.alarmAudibleConfirmedAt);assertEquals(.4,restored.sounderOffsetMeters,.001);assertTrue(!restored.showLinzDepthReference&&!restored.showPersonalMapReference)
     }
 
     @Test fun sonarSurveyPersistsRawAndNormalizedDepthAndDeletesAsOneUnit() = runBlocking<Unit> {
@@ -633,17 +664,23 @@ class AnchorSafetyFlowTest {
         assertEquals(1,sonarDao.deleteCompleted(surveyId));assertTrue(sonarDao.samplesNow(surveyId).isEmpty())
     }
 
-    @Test fun sonarRuntimePairsFreshDepthOnlyWithAcceptedPosition() = runBlocking<Unit> {
+    @Test fun sonarRuntimePairsDepthOnlyWithGpsFromTheSameNmeaServer() = runBlocking<Unit> {
         TestNmeaServer().use{server->
+            server.setDepth(8.0,1.0)
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA,sounderOffsetMeters=.4));connectAndAwaitFix(profile)
-            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java));delay(300)
-            val elapsed=android.os.SystemClock.elapsedRealtime();acceptedPosition.selectSource(GpsDataSource.NMEA);acceptedPosition.submit(GpsDataSource.NMEA,NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=elapsed,horizontalAccuracyMeters=2.0,positionProvider=PositionProvider.NMEA,sourceSentence="TEST_ACCEPTED",valid=true))
-            navigation.accept(NmeaChecksum.append("IIDPT,8.0,1.0"),true);delay(100)
+            withTimeout(10_000){while(true){
+                val now=android.os.SystemClock.elapsedRealtime();val status=sonarRecorder.status.value
+                if(status.hasFreshRealDepth(now)&&status.hasFreshNmeaPosition(now))break
+                delay(25)
+            }}
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name","Runtime test").putExtra("tideMode","OFF"))
-            val survey=withTimeout(5_000){while(sonarDao.active()==null)delay(25);sonarDao.active()!!}
-            val nextElapsed=android.os.SystemClock.elapsedRealtime();acceptedPosition.submit(GpsDataSource.NMEA,NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=nextElapsed,horizontalAccuracyMeters=2.0,positionProvider=PositionProvider.NMEA,sourceSentence="TEST_ACCEPTED_2",valid=true));navigation.accept(NmeaChecksum.append("IIDPT,8.0,1.0"),true)
-            val sample=withTimeout(5_000){sonarDao.samples(survey.id).first{it.isNotEmpty()}.single()}
-            assertEquals(8.0,sample.rawDepthMeters,.001);assertEquals(9.4,sample.measuredDepthMeters,.001);assertTrue(sample.normalizedDepthMeters==null);assertTrue(sample.usable);assertTrue(!sample.positionCorrectionApplied)
+            val survey=withTimeoutOrNull(15_000){while(sonarDao.active()==null)delay(25);sonarDao.active()}
+            assertNotNull("Survey was not started; recorder=${sonarRecorder.status.value}; connection=${navigation.connectionState.value}",survey)
+            requireNotNull(survey)
+            val sample=withTimeoutOrNull(15_000){sonarDao.samples(survey.id).first{it.isNotEmpty()}.single()}
+            assertNotNull("Fresh same-stream depth was not recorded; recorder=${sonarRecorder.status.value}",sample)
+            requireNotNull(sample)
+            assertEquals(8.0,sample.rawDepthMeters,.001);assertEquals(9.4,sample.measuredDepthMeters,.001);assertTrue(sample.normalizedDepthMeters==null);assertTrue(sample.usable);assertTrue(!sample.positionCorrectionApplied);assertEquals("NMEA_SERVER",sample.gpsSource);assertEquals(PositionProvider.NMEA.name,sample.positionProvider)
             context.startService(Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_SONAR_SURVEY))
             withTimeout(5_000){while(sonarDao.active()!=null)delay(25)}
         }
@@ -713,7 +750,7 @@ class AnchorSafetyFlowTest {
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Data").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Disconnect").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Disconnect").performClick()
+        compose.onNodeWithText("Disconnect").performScrollTo().performClick()
     }
 
     private fun liveProfile(server: TestNmeaServer, autoReconnect: Boolean) = ConnectionProfile(
@@ -727,6 +764,7 @@ private class TestNmeaServer : Closeable {
     private val clients = CopyOnWriteArrayList<Socket>()
     val accepted = AtomicInteger()
     private val sentence=AtomicReference(rmc(-36.8485,174.7633))
+    private val depthSentence=AtomicReference<ByteArray?>(null)
     val port: Int get() = server.localPort
 
     init {
@@ -741,13 +779,24 @@ private class TestNmeaServer : Closeable {
 
     private suspend fun writeFixes(socket: Socket) {
         try {
-            while (scope.isActive && !socket.isClosed) { socket.getOutputStream().write(sentence.get()); socket.getOutputStream().flush(); delay(100) }
+            var emitted = 0
+            while (scope.isActive && !socket.isClosed) {
+                socket.getOutputStream().write(sentence.get())
+                depthSentence.get()?.let{socket.getOutputStream().write(it)}
+                socket.getOutputStream().flush()
+                // Every newly accepted socket gets a short validation burst so both the
+                // endpoint preflight and the real transport can prove that live NMEA is
+                // present. Afterwards use a realistic low visual cadence: safety code still
+                // sees every sentence, while Compose tests get an idle window between fixes.
+                delay(if (emitted++ < 3) 100 else 2_000)
+            }
         } catch (_: Exception) {
             // Closing a connection is how loss/reconnect scenarios are triggered.
         } finally { clients.remove(socket); runCatching { socket.close() } }
     }
 
     fun setFix(latitude:Double,longitude:Double){sentence.set(rmc(latitude,longitude))}
+    fun setDepth(depthMeters:Double,offsetMeters:Double){depthSentence.set((NmeaChecksum.append("IIDPT,$depthMeters,$offsetMeters")+"\r\n").toByteArray())}
     fun closeConnections() { clients.toList().forEach { runCatching { it.close() } } }
     override fun close() { closeConnections(); runCatching { server.close() }; scope.cancel() }
 

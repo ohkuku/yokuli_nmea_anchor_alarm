@@ -17,11 +17,11 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
-data class SonarTileDiagnosticsSnapshot(val cacheEntries:Int=0,val lastDirtyTiles:Int=0,val renderedTiles:Long=0)
+data class SonarTileDiagnosticsSnapshot(val cacheEntries:Int=0,val lastDirtyTiles:Int=0,val renderedTiles:Long=0,val lastRenderDurationMillis:Long=0,val maxRenderDurationMillis:Long=0)
 object SonarTileDiagnostics{
     private val _state=MutableStateFlow(SonarTileDiagnosticsSnapshot());val state=_state.asStateFlow()
     internal fun gridChanged(cacheEntries:Int,dirtyTiles:Int){_state.value=_state.value.copy(cacheEntries=cacheEntries,lastDirtyTiles=dirtyTiles)}
-    internal fun rendered(cacheEntries:Int){_state.value=_state.value.copy(cacheEntries=cacheEntries,renderedTiles=_state.value.renderedTiles+1)}
+    internal fun rendered(cacheEntries:Int,durationMillis:Long){_state.value=_state.value.copy(cacheEntries=cacheEntries,renderedTiles=_state.value.renderedTiles+1,lastRenderDurationMillis=durationMillis,maxRenderDurationMillis=maxOf(_state.value.maxRenderDurationMillis,durationMillis))}
 }
 
 /** Transparent, bounded-cache raster tiles; no marker-per-sounding rendering. */
@@ -42,6 +42,7 @@ class SonarTileProvider(initialGrid:SonarGrid):TileProvider{
         if(zoom !in 13..22||x<0||y<0)return TileProvider.NO_TILE
         val extent=1L shl zoom;if(x.toLong()>=extent||y.toLong()>=extent)return TileProvider.NO_TILE
         val key="$zoom/$x/$y";cache.get(key)?.let{return it}
+        val renderStarted=System.nanoTime()
         val halfWorld=PI*SonarGrid.EARTH_RADIUS;val world=halfWorld*2;val tileMeters=world/extent
         val minX=-halfWorld+x*tileMeters;val maxX=minX+tileMeters;val maxY=halfWorld-y*tileMeters;val minY=maxY-tileMeters
         val measured=grid.cellsInBounds(minX-15.0,maxX+15.0,minY-15.0,maxY+15.0);if(measured.isEmpty())return TileProvider.NO_TILE
@@ -69,7 +70,7 @@ class SonarTileProvider(initialGrid:SonarGrid):TileProvider{
             paint.color=depthColor(cell.depth,cell.uncertainty,cell.measured);canvas.drawRect(cell.px-cellPixels/2,cell.py-cellPixels/2,cell.px+cellPixels/2,cell.py+cellPixels/2,paint)
         }
         val bytes=ByteArrayOutputStream().use{stream->bitmap.compress(Bitmap.CompressFormat.PNG,100,stream);stream.toByteArray()};bitmap.recycle()
-        return Tile(256,256,bytes).also{cache.put(key,it);SonarTileDiagnostics.rendered(cache.size())}
+        return Tile(256,256,bytes).also{cache.put(key,it);SonarTileDiagnostics.rendered(cache.size(),(System.nanoTime()-renderStarted)/1_000_000L)}
     }
     private fun depthColor(depth:Double,uncertainty:Double,measured:Boolean):Int{
         val normalized=(depth/50.0).coerceIn(0.0,1.0).toFloat();val hue=25f+normalized*195f;val baseAlpha=(220.0-uncertainty.coerceIn(0.0,8.0)*14.0).toInt().coerceIn(80,220);val alpha=if(measured)baseAlpha else (baseAlpha*.48).toInt().coerceAtLeast(45)

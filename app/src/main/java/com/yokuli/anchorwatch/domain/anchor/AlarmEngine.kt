@@ -6,6 +6,8 @@ import com.yokuli.anchorwatch.domain.model.AlarmType
 import com.yokuli.anchorwatch.domain.model.AnchorConfig
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import kotlin.math.max
+import com.yokuli.anchorwatch.runtime.MonotonicClock
+import com.yokuli.anchorwatch.runtime.SystemMonotonicClock
 
 /** Safety state machine with persistence on both alarm entry and recovery. */
 class AlarmEngine(
@@ -14,6 +16,7 @@ class AlarmEngine(
     private val gpsLossMillis: Long = 15_000L,
     private val clearPersistenceMillis: Long = 12_000L,
     private val clearRequiredFixes: Int = 5,
+    private val clock:MonotonicClock = SystemMonotonicClock,
 ) {
     private var config: AnchorConfig? = null
     private var learning = false
@@ -31,10 +34,10 @@ class AlarmEngine(
     private var snap = AlarmSnapshot()
 
     /** Back-down learning still protects the user-defined temporary boundary. */
-    fun learn(c: AnchorConfig, now: Long = System.nanoTime() / 1_000_000): AlarmSnapshot =
+    fun learn(c: AnchorConfig, now: Long = clock.elapsedRealtime()): AlarmSnapshot =
         initialise(c, now, isLearning = true)
 
-    fun arm(c: AnchorConfig, now: Long = System.nanoTime() / 1_000_000): AlarmSnapshot =
+    fun arm(c: AnchorConfig, now: Long = clock.elapsedRealtime()): AlarmSnapshot =
         initialise(c, now, isLearning = false)
 
     private fun initialise(c: AnchorConfig, now: Long, isLearning: Boolean): AlarmSnapshot {
@@ -65,6 +68,25 @@ class AlarmEngine(
         outsideCount = 0
         clearSince = null
         clearCount = 0
+    }
+
+    /**
+     * Change only the watch geometry without introducing an artificial safe
+     * window. A radius change that still leaves the vessel outside preserves
+     * the existing radius-alarm latch; a change that makes it safe resets the
+     * latch and lets subsequent fixes build warning/alarm persistence anew.
+     */
+    fun updateConfig(c:AnchorConfig,preservedAlarmType:AlarmType?):AlarmSnapshot{
+        config=c
+        outsideSince=null;outsideCount=0;clearSince=null;clearCount=0
+        warningCount=0;warningClearCount=0;warningLatched=false
+        alarmLatched=preservedAlarmType==AlarmType.ANCHOR_RADIUS_EXCEEDED
+        snap=snap.copy(
+            state=when{preservedAlarmType!=null->AlarmState.ALARM;learning->AlarmState.LEARNING;else->AlarmState.ARMED},
+            type=preservedAlarmType,
+            acknowledged=false,
+        )
+        return snap
     }
 
     fun acknowledge(): AlarmSnapshot = snap.copy(

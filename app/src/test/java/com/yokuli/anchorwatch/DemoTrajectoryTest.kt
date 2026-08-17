@@ -46,14 +46,19 @@ class DemoTrajectoryTest {
         assertTrue(states.any{!it});assertTrue(states.drop(states.indexOfFirst{!it}+1).any{it})
     }
 
-    @Test fun windShiftNeverTeleportsButCannotResolveBeforeFiveMinutes() {
-        val points=(0..240).map{second->DemoTrajectory.point(second*1_000L,AnchorPlacementMode.BACKDOWN,DemoScenario.WIND_SHIFT,70.0,1,77)}
-        assertTrue(points.zipWithNext().all{(a,b)->hypot(b.northMeters-a.northMeters,b.eastMeters-a.eastMeters)<5.0})
+    @Test fun windShiftTrajectoryIsContinuous() {
+        val points=(0..360).map{second->DemoTrajectory.point(second*1_000L,AnchorPlacementMode.BACKDOWN,DemoScenario.WIND_SHIFT,70.0,1,77)}
+        val largestStep=points.zipWithNext().maxOf{(a,b)->hypot(b.northMeters-a.northMeters,b.eastMeters-a.eastMeters)}
+        assertTrue("largest one-second step was $largestStep m",largestStep<5.0)
+    }
+
+    @Test fun demoCannotResolveBeforeFastPathMinimumDuration() {
+        val points=(0..299).map{second->DemoTrajectory.point(second*1_000L,AnchorPlacementMode.BACKDOWN,DemoScenario.WIND_SHIFT,70.0,1,77)}
         val samples=points.mapIndexed{second,point->
-            BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8)
+            BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8,point.headingToAnchorDegrees,point.headingDegrees,point.speedMetersPerSecond*1.943844,point.trueWindDirectionDegrees,point.windSpeedKnots,point.apparentWindAngleDegrees,point.trueWindAngleDegrees,point.windSpeedKnots,point.windSpeedKnots,point.evidenceSequence,point.evidenceSequence)
         }
         val estimate=BackdownCenterEstimator().estimateSamples(samples,45.0)!!
-        assertTrue(estimate.confidence!=Confidence.HIGH)
+        assertTrue(estimate.debugSummary(),estimate.confidence!=Confidence.HIGH)
     }
 
     @Test fun repeatedDemoSwingAndWindEvidenceCanProduceACandidateAfterFiveMinutes(){

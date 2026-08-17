@@ -2,11 +2,14 @@ package com.yokuli.anchorwatch
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yokuli.anchorwatch.data.NavigationRepository
 import com.yokuli.anchorwatch.data.AlarmUiRepository
+import com.yokuli.anchorwatch.data.backup.BackupOperationState
+import com.yokuli.anchorwatch.data.backup.YokuliBackupManager
 import com.yokuli.anchorwatch.data.database.AnchorDao
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.TrackPointEntity
@@ -14,6 +17,12 @@ import com.yokuli.anchorwatch.data.database.AlarmEventEntity
 import com.yokuli.anchorwatch.data.database.DepthSampleEntity
 import com.yokuli.anchorwatch.data.database.SonarDao
 import com.yokuli.anchorwatch.data.database.SonarSurveyEntity
+import com.yokuli.anchorwatch.data.database.IncidentLogEntity
+import com.yokuli.anchorwatch.data.diagnostics.IncidentLogger
+import com.yokuli.anchorwatch.data.diagnostics.StorageHealth
+import com.yokuli.anchorwatch.data.diagnostics.StorageHealthRepository
+import com.yokuli.anchorwatch.data.diagnostics.SupportBundleManager
+import com.yokuli.anchorwatch.data.diagnostics.SupportBundleState
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaDiagnostics
 import com.yokuli.anchorwatch.data.nmea.NmeaEndpointPreflight
@@ -53,6 +62,14 @@ import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionState
 import com.yokuli.anchorwatch.service.AnchorForegroundService
+import com.yokuli.anchorwatch.runtime.RuntimeDiagnostics
+import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
+import com.yokuli.anchorwatch.domain.safety.DeviceSafetyProbe
+import com.yokuli.anchorwatch.domain.safety.WatchPreflightEvaluator
+import com.yokuli.anchorwatch.domain.safety.WatchSafetyInput
+import com.yokuli.anchorwatch.domain.safety.WatchSafetyReport
+import com.yokuli.anchorwatch.map.OfflineMapInfo
+import com.yokuli.anchorwatch.map.OfflineMapRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +84,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 enum class ConnectionAttemptState { IDLE, TESTING, FAILED }
@@ -82,6 +101,7 @@ data class MainUiState(
     val connectionAttempt:ConnectionAttempt=ConnectionAttempt(),
     val diagnostics:NmeaDiagnostics=NmeaDiagnostics(),
     val settings:AppSettings=AppSettings(),
+    val settingsReady:Boolean=false,
     val sessions:List<AnchorSessionEntity> = emptyList(),
     val active:AnchorSessionEntity?=null,
     val points:List<TrackPointEntity> = emptyList(),
@@ -108,6 +128,13 @@ data class MainUiState(
     val linzDepth:LinzDepthReference=LinzDepthReference(),
     val linzDepthDiagnostics:LinzDepthDiagnostics=LinzDepthDiagnostics(),
     val depthUi:DepthUiState=DepthUiState(),
+    val backup:BackupOperationState=BackupOperationState(),
+    val runtimeDiagnostics:RuntimeDiagnostics=RuntimeDiagnostics(),
+    val watchSafety:WatchSafetyReport=WatchSafetyReport(),
+    val storageHealth:StorageHealth=StorageHealth(),
+    val incidents:List<IncidentLogEntity> = emptyList(),
+    val supportBundle:SupportBundleState=SupportBundleState(),
+    val offlineMap:OfflineMapInfo=OfflineMapInfo(),
 )
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
@@ -131,6 +158,13 @@ class MainViewModel @Inject constructor(
     private val sonarRecorder:SonarSurveyRecorder,
     private val sonarGridUpdater:SonarIncrementalGridUpdater,
     private val linzDepthRepository:LinzDepthReferenceRepository,
+    private val backupManager:YokuliBackupManager,
+    private val runtimeDiagnostics:RuntimeDiagnosticsRepository,
+    private val safetyProbe:DeviceSafetyProbe,
+    private val storageHealthRepository:StorageHealthRepository,
+    private val supportBundleManager:SupportBundleManager,
+    private val incidentLogger:IncidentLogger,
+    private val offlineMapRepository:OfflineMapRepository,
 ):AndroidViewModel(app){
     private val _ui=MutableStateFlow(MainUiState());val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
@@ -140,7 +174,12 @@ class MainViewModel @Inject constructor(
     private val estimator=AnchorCenterEstimator()
 
     init{
-        val available=combine(nav.fix,systemLocation.fix,demoLocation.fix,demoLocation.status){nmea,system,demo,status->AvailablePositions(nmea,system,demo,status)}
+        // Safety and recording repositories consume the full provider rate. Compose/map only
+        // needs a bounded visual cadence; drawing every 10‑20 Hz NMEA sentence can starve taps,
+        // service commands and test idling on slower phones without adding navigational value.
+        val nmeaForUi=nav.fix.map{fix->delay(UI_POSITION_FRAME_MILLIS);fix}
+        val diagnosticsForUi=nav.diagnostics.map{diagnostics->delay(UI_POSITION_FRAME_MILLIS);diagnostics}
+        val available=combine(nmeaForUi,systemLocation.fix,demoLocation.fix,demoLocation.status){nmea,system,demo,status->AvailablePositions(nmea,system,demo,status)}
         val sources=combine(available,prefs.settings){positions,settings->
             val selected=when(settings.gpsDataSource){GpsDataSource.NMEA->positions.nmea;GpsDataSource.SYSTEM->positions.system;GpsDataSource.DEMO->if(positions.demoStatus.running)positions.demo else positions.system}
             PositionSources(selected,positions.nmea,positions.system,settings) to positions.demoStatus
@@ -156,7 +195,7 @@ class MainViewModel @Inject constructor(
             }
         }
         viewModelScope.launch{
-            combine(sources,nav.connectionState,nav.connectionStartedElapsed,nav.diagnostics,dao.sessions()){sourceAndDemo,connection,connectionStarted,diagnostics,sessions->
+            combine(sources,nav.connectionState,nav.connectionStartedElapsed,diagnosticsForUi,dao.sessions()){sourceAndDemo,connection,connectionStarted,diagnostics,sessions->
                 arrayOf(sourceAndDemo,connection,connectionStarted,diagnostics,sessions)
             }.collect{values->
                 @Suppress("UNCHECKED_CAST") val sourceAndDemo=values[0] as Pair<PositionSources,DemoGpsStatus>
@@ -164,11 +203,11 @@ class MainViewModel @Inject constructor(
                 @Suppress("UNCHECKED_CAST") val sessions=values[4] as List<AnchorSessionEntity>
                 val active=sessions.firstOrNull{it.active}
                 val connection=values[1] as NmeaConnectionState
-                _ui.update{it.copy(nmeaFix=position.nmea,nmeaConnectionStartedElapsed=values[2] as Long?,systemFix=position.system,connection=connection,diagnostics=values[3] as NmeaDiagnostics,settings=position.settings,sessions=sessions,active=active,demoGps=sourceAndDemo.second)}
+                _ui.update{it.copy(nmeaFix=position.nmea,nmeaConnectionStartedElapsed=values[2] as Long?,systemFix=position.system,connection=connection,diagnostics=values[3] as NmeaDiagnostics,settings=position.settings,settingsReady=true,sessions=sessions,active=active,demoGps=sourceAndDemo.second)}
                 observePoints(active)
             }
         }
-        viewModelScope.launch{acceptedPosition.state.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)};refreshDepthUi()}}
+        viewModelScope.launch{acceptedPosition.state.map{accepted->delay(UI_POSITION_FRAME_MILLIS);accepted}.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)};refreshDepthUi()}}
         viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{systemLocation.setAppEnabled(it==GpsDataSource.SYSTEM||it==GpsDataSource.DEMO)}}
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
@@ -187,8 +226,30 @@ class MainViewModel @Inject constructor(
         }}
         viewModelScope.launch{linzDepthRepository.state.collect{value->_ui.update{it.copy(linzDepth=value)};refreshDepthUi()}}
         viewModelScope.launch{linzDepthRepository.diagnostics.collect{value->_ui.update{it.copy(linzDepthDiagnostics=value)}}}
+        viewModelScope.launch{backupManager.state.collect{value->_ui.update{it.copy(backup=value)}}}
+        viewModelScope.launch{runtimeDiagnostics.state.collect{value->_ui.update{it.copy(runtimeDiagnostics=value)}}}
+        viewModelScope.launch{incidentLogger.recent.collect{value->_ui.update{it.copy(incidents=value)}}}
+        viewModelScope.launch{supportBundleManager.state.collect{value->_ui.update{it.copy(supportBundle=value)}}}
+        viewModelScope.launch{offlineMapRepository.state.collect{value->_ui.update{it.copy(offlineMap=value)}}}
         viewModelScope.launch{combine(acceptedPosition.state.map{it.acceptedFix}.distinctUntilChanged(),prefs.settings.map{it.showLinzDepthReference}.distinctUntilChanged()){fix,enabled->fix to enabled}.conflate().collect{(fix,enabled)->delay(2_000);if(enabled&&fix?.valid==true)linzDepthRepository.refresh(fix.latitude,fix.longitude)}}
-        viewModelScope.launch{while(true){delay(1_000);refreshDepthUi()}}
+        viewModelScope.launch{while(true){refreshDepthUi();refreshWatchSafety();delay(1_000)}}
+        viewModelScope.launch{while(true){refreshStorageHealth();delay(30_000)}}
+        incidentLogger.record("app","UI_STARTED")
+    }
+
+    private companion object { const val UI_POSITION_FRAME_MILLIS=250L }
+
+    private fun refreshWatchSafety(){
+        val state=_ui.value
+        val report=WatchPreflightEvaluator.evaluate(WatchSafetyInput(
+            nowElapsed=android.os.SystemClock.elapsedRealtime(),nowWall=System.currentTimeMillis(),settings=state.settings,
+            selectedFix=if(state.active==null&&state.settings.demoMode)state.systemFix else state.fix,nmeaConnection=state.connection,device=safetyProbe.snapshot(),sonar=state.sonarRecorder,
+        ))
+        _ui.update{it.copy(watchSafety=report)}
+    }
+
+    private fun refreshStorageHealth()=viewModelScope.launch{
+        val value=storageHealthRepository.snapshot();_ui.update{it.copy(storageHealth=value)}
     }
 
     private fun observePoints(session:AnchorSessionEntity?){
@@ -278,6 +339,32 @@ class MainViewModel @Inject constructor(
     }
     fun clearConnectionAttempt()=_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     fun updateSettings(settings:AppSettings){_ui.update{it.copy(settings=settings)};viewModelScope.launch{prefs.save(settings)}}
+    fun exportBackup(uri:Uri)=viewModelScope.launch{backupManager.export(uri)}
+    fun restoreBackup(uri:Uri)=viewModelScope.launch{backupManager.restore(uri)}
+    fun clearBackupResult()=backupManager.clearResult()
+    fun importOfflineMap(uri:Uri)=viewModelScope.launch{
+        val outcome=offlineMapRepository.import(uri)
+        val result=outcome.getOrNull()
+        if(result!=null){
+            val current=_ui.value.settings
+            prefs.save(current.copy(offlineMapEnabled=true,offlineMapName=result.info.name,offlineMapAttribution=result.info.attribution))
+            incidentLogger.record("offline_map","IMPORTED",details=mapOf("name" to result.info.name,"tiles" to result.info.tileCount,"bytes" to result.info.sizeBytes))
+            refreshStorageHealth()
+        }else{val error=outcome.exceptionOrNull();_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,error?.message?:"Offline map import failed."))}}
+    }
+    fun removeOfflineMap()=viewModelScope.launch{
+        val outcome=offlineMapRepository.remove()
+        if(outcome.isSuccess){val current=_ui.value.settings;prefs.save(current.copy(offlineMapEnabled=false,offlineMapName=null,offlineMapAttribution=null));incidentLogger.record("offline_map","REMOVED");refreshStorageHealth()}
+        else _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,outcome.exceptionOrNull()?.message?:"Offline map removal failed."))}
+    }
+    fun setOfflineMapEnabled(enabled:Boolean){val current=_ui.value.settings;updateSettings(current.copy(offlineMapEnabled=enabled&&_ui.value.offlineMap.installed))}
+    fun createOfflineMapProvider()=offlineMapRepository.provider()
+    fun exportSupportBundle(uri:Uri)=viewModelScope.launch{supportBundleManager.export(uri)}
+    fun clearSupportBundleResult()=supportBundleManager.clearResult()
+    fun clearIncidentLog()=viewModelScope.launch{storageHealthRepository.clearIncidentLog();refreshStorageHealth()}
+    fun clearRebuildableCaches()=viewModelScope.launch{storageHealthRepository.clearRebuildableCaches();incidentLogger.record("storage","REBUILDABLE_CACHES_CLEARED");refreshStorageHealth()}
+    fun refreshStorage()=refreshStorageHealth()
+    fun confirmAlarmAudible(){val current=_ui.value.settings;updateSettings(current.copy(alarmAudibleConfirmedAt=System.currentTimeMillis()));incidentLogger.record("alarm","AUDIBLE_TEST_CONFIRMED")}
     fun setNmeaSharing(enabled:Boolean,port:Int){
         val safePort=port.takeIf{it in 1024..65535}
         if(safePort==null){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"NMEA Sharing port must be between 1024 and 65535."))};return}
@@ -350,8 +437,8 @@ class MainViewModel @Inject constructor(
     fun continueEstimatingCenter(session:AnchorSessionEntity)=session.candidateId?.let{candidateId->ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.CONTINUE_ESTIMATING_CENTER).putExtra("sessionId",session.id).putExtra("candidateId",candidateId))}
     fun testAlarm()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.TEST_ALARM))
     fun stopAlarmTest()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_ALARM_TEST))
-    fun startSonarSurvey(name:String,tideMode:TideMode,manualTideOffsetMeters:Double){
-        val intent=Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name",name).putExtra("tideMode",tideMode.name).putExtra("manualTideOffset",manualTideOffsetMeters)
+    fun startSonarSurvey(name:String,tideMode:TideMode,manualTideOffsetMeters:Double,tideStationId:String?=null){
+        val intent=Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_SONAR_SURVEY).putExtra("name",name).putExtra("tideMode",tideMode.name).putExtra("manualTideOffset",manualTideOffsetMeters).putExtra("tideStationId",tideStationId)
         ContextCompat.startForegroundService(app,intent)
     }
     fun stopSonarSurvey()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_SONAR_SURVEY))
@@ -361,9 +448,11 @@ class MainViewModel @Inject constructor(
     fun selectSonarSurvey(surveyId:Long)=observeSonarSamples(surveyId)
     fun selectCorrectedSonarHistory()=observeSonarSamples(CORRECTED_SONAR_HISTORY_ID)
     fun exportSonarCsv(survey:SonarSurveyEntity)=viewModelScope.launch{
-        val samples=sonarDao.samplesNow(survey.id);val file=java.io.File(app.cacheDir,"sonar-${survey.id}.csv")
-        file.writeText(buildString{appendLine("timestamp,latitude,longitude,raw_depth_m,measured_depth_m,normalized_depth_m,reference,sentence,nmea_offset_m,gps_source,position_provider,position_accuracy_m,hdop,sog_knots,position_age_ms,fix_trust,disposition,usable,position_correction,base_grid_x,base_grid_y,survey_id,tide_correction")
-            samples.forEach{appendLine("${it.timestamp},${it.latitude},${it.longitude},${it.rawDepthMeters},${it.measuredDepthMeters},${it.normalizedDepthMeters?:""},${it.depthReference},${it.sentenceType},${it.nmeaOffsetMeters?:""},${it.gpsSource},${it.positionProvider},${it.horizontalAccuracyMeters?:""},${it.hdop?:""},${it.sogKnots?:""},${it.positionAgeMillis},${it.fixTrust},${it.disposition},${it.usable},${it.positionCorrectionMethod},${it.baseGridX},${it.baseGridY},${survey.id},${survey.tideMode}")}})
+        val file=withContext(Dispatchers.IO){java.io.File(app.cacheDir,"sonar-${survey.id}.csv").also{target->target.bufferedWriter().use{writer->
+            writer.appendLine("timestamp,latitude,longitude,raw_depth_m,measured_depth_m,normalized_depth_m,reference,sentence,nmea_offset_m,gps_source,position_provider,position_accuracy_m,hdop,sog_knots,position_age_ms,fix_trust,disposition,usable,position_correction,base_grid_x,base_grid_y,survey_id,tide_mode,tide_height_m,tide_station_id,tide_station_distance_m,tide_year,tide_method,tide_source,tide_source_updated_at,tide_status")
+            var afterTimestamp=Long.MIN_VALUE;var afterId=Long.MIN_VALUE
+            while(true){val page=sonarDao.samplesPage(survey.id,afterTimestamp,afterId,1_000);if(page.isEmpty())break;page.forEach{sample->writer.appendLine("${sample.timestamp},${sample.latitude},${sample.longitude},${sample.rawDepthMeters},${sample.measuredDepthMeters},${sample.normalizedDepthMeters?:""},${sample.depthReference},${sample.sentenceType},${sample.nmeaOffsetMeters?:""},${sample.gpsSource},${sample.positionProvider},${sample.horizontalAccuracyMeters?:""},${sample.hdop?:""},${sample.sogKnots?:""},${sample.positionAgeMillis},${sample.fixTrust},${sample.disposition},${sample.usable},${sample.positionCorrectionMethod},${sample.baseGridX},${sample.baseGridY},${survey.id},${sample.tideCorrectionMode},${sample.tideHeightMetersApplied?:""},${sample.tideStationId?:""},${sample.tideStationDistanceMeters?:""},${sample.tidePredictionYear?:""},${sample.tideCorrectionMethod?:""},${sample.tideSource?:""},${sample.tideSourceUpdatedAt?:""},${sample.tideCorrectionStatus}")};val last=page.last();afterTimestamp=last.timestamp;afterId=last.id}
+        }}}
         shareExport(file,"text/csv")
     }
     fun startGpsProxy(){val state=_ui.value;val problem=when{state.settings.gpsDataSource!=GpsDataSource.NMEA->"Select NMEA GPS before enabling the global proxy.";state.connection!=NmeaConnectionState.CONNECTED->"Connect to the NMEA source first.";state.nmeaFix?.valid!=true->"The NMEA connection has not supplied a valid position yet.";else->null};if(problem!=null){_ui.update{it.copy(proxyFeedback=problem)};return};_ui.update{it.copy(proxyFeedback="Checking Android mock-location access…")};ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.START_PROXY))}

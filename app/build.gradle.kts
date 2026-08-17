@@ -80,10 +80,14 @@ android {
         }
     }
     buildFeatures { compose = true; buildConfig = true }
+    testOptions { execution = "ANDROIDX_TEST_ORCHESTRATOR" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     kotlinOptions { jvmTarget = "17" }
+    sourceSets { getByName("androidTest").assets.srcDir("$projectDir/schemas") }
 }
+
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
@@ -109,11 +113,13 @@ dependencies {
     implementation(libs.play.location)
     implementation(libs.coroutines.android)
     implementation(libs.coroutines.play.services)
+    implementation(libs.gson)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso)
+    androidTestUtil(libs.androidx.test.orchestrator)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 }

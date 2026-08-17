@@ -6,6 +6,7 @@ import com.yokuli.anchorwatch.data.database.AnchorDao
 import com.yokuli.anchorwatch.data.database.SonarDao
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
+import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -20,6 +21,7 @@ import dagger.hilt.components.SingletonComponent
 interface AnchorWatchEntryPoint {
     fun dao(): AnchorDao
     fun sonarDao(): SonarDao
+    fun sonarRecorder(): SonarSurveyRecorder
     fun preferences(): SettingsRepository
     fun navigation(): NavigationRepository
     fun alarmUi(): AlarmUiRepository

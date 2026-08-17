@@ -39,7 +39,7 @@ class NmeaSharingServerTest {
         val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider());val mux=NmeaOutputMux()
         try{
             server.start(port);waitUntil{server.status.value.state==SharingServerState.RUNNING}
-            Socket("127.0.0.1",port).use{client->client.soTimeout=2_000;waitUntil{server.status.value.clientCount==1};mux.systemPosition(NavigationFix(-36.8485,174.7633,1_720_000_000_000,10_000,sogKnots=2.4,cogTrueDegrees=123.4,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100).forEach(server::publish);val reader=client.getInputStream().bufferedReader();assertTrue(reader.readLine().startsWith("\$GNRMC"));assertTrue(reader.readLine().startsWith("\$GNGGA"));assertTrue(reader.readLine().startsWith("\$GNVTG"))}
+            Socket("127.0.0.1",port).use{client->client.soTimeout=2_000;waitUntil{server.status.value.clientCount==1};mux.acceptedPosition(NavigationFix(-36.8485,174.7633,1_720_000_000_000,10_000,sogKnots=2.4,cogTrueDegrees=123.4,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100).forEach(server::publish);val reader=client.getInputStream().bufferedReader();assertTrue(reader.readLine().startsWith("\$GNRMC"));assertTrue(reader.readLine().startsWith("\$GNGGA"));assertTrue(reader.readLine().startsWith("\$GNVTG"))}
         }finally{server.stop()}
     }
 
@@ -60,6 +60,19 @@ class NmeaSharingServerTest {
             waitUntil{server.status.value.droppedSlowClients>0};assertTrue(server.status.value.clientCount>=1);assertTrue(server.status.value.sentSentences>0)
             reading.set(false);runCatching{fast.close()};runCatching{slow.close()};reader.join(500)
         }finally{reading.set(false);server.stop()}
+    }
+
+    @Test fun clientWriteFailureIsIsolatedAndListenerKeepsRunning(){
+        val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider())
+        try{
+            server.start(port);waitUntil{server.status.value.state==SharingServerState.RUNNING}
+            val client=Socket("127.0.0.1",port).apply{setSoLinger(true,0)}
+            waitUntil{server.status.value.clientCount==1};client.close()
+            repeat(100){server.publish("\$GPRMC,DISCONNECTED*00\r\n");Thread.sleep(2)}
+            waitUntil{server.status.value.clientCount==0}
+            assertEquals(SharingServerState.RUNNING,server.status.value.state)
+            Socket("127.0.0.1",port).use{replacement->waitUntil{server.status.value.clientCount==1};server.publish("\$GPRMC,RECONNECTED*00\r\n");assertEquals("\$GPRMC,RECONNECTED*00",replacement.getInputStream().bufferedReader().readLine())}
+        }finally{server.stop()}
     }
 
     private inline fun <T:AutoCloseable,R> List<T>.useAll(block:(List<T>)->R):R=try{block(this)}finally{forEach{runCatching{it.close()}}}

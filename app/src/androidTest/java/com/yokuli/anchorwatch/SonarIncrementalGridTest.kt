@@ -22,6 +22,22 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SonarIncrementalGridTest {
+    @Test fun rebuildingOneSurveyNeverRewritesUnrelatedCorrectedHistoryCells()=runBlocking{
+        val context:Context=InstrumentationRegistry.getInstrumentation().targetContext
+        val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
+        try{
+            val dao=database.sonarDao();val updater=SonarIncrementalGridUpdater(dao)
+            val first=dao.insertSurvey(SonarSurveyEntity(name="First",startedAt=1,active=false))
+            val other=dao.insertSurvey(SonarSurveyEntity(name="Other",startedAt=2,active=false))
+            dao.insertSample(sample(first,1,100,200,8.0,7.5));dao.insertSample(sample(other,2,900,900,12.0,11.5))
+            updater.updateCells(first,setOf(GridCoordinate(100,200)));updater.updateCells(other,setOf(GridCoordinate(900,900)))
+            database.openHelper.writableDatabase.execSQL("UPDATE sonar_grid_cells SET lastUpdatedAt=123 WHERE scopeType='CORRECTED_HISTORY' AND scopeId=0 AND gridX=900 AND gridY=900")
+            updater.rebuildSurvey(first)
+            val untouched=dao.gridCellsNow(SonarGridScope.CORRECTED_HISTORY,SonarGridScope.CORRECTED_HISTORY_ID).single{it.gridX==900L}
+            assertEquals(123L,untouched.lastUpdatedAt)
+        }finally{database.close()}
+    }
+
     @Test fun newSoundingOnlyRecomputesItsCellAndDeleteCascadesRawData()=runBlocking {
         val context:Context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
@@ -33,7 +49,9 @@ class SonarIncrementalGridTest {
             dao.insertSample(sample(surveyId,1L,100L,200L,8.0,normalized=7.5))
             val first=updater.updateCells(surveyId,setOf(GridCoordinate(100L,200L)))
             assertEquals(1L,first.rawSamples);assertEquals(2L,first.gridCells)
-            assertEquals(8.0,dao.gridCellsNow(SonarGridScope.SURVEY,surveyId).single().depthMeters,.001)
+            // A survey renders the best available chart-datum value; measured/raw depth
+            // remains persisted on the sample and corrected history uses the same normalized value.
+            assertEquals(7.5,dao.gridCellsNow(SonarGridScope.SURVEY,surveyId).single().depthMeters,.001)
             assertEquals(7.5,dao.gridCellsNow(SonarGridScope.CORRECTED_HISTORY,SonarGridScope.CORRECTED_HISTORY_ID).single().depthMeters,.001)
 
             dao.insertSample(sample(surveyId,2L,101L,200L,9.0,normalized=null))

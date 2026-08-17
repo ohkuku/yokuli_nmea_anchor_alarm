@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -72,10 +71,11 @@ import com.yokuli.anchorwatch.map.FollowCameraMove
 import com.yokuli.anchorwatch.map.MapCameraPolicy
 import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
+import com.yokuli.anchorwatch.ui.theme.SafetyColors
 import java.text.DateFormat
 
 @Composable internal fun CompactWatchStatus(state:MainUiState,modifier:Modifier=Modifier){
-    val active=state.active;val fix=state.fix;val health=state.positionHealth;val color=when(health){com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_OK->Color(0xFF62C494);com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_DEGRADED->Color(0xFFFFB74D);com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST->MaterialTheme.colorScheme.error}
+    val active=state.active;val fix=state.fix;val health=state.positionHealth;val color=when(health){com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_OK->SafetyColors.Safe;com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_DEGRADED->SafetyColors.Warning;com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST->SafetyColors.Alarm}
     val distance=if(active?.centerStatus==com.yokuli.anchorwatch.domain.model.AnchorCenterStatus.RESOLVED.name&&fix!=null)AnchorGeometry.distanceMeters(active.anchorLatitude,active.anchorLongitude,fix.latitude,fix.longitude)else null
     val status=when{active?.paused==true->tr("PAUSED","已暂停");state.alarmSnapshot.state==AlarmState.ALARM->tr("ALARM","报警");active!=null->tr("SAFE","安全");else->tr("STANDBY","待命")}
     Surface(modifier,shape=MaterialTheme.shapes.medium,color=MaterialTheme.colorScheme.surface.copy(alpha=.92f),tonalElevation=3.dp){Column(Modifier.padding(horizontal=10.dp,vertical=7.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){Box(Modifier.size(8.dp).background(color,MaterialTheme.shapes.small));Text(if(active!=null)"${distance?.toInt()?:"—"} m / ${active.alarmRadiusMeters.toInt()} m" else tr("Anchor watch off","锚警已关闭"),fontWeight=FontWeight.SemiBold);Text(status,style=MaterialTheme.typography.labelLarge,color=if(state.alarmSnapshot.state==AlarmState.ALARM)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)};Text(tr("Depth ${state.depthUi.liveDepthMeters?.let{"%.1f m".format(it)}?:"—"}","水深 ${state.depthUi.liveDepthMeters?.let{"%.1f 米".format(it)}?:"—"}"),style=MaterialTheme.typography.bodySmall)}}

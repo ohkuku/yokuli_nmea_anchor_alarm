@@ -58,9 +58,6 @@ class NmeaOutputMux @Inject constructor() {
         }
     }
 
-    @Deprecated("Use acceptedPosition after AcceptedPositionRepository")
-    fun systemPosition(fix: NavigationFix, nowElapsed: Long): List<String> = acceptedPosition(fix, nowElapsed)
-
     fun sentenceType(line: String): String? = line.trim().removePrefix("$").substringBefore('*').substringBefore(',')
         .takeIf { it.length >= 3 }?.takeLast(3)?.uppercase(Locale.US)
 

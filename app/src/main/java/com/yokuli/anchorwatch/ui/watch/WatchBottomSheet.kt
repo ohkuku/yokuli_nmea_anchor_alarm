@@ -1,9 +1,7 @@
 package com.yokuli.anchorwatch
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
@@ -15,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -30,14 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.*
 import com.google.maps.android.compose.*
@@ -63,14 +60,12 @@ import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.location.MockGpsState
-import com.yokuli.anchorwatch.location.GpsSourceSafety
-import com.yokuli.anchorwatch.location.NmeaSourceAvailability
-import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.localization.usesChinese
 import com.yokuli.anchorwatch.map.FollowCameraMove
 import com.yokuli.anchorwatch.map.MapCameraPolicy
 import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
+import com.yokuli.anchorwatch.ui.theme.SafetyColors
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
 import com.yokuli.anchorwatch.data.linz.LinzDepthPresentation
@@ -79,13 +74,11 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthStatus
 @Composable
 internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,phoneHeading:(Boolean)->Unit,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit) {
     val fix = state.fix; val active = state.active; val now=android.os.SystemClock.elapsedRealtime()
-    var healthExpanded by remember{mutableStateOf(false)};var showDepthDetails by remember{mutableStateOf(false)};val context=androidx.compose.ui.platform.LocalContext.current;val battery=context.getSystemService(android.os.BatteryManager::class.java).getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);val notificationsReady=android.os.Build.VERSION.SDK_INT<33||ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED
+    var healthExpanded by remember{mutableStateOf(false)};var showDepthDetails by remember{mutableStateOf(false)}
     val freshFix = fix?.valid == true && when(state.settings.gpsDataSource){GpsDataSource.NMEA->state.connection == NmeaConnectionState.CONNECTED && state.diagnostics.lastFixElapsed?.let { now-it < state.settings.gpsLossSeconds * 1000L } == true;GpsDataSource.SYSTEM->now-fix.receivedElapsedRealtime < state.settings.gpsLossSeconds * 1000L;GpsDataSource.DEMO->state.demoGps.signalAvailable&&now-fix.receivedElapsedRealtime < state.settings.gpsLossSeconds * 1000L}
     val centerReady=active?.centerStatus==AnchorCenterStatus.RESOLVED.name
     val learningDistance=if(fix!=null&&active!=null&&!centerReady)AnchorGeometry.distanceMeters(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,fix.latitude,fix.longitude)else null
     val distance = if (fix != null && active != null&&centerReady) AnchorGeometry.distanceMeters(active.anchorLatitude, active.anchorLongitude, fix.latitude, fix.longitude) else null
-    val nmeaReady=NmeaSourceSelectionPolicy.availability(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1000L)==NmeaSourceAvailability.AVAILABLE
-    val systemReady=state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&now-it.receivedElapsedRealtime<state.settings.gpsLossSeconds*1000L}==true&&!GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state)
     Surface(tonalElevation = 3.dp) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) {
             Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
@@ -98,15 +91,22 @@ internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,pho
         } }
         if(active!=null&&!centerReady)Text(if(active.candidateDecision==CandidateDecision.AVAILABLE.name)tr("A candidate is ready. The orange working boundary will not move until you approve it.","候选锚点已就绪；在你确认前，橙色工作边界不会移动。")else tr("Orange is the active temporary alarm boundary. Blue is the possible anchor region and shrinks only as accepted evidence accumulates.","橙色是当前生效的临时报警边界；蓝色是可能锚位范围，只会随可信证据积累而缩小。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         if(active!=null&&!centerReady&&active.anchorPositionMode==AnchorPositionMode.ESTIMATE.name){Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Phone heading evidence","手机船首向证据"),fontWeight=FontWeight.SemiBold);Text(tr("Uses the phone orientation sensors, not GPS course.","使用手机方向传感器，不把 GPS 航迹向当船首向。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Switch(active.usePhoneHeading,{phoneHeading(it)},modifier=Modifier.testTag("active_phone_heading_switch"))};Text(if(active.usePhoneHeading)tr("ON · New stable samples are added. Turning it off later keeps all evidence already used.","已开启 · 继续加入新的稳定样本；之后关闭也会保留已经使用的证据。")else tr("OFF · Existing phone-heading evidence remains in the estimate; no new samples are added.","已关闭 · 已有手机船首向证据仍参与估算，只是不再加入新样本。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
-        if(active==null)Button(arm,Modifier.fillMaxWidth(),enabled=if(state.settings.demoMode)systemReady else systemReady||nmeaReady){Text(tr("Set anchor","设置锚点"))}
+        if(active==null)Button(arm,Modifier.fillMaxWidth(),enabled=state.settingsReady){Text(tr("Set anchor","设置锚点"))}
         else{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(if(active.paused)resume else pause,Modifier.weight(1f)){Icon(if(active.paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(6.dp));Text(if(active.paused)tr("Resume","继续") else tr("Pause","暂停"))};OutlinedButton(adjust,Modifier.weight(1f)){Icon(Icons.Default.Tune,null);Spacer(Modifier.width(6.dp));Text(tr("Adjust range","调整范围"))}};if(centerReady)OutlinedButton(openAnchorMap,Modifier.fillMaxWidth().testTag("open_anchor_google_maps")){Icon(Icons.Default.Place,null);Spacer(Modifier.width(6.dp));Text(tr("Open anchor in Google Maps","在 Google 地图中打开锚点"))};TextButton(lift,Modifier.align(Alignment.End),colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Anchor,null);Spacer(Modifier.width(6.dp));Text(tr("Lift anchor","起锚"))}}
-        HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Metric(tr("SOG","航速"), fix?.sogKnots?.let { "%.1f kn".format(it) } ?: "—"); Metric(tr("Heading","艏向"), fix?.let{displayHeading(it,active,state.points)}?.let { "${it.toInt()}°" } ?: "—"); Metric("HDOP", fix?.hdop?.let { "%.1f".format(it) } ?: "—") }
+        val quality=gpsQualityMetric(state.settings.gpsDataSource,fix)
+        HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Metric(tr("SOG","航速"), fix?.sogKnots?.let { "%.1f kn".format(it) } ?: "—"); Metric(tr("Heading","艏向"), fix?.let{displayHeading(it,active,state.points)}?.let { "${it.toInt()}°" } ?: "—"); Metric(quality.first,quality.second) }
         DepthSummary(state){showDepthDetails=true}
         TextButton({healthExpanded=!healthExpanded},Modifier.align(Alignment.End)){Icon(if(healthExpanded)Icons.Default.ExpandLess else Icons.Default.ExpandMore,null);Text(tr("Watch health","监控健康状态"))}
-        if(healthExpanded){Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){PreflightRow("GPS",state.positionHealth==com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_OK,state.positionHealth.name);PreflightRow(tr("Last fix","最后定位"),fix!=null,fix?.let{"${((now-it.receivedElapsedRealtime).coerceAtLeast(0)/1000)} s · ${it.positionProvider.name} · ±${it.horizontalAccuracyMeters?.toInt()?:"—"} m"}?:"—");PreflightRow(tr("Battery","电池"),battery>15,"$battery%");PreflightRow(tr("Notifications","通知"),notificationsReady,if(notificationsReady)tr("Ready","就绪")else tr("Permission missing","缺少权限"));PreflightRow(tr("Alarm sound","警报声音"),true,if(state.settings.alarmSound==AlarmSound.CUSTOM)tr("Custom","自定义")else tr("Built-in anchor alarm","内置锚警"));if((active?.positionSource?:state.settings.gpsDataSource.name)==GpsDataSource.NMEA.name)PreflightRow("NMEA",state.connection==NmeaConnectionState.CONNECTED,connectionStateLabel(state.connection))}}}
+        if(healthExpanded){Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(tr("Continuous watch health","持续监控健康"),fontWeight=FontWeight.SemiBold);Text(when{state.watchSafety.ready->tr("READY","就绪");state.watchSafety.canContinue->tr("WARNINGS","有警告");else->tr("ACTION REQUIRED","需要处理")},color=when{state.watchSafety.ready->SafetyColors.Safe;state.watchSafety.canContinue->SafetyColors.Warning;else->SafetyColors.Alarm},style=MaterialTheme.typography.labelMedium)};state.watchSafety.checks.forEach{check->SafetyHealthRow(check)}}}}
     } }
     if(showDepthDetails)DepthDetailsDialog(state){showDepthDetails=false}
 }
+internal fun gpsQualityMetric(source:GpsDataSource,fix:com.yokuli.anchorwatch.domain.model.NavigationFix?):Pair<String,String> = when(source){
+    GpsDataSource.NMEA->"HDOP" to (fix?.hdop?.let{"%.1f".format(it)}?:"—")
+    GpsDataSource.SYSTEM->"GPS" to (fix?.horizontalAccuracyMeters?.let{"±%.0f m".format(it)}?:"—")
+    GpsDataSource.DEMO->"DEMO GPS" to (fix?.horizontalAccuracyMeters?.let{"±%.0f m".format(it)}?:"SIM")
+}
+@Composable private fun SafetyHealthRow(check:com.yokuli.anchorwatch.domain.safety.SafetyCheck){val color=when(check.status){com.yokuli.anchorwatch.domain.safety.SafetyCheckStatus.OK->SafetyColors.Safe;com.yokuli.anchorwatch.domain.safety.SafetyCheckStatus.WARNING->SafetyColors.Warning;com.yokuli.anchorwatch.domain.safety.SafetyCheckStatus.BLOCKER->SafetyColors.Alarm};Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(if(check.status==com.yokuli.anchorwatch.domain.safety.SafetyCheckStatus.OK)Icons.Default.CheckCircle else Icons.Default.Warning,null,Modifier.size(17.dp),tint=color);Spacer(Modifier.width(7.dp));Text(check.title,Modifier.weight(1f),style=MaterialTheme.typography.bodySmall);Text(check.detail,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
 @Composable internal fun Metric(label: String, value: String) { Column { Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, style = MaterialTheme.typography.bodyLarge) } }
 
 @Composable private fun DepthSummary(state:MainUiState,open:()->Unit){
@@ -124,6 +124,7 @@ internal fun WatchPanel(state: MainUiState, arm: () -> Unit, adjust:()->Unit,pho
     val depth=state.depthUi;val linz=depth.linz;val cacheAge=linz.queriedAt.takeIf{it>0}?.let{((System.currentTimeMillis()-it).coerceAtLeast(0)/60_000)}
     AlertDialog(onDismissRequest=dismiss,title={Text(tr("Depth details","水深详情"))},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
         Text(tr("LIVE SONAR","实时声呐"),style=MaterialTheme.typography.labelLarge);Text(depth.liveDepthMeters?.let{"${"%.2f".format(it)} m · ${depth.liveDepthReference?.name?:"UNKNOWN"}"}?:tr("No fresh sonar (older than 2 seconds)","没有新的声呐数据（已超过 2 秒）"));Text("${state.sonarRecorder.lastSentenceType?:"—"} · raw ${state.sonarRecorder.lastRawDepthMeters?.let{"%.2f m".format(it)}?:"—"} · age ${depth.liveDepthAgeMillis?.let{"${it} ms"}?:"—"}",style=MaterialTheme.typography.bodySmall);depth.correctedDepthMeters?.let{Text(tr("Chart-datum corrected ${"%.2f".format(it)} m","海图基准修正值 ${"%.2f".format(it)} 米"),style=MaterialTheme.typography.bodySmall)}
+        state.sonarRecorder.lastTideCorrection?.let{tide->HorizontalDivider();Text(tr("PREDICTED TIDE","预测潮位"),style=MaterialTheme.typography.labelLarge);Text(tide.tideHeightMetersAboveChartDatum?.let{tr("${"%.2f".format(it)} m above chart datum","高于海图基准 ${"%.2f".format(it)} 米")}?:tr("Prediction unavailable · raw depth is still recorded","预测不可用 · 仍会记录原始水深"));Text("${tide.stationName?:"—"} · ${tide.status.name} · ${tide.method?:"—"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(tr("LINZ prediction, not observed sea level. Weather and atmospheric pressure can change the actual level.","LINZ 预测值，并非实测海平面；天气和气压会改变实际水位。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         if(state.settings.showLinzDepthReference){HorizontalDivider();Text("LINZ",style=MaterialTheme.typography.labelLarge);Text(LinzDepthPresentation.text(linz,LocalAppLanguage.current.usesChinese()).primary);listOfNotNull(linz.depthAreaMinMeters?.let{tr("Depth area ${it}–${linz.depthAreaMaxMeters} m","水深区域 ${it}–${linz.depthAreaMaxMeters} 米")},linz.nearestSoundingDepthMeters?.let{tr("Nearest sounding ${it} m · ${linz.nearestSoundingDistanceMeters?.toInt()} m away","最近测深点 ${it} 米 · 距离 ${linz.nearestSoundingDistanceMeters?.toInt()} 米")},linz.nearestContourDepthMeters?.let{tr("Nearest contour ${it} m · ${linz.nearestContourDistanceMeters?.toInt()} m away","最近等深线 ${it} 米 · 距离 ${linz.nearestContourDistanceMeters?.toInt()} 米")},cacheAge?.let{tr("Cache age ${it} min${if(linz.cached)" · cached" else ""}","缓存时间 ${it} 分钟${if(linz.cached)" · 已缓存" else ""}")}).forEach{Text(it,style=MaterialTheme.typography.bodySmall)}}
         if(state.settings.showPersonalMapReference){HorizontalDivider();Text(tr("PERSONAL SONAR MAP","个人声呐地图"),style=MaterialTheme.typography.labelLarge);Text(depth.personalMapDepthMeters?.let{"${"%.2f".format(it)} m · ${if(depth.personalMapMeasured==true)"measured" else "interpolated"} · ${depth.personalMapSamples?:0} samples · ±${"%.2f".format(depth.personalMapUncertaintyMeters?:0.0)} m"}?:tr("No personal sonar cell here","当前位置没有个人声呐网格"));depth.personalSurveyName?.let{Text("$it · ${depth.personalSurveyStartedAt?.let{date->DateFormat.getDateInstance().format(java.util.Date(date))}}",style=MaterialTheme.typography.bodySmall)}}
         if(state.settings.showLinzDepthReference&&depth.correctedDepthMeters==null)Text(tr("Live sonar and LINZ may use different vertical datums; no numerical difference is calculated.","实时声呐与 LINZ 海图可能使用不同的垂直基准，因此不会计算两者差值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)

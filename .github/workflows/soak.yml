@@ -1,0 +1,120 @@
+name: Anchor by Yokuli Nightly Safety Soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      wall_clock_minutes:
+        description: Optional real wall-clock safety soak (0, 15, or 60 minutes)
+        required: false
+        default: '0'
+        type: choice
+        options: ['0', '15', '60']
+  schedule:
+    - cron: '37 11 * * 2,5'
+
+concurrency:
+  group: android-safety-soak
+  cancel-in-progress: false
+
+jobs:
+  accelerated:
+    name: 24h logical timeline and transport faults
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Accelerated safety and fault stories
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
+        run: |
+          ./gradlew --no-daemon testDebugUnitTest \
+            --tests com.yokuli.anchorwatch.LongRunningFaultStoryTest \
+            --tests com.yokuli.anchorwatch.NmeaTransportFaultTest \
+            --tests com.yokuli.anchorwatch.TidePredictionTest \
+            --tests com.yokuli.anchorwatch.RuntimeWallClockSoakTest \
+            --stacktrace
+      - name: Reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: accelerated-soak-${{ github.sha }}
+          path: app/build/reports/tests/**
+          retention-days: 30
+
+  device-stories:
+    name: Emulator backup, migration and safety stories
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Device story chain
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            adb emu geo fix 174.7633 -36.8485
+            ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace \
+              -Pandroid.testInstrumentationRunnerArguments.class=com.yokuli.anchorwatch.BackupRestoreStoryTest,com.yokuli.anchorwatch.BackupHighVolumeStoryTest,com.yokuli.anchorwatch.Migration5To6Test,com.yokuli.anchorwatch.AnchorSafetyFlowTest,com.yokuli.anchorwatch.SonarIncrementalGridTest,com.yokuli.anchorwatch.SonarTileScaleTest,com.yokuli.anchorwatch.AccessibilityLayoutTest
+      - name: Device reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: device-soak-stories-${{ github.sha }}
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+          retention-days: 30
+
+  wall-clock:
+    name: ${{ inputs.wall_clock_minutes }} minute real-time runtime soak
+    if: github.event_name == 'workflow_dispatch' && inputs.wall_clock_minutes != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Real-time safety runtime loop
+        env:
+          YOKULI_SOAK_MINUTES: ${{ inputs.wall_clock_minutes }}
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
+        run: ./gradlew --no-daemon testDebugUnitTest --tests com.yokuli.anchorwatch.RuntimeWallClockSoakTest --stacktrace
+      - name: Reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: wall-clock-soak-${{ github.sha }}
+          path: app/build/reports/tests/**
+          retention-days: 30

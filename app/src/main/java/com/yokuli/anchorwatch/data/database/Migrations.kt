@@ -105,3 +105,38 @@ object Migration7To8 : Migration(7, 8) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `linz_depth_cache` (`cellKey` TEXT NOT NULL, `queriedLatitude` REAL NOT NULL, `queriedLongitude` REAL NOT NULL, `queriedAt` INTEGER NOT NULL, `depthAreaMinMeters` REAL, `depthAreaMaxMeters` REAL, `nearestSoundingDepthMeters` REAL, `nearestSoundingDistanceMeters` REAL, `nearestSoundingLatitude` REAL, `nearestSoundingLongitude` REAL, `nearestContourDepthMeters` REAL, `nearestContourDistanceMeters` REAL, `sourceLayers` TEXT NOT NULL, `status` TEXT NOT NULL, PRIMARY KEY(`cellKey`))")
     }
 }
+
+/** Tide prediction files are a rebuildable cache; raw soundings remain authoritative. */
+object Migration8To9 : Migration(8,9){
+    override fun migrate(db:SupportSQLiteDatabase){
+        db.execSQL("ALTER TABLE sonar_surveys ADD COLUMN tideStationId TEXT")
+        db.execSQL("ALTER TABLE sonar_surveys ADD COLUMN tideStationName TEXT")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideHeightMetersApplied REAL")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideCorrectionMode TEXT NOT NULL DEFAULT 'OFF'")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideStationId TEXT")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideStationName TEXT")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tidePredictionYear INTEGER")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideCorrectionMethod TEXT")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideCorrectionStatus TEXT NOT NULL DEFAULT 'NOT_REQUESTED'")
+        db.execSQL("CREATE TABLE IF NOT EXISTS tide_prediction_cache (stationId TEXT NOT NULL, year INTEGER NOT NULL, downloadedAt INTEGER NOT NULL, sourceUrl TEXT NOT NULL, csv TEXT NOT NULL, PRIMARY KEY(stationId,year))")
+    }
+}
+
+/** Adds explicit provenance without changing raw or normalized depth values. */
+object Migration9To10 : Migration(9,10){
+    override fun migrate(db:SupportSQLiteDatabase){
+        db.execSQL("ALTER TABLE sonar_surveys ADD COLUMN tideStationDistanceMeters REAL")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideStationDistanceMeters REAL")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideSource TEXT")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN tideSourceUpdatedAt INTEGER")
+    }
+}
+
+object Migration10To11 : Migration(10,11){
+    override fun migrate(db:SupportSQLiteDatabase){
+        db.execSQL("CREATE TABLE IF NOT EXISTS `incident_log` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `elapsedRealtime` INTEGER NOT NULL, `severity` TEXT NOT NULL, `category` TEXT NOT NULL, `event` TEXT NOT NULL, `sessionId` INTEGER, `details` TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_incident_log_timestamp` ON `incident_log` (`timestamp`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_incident_log_category` ON `incident_log` (`category`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_incident_log_severity` ON `incident_log` (`severity`)")
+    }
+}

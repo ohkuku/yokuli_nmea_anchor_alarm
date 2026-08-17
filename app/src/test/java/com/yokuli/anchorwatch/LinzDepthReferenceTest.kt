@@ -112,5 +112,6 @@ class LinzDepthReferenceTest {
         override suspend fun get(cellKey:String)=values[cellKey]
         override suspend fun upsert(value:LinzDepthCacheEntity){values[value.cellKey]=value}
         override suspend fun prune(oldestAllowed:Long){values.entries.removeAll{it.value.queriedAt<oldestAllowed}}
+        override suspend fun clear(){values.clear()}
     }
 }

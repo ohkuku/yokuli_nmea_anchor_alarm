@@ -8,7 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackdownCenterEstimatorTest {
-    private fun fix(northMeters:Double,eastMeters:Double=0.0,time:Long)=NavigationFix(northMeters/110_540.0,eastMeters/111_320.0,receivedElapsedRealtime=time,sourceSentence="test",valid=true)
+    private fun fix(northMeters:Double,eastMeters:Double=0.0,time:Long)=NavigationFix(northMeters/110_540.0,eastMeters/111_320.0,receivedElapsedRealtime=time,hdop=.8,sourceSentence="test",valid=true)
+    private fun gpsOnlySwing(lastSecond:Int,radiusMeters:Double=25.0)=(0..lastSecond).map{second->
+        val angle=Math.toRadians(110.0+110.0*kotlin.math.sin(2.0*Math.PI*second/180.0))
+        val radius=radiusMeters+.35*kotlin.math.sin(second*.37)
+        fix(radius*kotlin.math.cos(angle),radius*kotlin.math.sin(angle),second*1_000L)
+    }
 
     @Test fun aShortSingleArcStillDoesNotResolve(){
         val stable=(0..8).map{index->fix(if(index%2==0)0.3 else -0.3,time=index*1_000L)}
@@ -23,16 +28,14 @@ class BackdownCenterEstimatorTest {
         assertTrue(estimate.uncertaintyRadiusMeters>=25.0)
     }
 
-    @Test fun gpsOnlyResolutionWaitsForAFullFifteenMinuteEvidenceWindow(){
-        val stable=(0..10).map{index->fix(if(index%2==0)0.2 else -0.2,time=index*1_000L)}
-        val swings=(11..960).map{index->
-            val elapsed=index-11
-            val angle=Math.toRadians(110.0+110.0*kotlin.math.sin(2.0*Math.PI*elapsed/180.0))
-            val radius=25.0+.35*kotlin.math.sin(elapsed*.37)
-            fix(radius*kotlin.math.cos(angle),radius*kotlin.math.sin(angle),index*1_000L)
-        }
-        val estimate=BackdownCenterEstimator().estimate(stable+swings,40.0)!!
-        assertEquals("$estimate",com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+    @Test fun gpsOnlyCannotResolveBeforeFifteenMinutes(){
+        val estimate=BackdownCenterEstimator().estimate(gpsOnlySwing(899),40.0)!!
+        assertTrue(estimate.debugSummary(),estimate.confidence!=com.yokuli.anchorwatch.domain.model.Confidence.HIGH)
+    }
+
+    @Test fun gpsOnlyCanResolveAfterFifteenMinutesWithFullGeometry(){
+        val estimate=BackdownCenterEstimator().estimate(gpsOnlySwing(900),40.0)!!
+        assertEquals(estimate.debugSummary(),com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
         assertTrue(kotlin.math.abs(estimate.latitude)<3.0/110_540.0)
         assertTrue(kotlin.math.abs(estimate.longitude)<3.0/111_320.0)
         assertTrue(estimate.angularCoverageDegrees>=200.0)
@@ -116,15 +119,27 @@ class BackdownCenterEstimatorTest {
         assertEquals(com.yokuli.anchorwatch.domain.model.Confidence.MEDIUM,estimate.confidence)
     }
 
-    @Test fun lateStartAwayFromTheAnchorStillConvergesWithoutUsingStartAsAPrior(){
+    @Test fun lateStartDoesNotBiasProvisionalCentreTowardFirstFix(){
         val first=fix(42.0,0.0,0L)
-        val swing=(1..960).map{index->
+        val swing=(1..240).map{index->
+            val angle=Math.toRadians(105.0+115.0*kotlin.math.sin(2.0*Math.PI*index/180.0))
+            val radius=27.0+.5*kotlin.math.sin(index*.31)
+            fix(radius*kotlin.math.cos(angle),radius*kotlin.math.sin(angle),index*1_000L)
+        }
+        val estimate=BackdownCenterEstimator().provisionalEstimate((listOf(first)+swing).map{BackdownCenterEstimator.Sample(it.latitude,it.longitude,it.receivedElapsedRealtime,it.hdop)},45.0)!!
+        assertTrue(estimate.debugSummary(),kotlin.math.abs(estimate.latitude)<8.0/110_540.0)
+        assertTrue(estimate.debugSummary(),kotlin.math.abs(estimate.longitude)<8.0/111_320.0)
+    }
+
+    @Test fun lateStartCanBecomeHighAfterFullIndependentEvidence(){
+        val first=fix(42.0,0.0,0L)
+        val swing=(1..900).map{index->
             val angle=Math.toRadians(105.0+115.0*kotlin.math.sin(2.0*Math.PI*index/180.0))
             val radius=27.0+.5*kotlin.math.sin(index*.31)
             fix(radius*kotlin.math.cos(angle),radius*kotlin.math.sin(angle),index*1_000L)
         }
         val estimate=BackdownCenterEstimator().estimate(listOf(first)+swing,45.0)!!
-        assertEquals("$estimate",com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+        assertEquals(estimate.debugSummary(),com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
         assertTrue(kotlin.math.abs(estimate.latitude)<3.0/110_540.0)
         assertTrue(kotlin.math.abs(estimate.longitude)<3.0/111_320.0)
     }

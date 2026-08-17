@@ -24,6 +24,8 @@ data class AcceptedPositionState(
     val disposition: String = "WAITING",
     val reason: String? = null,
     val lastAcceptedElapsedRealtime: Long? = null,
+    val integrityLastDurationMicros: Long = 0,
+    val integrityMaxDurationMicros: Long = 0,
 )
 
 data class AcceptedPositionEvent(
@@ -127,7 +129,11 @@ class AcceptedPositionRepository @Inject constructor(
             headingSource = rawFix.headingSource.takeIf { rawFix.headingTrueDegrees != null } ?: HeadingSource.NONE,
             headingQuality = rawFix.headingQuality.takeIf { rawFix.headingTrueDegrees != null } ?: HeadingQuality.UNAVAILABLE,
         )
-        when (val result = filter.evaluate(fix, phoneMotion.state.value.takeIf { source == GpsDataSource.SYSTEM })) {
+        val integrityStarted = System.nanoTime()
+        val result = filter.evaluate(fix, phoneMotion.state.value.takeIf { source == GpsDataSource.SYSTEM })
+        val integrityMicros = ((System.nanoTime() - integrityStarted) / 1_000L).coerceAtLeast(0L)
+        val integrityMaxMicros = maxOf(_state.value.integrityMaxDurationMicros, integrityMicros)
+        when (result) {
             is PositionIntegrityResult.Accepted -> {
                 result.fixes.forEach { accepted ->
                     _state.value = _state.value.copy(
@@ -138,6 +144,8 @@ class AcceptedPositionRepository @Inject constructor(
                         disposition = "ACCEPTED",
                         reason = accepted.reason,
                         lastAcceptedElapsedRealtime = accepted.fix.receivedElapsedRealtime,
+                        integrityLastDurationMicros = integrityMicros,
+                        integrityMaxDurationMicros = integrityMaxMicros,
                     )
                     _accepted.tryEmit(AcceptedPositionEvent(source, accepted))
                 }
@@ -148,6 +156,8 @@ class AcceptedPositionRepository @Inject constructor(
                     health = PositionHealth.GPS_DEGRADED,
                     disposition = "QUARANTINED",
                     reason = result.reason,
+                    integrityLastDurationMicros = integrityMicros,
+                    integrityMaxDurationMicros = integrityMaxMicros,
                 )
             }
             is PositionIntegrityResult.Rejected -> {
@@ -156,6 +166,8 @@ class AcceptedPositionRepository @Inject constructor(
                     health = if (_state.value.acceptedFix == null) PositionHealth.GPS_LOST else PositionHealth.GPS_DEGRADED,
                     disposition = "REJECTED",
                     reason = result.reason,
+                    integrityLastDurationMicros = integrityMicros,
+                    integrityMaxDurationMicros = integrityMaxMicros,
                 )
             }
         }

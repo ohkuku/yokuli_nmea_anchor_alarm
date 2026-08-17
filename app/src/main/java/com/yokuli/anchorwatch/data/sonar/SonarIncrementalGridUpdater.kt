@@ -52,11 +52,17 @@ class SonarIncrementalGridUpdater @Inject constructor(private val dao:SonarDao){
         diagnostics(coordinates.lastOrNull(),(System.nanoTime()-started)/1_000_000)
     }
 
-    suspend fun rebuildSurvey(surveyId:Long,includeCorrectedHistory:Boolean=true):SonarGridUpdateDiagnostics=withContext(Dispatchers.IO){
+    suspend fun rebuildSurvey(surveyId:Long,includeCorrectedHistory:Boolean=true,previousCorrectedCoordinates:Set<GridCoordinate> = emptySet()):SonarGridUpdateDiagnostics=withContext(Dispatchers.IO){
         val started=System.nanoTime();dao.deleteGridScope(SonarGridScope.SURVEY,surveyId)
         val coordinates=dao.usableCellsForSurvey(surveyId).toSet()
         coordinates.forEach{recomputeSurveyCell(surveyId,it.baseGridX,it.baseGridY,emitChange=false)}
-        if(includeCorrectedHistory){dao.deleteGridScope(SonarGridScope.CORRECTED_HISTORY,SonarGridScope.CORRECTED_HISTORY_ID);dao.allCorrectedCells().forEach{recomputeCorrectedCell(it.baseGridX,it.baseGridY,emitChange=false)}}
+        if(includeCorrectedHistory){
+            // A survey rebuild must not scan or delete the global corrected
+            // history. Only cells that this survey occupied before or after
+            // normalization can possibly have changed.
+            val affected=previousCorrectedCoordinates+dao.correctedCellsForSurvey(surveyId)
+            affected.forEach{recomputeCorrectedCell(it.baseGridX,it.baseGridY,emitChange=false)}
+        }
         _changes.emit(SonarGridChange(SonarGridScope.SURVEY,surveyId,reload=true));if(includeCorrectedHistory)_changes.emit(SonarGridChange(SonarGridScope.CORRECTED_HISTORY,SonarGridScope.CORRECTED_HISTORY_ID,reload=true));diagnostics(coordinates.lastOrNull(),(System.nanoTime()-started)/1_000_000,forceCounts=true)
     }
 

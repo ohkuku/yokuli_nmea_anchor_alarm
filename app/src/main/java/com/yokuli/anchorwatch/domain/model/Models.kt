@@ -80,7 +80,9 @@ data class BackdownAnchorEstimate(
     val temporalFitConsistent: Boolean = false,
     val effectiveDurationMillis: Long = 0L,
     val directionEvidenceConsistent: Boolean = false,
-)
+){
+    fun debugSummary():String="confidence=$confidence, centre=$latitude/$longitude, distance=$distanceMeters, uncertainty=$uncertaintyRadiusMeters, sampleCount=$sampleCount, effectiveDuration=$effectiveDurationMillis, angularCoverage=$angularCoverageDegrees, sectorCount=$angularSectorCount, reversalCount=$swingReversalCount, rmsError=$rmsErrorMeters, temporalConsensus=$temporalFitConsistent, directionEvidenceConsistent=$directionEvidenceConsistent"
+}
 
 data class AnchorConfig(
     val latitude: Double,

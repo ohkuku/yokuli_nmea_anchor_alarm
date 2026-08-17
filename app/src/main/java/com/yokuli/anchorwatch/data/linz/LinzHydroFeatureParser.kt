@@ -31,15 +31,25 @@ object LinzHydroFeatureParser{
         return when(type){
             "Point"->point(coordinates)?.let{HydroGeometry.Point(it)}
             "LineString"->line(coordinates)?.let{HydroGeometry.Lines(listOf(it))}
-            "MultiLineString"->HydroGeometry.Lines(coordinates.mapNotNull{line(it as? List<*>?:emptyList())})
+            "MultiLineString"->HydroGeometry.Lines(lines(coordinates))
             "Polygon"->polygon(coordinates)?.let{HydroGeometry.Polygons(listOf(it))}
-            "MultiPolygon"->HydroGeometry.Polygons(coordinates.mapNotNull{polygon(it as? List<*>?:emptyList())})
+            "MultiPolygon"->HydroGeometry.Polygons(polygons(coordinates))
             else->null
         }
     }
     private fun point(value:List<*>):GeoPoint?{val longitude=(value.getOrNull(0) as? Number)?.toDouble()?:return null;val latitude=(value.getOrNull(1) as? Number)?.toDouble()?:return null;return GeoPoint(longitude,latitude).takeIf{latitude in -90.0..90.0&&longitude in -180.0..180.0}}
-    private fun line(value:List<*>)=value.mapNotNull{point(it as? List<*>?:emptyList())}.takeIf{it.size>=2}
-    private fun polygon(value:List<*>)=value.mapNotNull{line(it as? List<*>?:emptyList())}.takeIf{it.isNotEmpty()}
+    private fun line(value:List<*>):List<GeoPoint>?=value.mapNotNull{point(it as? List<*>?:emptyList<Any?>())}.takeIf{it.size>=2}
+    private fun polygon(value:List<*>):List<List<GeoPoint>>?=value.mapNotNull{line(it as? List<*>?:emptyList<Any?>())}.takeIf{it.isNotEmpty()}
+    private fun lines(value:List<*>):List<List<GeoPoint>>{
+        val result=mutableListOf<List<GeoPoint>>()
+        value.forEach{raw->if(raw is List<*>)line(raw)?.let(result::add)}
+        return result
+    }
+    private fun polygons(value:List<*>):List<List<List<GeoPoint>>>{
+        val result=mutableListOf<List<List<GeoPoint>>>()
+        value.forEach{raw->if(raw is List<*>)polygon(raw)?.let(result::add)}
+        return result
+    }
     private fun Map<String,Any?>.number(name:String)=(get(name) as? Number)?.toDouble()
 }
 

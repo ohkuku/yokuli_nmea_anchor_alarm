@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -113,6 +114,13 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
                 socket.getOutputStream().buffered().use { output ->
                     for (sentence in queue) { output.write(sentence.toByteArray(Charsets.US_ASCII)); output.flush();clients[id]?.sent?.incrementAndGet();update(clientCount=clients.size) }
                 }
+            } catch (cancelled:CancellationException) {
+                throw cancelled
+            } catch (_:Exception) {
+                // A chartplotter/tablet can disappear between queueing and flush. That is a
+                // per-client transport event, never a process-level failure and never a reason
+                // to interrupt the alarm, upstream NMEA connection, or healthy sharing clients.
+                update(clientCount=clients.size,lastEvent="NMEA_CLIENT_WRITE_FAILED")
             } finally {
                 clients.remove(id)?.let { runCatching { it.socket.close() } }
                 update(clientCount = clients.size,lastEvent="NMEA_CLIENT_DISCONNECTED")

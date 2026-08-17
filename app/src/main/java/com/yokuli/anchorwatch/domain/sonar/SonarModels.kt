@@ -2,7 +2,7 @@ package com.yokuli.anchorwatch.domain.sonar
 
 enum class DepthReference { BELOW_TRANSDUCER, BELOW_SURFACE, BELOW_KEEL, UNKNOWN }
 enum class DepthSentenceType { DPT, DBT }
-enum class TideMode { OFF, MANUAL }
+enum class TideMode { OFF, MANUAL, AUTO_PREDICTED }
 enum class DepthDisposition { ACCEPTED, ACCEPTED_STEEP_SLOPE, QUARANTINED_SPIKE, REJECTED_INVALID, REJECTED_STALE_POSITION }
 
 /** A decoded depth event. Raw values are retained so a survey can be rebuilt. */

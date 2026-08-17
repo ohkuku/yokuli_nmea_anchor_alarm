@@ -13,7 +13,7 @@ jobs:
   build:
     name: Unit tests, lint and Debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -50,14 +50,22 @@ jobs:
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
           LINZ_HYDRO_TILE_TEMPLATE: ${{ secrets.LINZ_HYDRO_TILE_TEMPLATE }}
         run: ./gradlew --no-daemon assembleDebug --stacktrace
-      - name: Upload installable Debug APK
-        if: steps.assemble.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      - name: Upload quality-gate Debug APK candidate
+        if: steps.assemble.outcome == 'success' && steps.unit_tests.outcome == 'success' && steps.lint.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-by-yokuli-debug-${{ github.sha }}
+          name: anchor-by-yokuli-debug-candidate-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+      - name: Upload explicitly unverified diagnostic APK
+        if: steps.assemble.outcome == 'success' && (steps.unit_tests.outcome != 'success' || steps.lint.outcome != 'success') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v6
+        with:
+          name: UNVERIFIED-anchor-by-yokuli-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload unit-test and lint reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -81,12 +89,35 @@ jobs:
           if [ "$LINT_RESULT" != "success" ]; then echo "::error::Android lint failed"; failed=1; fi
           if [ "$ASSEMBLE_RESULT" != "success" ]; then echo "::error::Debug APK compilation failed"; failed=1; fi
           exit "$failed"
+      - name: Build test summary
+        if: always()
+        env:
+          UNIT_TEST_RESULT: ${{ steps.unit_tests.outcome }}
+          LINT_RESULT: ${{ steps.lint.outcome }}
+          ASSEMBLE_RESULT: ${{ steps.assemble.outcome }}
+        run: |
+          {
+            echo "## Anchor by Yokuli build gate"
+            echo "| Gate | Result |"
+            echo "|---|---|"
+            echo "| Unit and accelerated story tests | $UNIT_TEST_RESULT |"
+            echo "| Android lint | $LINT_RESULT |"
+            echo "| Debug APK | $ASSEMBLE_RESULT |"
+            if [ "$UNIT_TEST_RESULT" = success ] && [ "$LINT_RESULT" = success ] && [ "$ASSEMBLE_RESULT" = success ]; then
+              echo ""
+              echo "Artifact label: **candidate** until all three device shards pass."
+            else
+              echo ""
+              echo "Any diagnostic APK is intentionally labelled **UNVERIFIED**."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 .github/scripts/test_summary.py app/build/test-results/testDebugUnitTest >> "$GITHUB_STEP_SUMMARY"
 
   integration:
     name: Device integration tests (${{ matrix.shard }}/3)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -142,3 +173,49 @@ jobs:
             app/build/outputs/androidTest-results/**
           if-no-files-found: warn
           retention-days: 14
+      - name: Device-test summary
+        if: always()
+        run: |
+          {
+            echo "## Device integration shard ${{ matrix.shard }}/3"
+            echo "Includes production-chain stories; one shard also performs the 500,000-sonar-sample streaming backup/restore gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verified-debug:
+    name: Publish fully verified Debug APK
+    needs: [build, integration]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download candidate built by the quality gate
+        uses: actions/download-artifact@v6
+        with:
+          name: anchor-by-yokuli-debug-candidate-${{ github.sha }}
+          path: verified-apk
+      - name: Upload fully verified installable Debug APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: anchor-by-yokuli-debug-verified-${{ github.sha }}
+          path: verified-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish rolling development Debug APK
+        if: github.ref == 'refs/heads/codex/develop'
+        uses: actions/upload-artifact@v6
+        with:
+          name: anchor-by-yokuli-development-debug-${{ github.run_number }}-${{ github.sha }}
+          path: verified-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 45
+      - name: Verified artifact summary
+        run: |
+          {
+            echo "## Fully verified Debug APK"
+            echo "Unit tests, Android Lint, Debug compilation, and all three device-integration shards passed."
+            echo "Download artifact: **anchor-by-yokuli-debug-verified-${{ github.sha }}**"
+            if [ "${{ github.ref }}" = "refs/heads/codex/develop" ]; then
+              echo "Development channel: **anchor-by-yokuli-development-debug-${{ github.run_number }}-${{ github.sha }}**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -7,6 +7,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
@@ -128,6 +129,9 @@ data class SonarSurveyEntity(
     @ColumnInfo(defaultValue = "0") val gpsToTransducerMeters: Double = 0.0,
     @ColumnInfo(defaultValue = "'UNKNOWN'") val configuredDepthReference: String = "UNKNOWN",
     @ColumnInfo(defaultValue = "0") val sounderOffsetMeters: Double = 0.0,
+    val tideStationId: String? = null,
+    val tideStationName: String? = null,
+    val tideStationDistanceMeters: Double? = null,
     @ColumnInfo(defaultValue = "0") val sampleCount: Int = 0,
 )
 
@@ -168,6 +172,25 @@ data class DepthSampleEntity(
     val integrityReason: String? = null,
     @ColumnInfo(defaultValue = "0") val positionCorrectionApplied: Boolean = false,
     @ColumnInfo(defaultValue = "'NONE'") val positionCorrectionMethod: String = "NONE",
+    val tideHeightMetersApplied: Double? = null,
+    @ColumnInfo(defaultValue = "'OFF'") val tideCorrectionMode: String = "OFF",
+    val tideStationId: String? = null,
+    val tideStationName: String? = null,
+    val tideStationDistanceMeters: Double? = null,
+    val tidePredictionYear: Int? = null,
+    val tideCorrectionMethod: String? = null,
+    val tideSource: String? = null,
+    val tideSourceUpdatedAt: Long? = null,
+    @ColumnInfo(defaultValue = "'NOT_REQUESTED'") val tideCorrectionStatus: String = "NOT_REQUESTED",
+)
+
+@Entity(tableName="tide_prediction_cache",primaryKeys=["stationId","year"])
+data class TidePredictionCacheEntity(
+    val stationId:String,
+    val year:Int,
+    val downloadedAt:Long,
+    val sourceUrl:String,
+    val csv:String,
 )
 
 @Entity(
@@ -205,10 +228,27 @@ data class LinzDepthCacheEntity(
     val status: String,
 )
 
+/** Bounded safety log. Never store coordinates, credentials or raw NMEA here. */
+@Entity(
+    tableName = "incident_log",
+    indices = [Index("timestamp"), Index("category"), Index("severity")],
+)
+data class IncidentLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val elapsedRealtime: Long,
+    val severity: String,
+    val category: String,
+    val event: String,
+    val sessionId: Long? = null,
+    val details: String = "{}",
+)
+
 @Dao
 interface AnchorDao {
     @Insert suspend fun insertSession(value: AnchorSessionEntity): Long
     @Update suspend fun updateSession(value: AnchorSessionEntity)
+    @Transaction suspend fun updateSessionAndInsertEvent(value:AnchorSessionEntity,event:AlarmEventEntity){updateSession(value);insertEvent(event)}
     @Query("SELECT * FROM anchor_sessions WHERE active=1 ORDER BY startedAt DESC LIMIT 1") suspend fun active(): AnchorSessionEntity?
     @Query("SELECT * FROM anchor_sessions ORDER BY startedAt DESC") fun sessions(): Flow<List<AnchorSessionEntity>>
     @Query("DELETE FROM alarm_events WHERE sessionId IN (SELECT id FROM anchor_sessions WHERE id=:id AND active=0)") suspend fun deleteCompletedEvents(id: Long)
@@ -220,6 +260,18 @@ interface AnchorDao {
     @Insert suspend fun insertEvent(value: AlarmEventEntity)
     @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp") fun events(id: Long): Flow<List<AlarmEventEntity>>
     @Query("SELECT * FROM alarm_events ORDER BY timestamp DESC") fun allEvents(): Flow<List<AlarmEventEntity>>
+    @Query("SELECT * FROM anchor_sessions ORDER BY id") suspend fun allSessionsNow():List<AnchorSessionEntity>
+    @Query("SELECT * FROM track_points WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allPointsPage(afterId:Long,limit:Int):List<TrackPointEntity>
+    @Query("SELECT * FROM alarm_events WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allEventsPage(afterId:Long,limit:Int):List<AlarmEventEntity>
+    @Query("SELECT COUNT(*) FROM anchor_sessions") suspend fun sessionCount():Long
+    @Query("SELECT COUNT(*) FROM track_points") suspend fun pointCount():Long
+    @Query("SELECT COUNT(*) FROM alarm_events") suspend fun eventCount():Long
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importSessions(values:List<AnchorSessionEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importPoints(values:List<TrackPointEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importEvents(values:List<AlarmEventEntity>)
+    @Query("DELETE FROM alarm_events") suspend fun clearEvents()
+    @Query("DELETE FROM track_points") suspend fun clearPoints()
+    @Query("DELETE FROM anchor_sessions") suspend fun clearSessions()
 }
 
 @Dao
@@ -258,6 +310,14 @@ interface SonarDao {
     @Upsert suspend fun upsertGridCell(value:SonarGridCellEntity)
     @Query("DELETE FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId AND gridX=:gridX AND gridY=:gridY") suspend fun deleteGridCell(scopeType:String,scopeId:Long,gridX:Long,gridY:Long)
     @Query("DELETE FROM sonar_grid_cells WHERE scopeType=:scopeType AND scopeId=:scopeId") suspend fun deleteGridScope(scopeType:String,scopeId:Long)
+    @Query("SELECT * FROM sonar_surveys ORDER BY id") suspend fun allSurveysNow():List<SonarSurveyEntity>
+    @Query("SELECT * FROM depth_samples WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allSamplesPage(afterId:Long,limit:Int):List<DepthSampleEntity>
+    @Query("SELECT COUNT(*) FROM sonar_surveys") suspend fun surveyCount():Long
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importSurveys(values:List<SonarSurveyEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importSamples(values:List<DepthSampleEntity>)
+    @Query("DELETE FROM sonar_grid_cells") suspend fun clearGridCells()
+    @Query("DELETE FROM depth_samples") suspend fun clearSamples()
+    @Query("DELETE FROM sonar_surveys") suspend fun clearSurveys()
 }
 
 data class GridCoordinate(val baseGridX:Long,val baseGridY:Long)
@@ -267,15 +327,36 @@ interface LinzDepthCacheDao {
     @Query("SELECT * FROM linz_depth_cache WHERE cellKey=:cellKey LIMIT 1") suspend fun get(cellKey:String):LinzDepthCacheEntity?
     @Upsert suspend fun upsert(value:LinzDepthCacheEntity)
     @Query("DELETE FROM linz_depth_cache WHERE queriedAt<:oldestAllowed") suspend fun prune(oldestAllowed:Long)
+    @Query("DELETE FROM linz_depth_cache") suspend fun clear()
+}
+
+@Dao
+interface TidePredictionCacheDao{
+    @Query("SELECT * FROM tide_prediction_cache WHERE stationId=:stationId AND year=:year LIMIT 1") suspend fun get(stationId:String,year:Int):TidePredictionCacheEntity?
+    @Upsert suspend fun upsert(value:TidePredictionCacheEntity)
+    @Query("DELETE FROM tide_prediction_cache") suspend fun clear()
+}
+
+@Dao
+interface IncidentLogDao {
+    @Insert suspend fun insert(value: IncidentLogEntity): Long
+    @Query("SELECT * FROM incident_log ORDER BY timestamp DESC, id DESC LIMIT :limit") fun recent(limit: Int = 500): Flow<List<IncidentLogEntity>>
+    @Query("SELECT * FROM incident_log WHERE timestamp>=:since ORDER BY timestamp, id LIMIT :limit") suspend fun since(since: Long, limit: Int = 10_000): List<IncidentLogEntity>
+    @Query("SELECT COUNT(*) FROM incident_log") suspend fun count(): Long
+    @Query("DELETE FROM incident_log WHERE timestamp<:oldestAllowed") suspend fun deleteOlderThan(oldestAllowed: Long): Int
+    @Query("DELETE FROM incident_log WHERE id NOT IN (SELECT id FROM incident_log ORDER BY id DESC LIMIT :maxRows)") suspend fun trimToRows(maxRows: Int): Int
+    @Query("DELETE FROM incident_log") suspend fun clear(): Int
 }
 
 @Database(
-    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class],
-    version = 8,
-    exportSchema = false,
+    entities = [AnchorSessionEntity::class, TrackPointEntity::class, AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class],
+    version = 11,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun anchorDao(): AnchorDao
     abstract fun sonarDao(): SonarDao
     abstract fun linzDepthCacheDao():LinzDepthCacheDao
+    abstract fun tidePredictionCacheDao():TidePredictionCacheDao
+    abstract fun incidentLogDao():IncidentLogDao
 }

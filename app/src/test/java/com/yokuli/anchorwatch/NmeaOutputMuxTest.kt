@@ -28,13 +28,13 @@ class NmeaOutputMuxTest {
 
     @Test fun systemEncoderUsesGnTalkerChecksumAndNeverInventsHeading(){
         val fix=NavigationFix(-36.8485,174.7633,1_720_000_000_000,10_000,sogKnots=1.2,cogTrueDegrees=92.0,headingTrueDegrees=38.0,hdop=.8,fixQuality=1,satellites=12,altitudeMeters=4.0,horizontalAccuracyMeters=2.4,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
-        val output=mux.systemPosition(fix,10_500)
+        val output=mux.acceptedPosition(fix,10_500)
         assertEquals(3,output.size);assertTrue(output.any{it.startsWith("\$GNRMC")});assertTrue(output.any{it.startsWith("\$GNGGA")});assertTrue(output.any{it.startsWith("\$GNVTG")});assertTrue(output.none{it.contains("HDT")});assertTrue(output.all{it.endsWith("\r\n")&&NmeaChecksum.validate(it,true)})
     }
 
     @Test fun systemEncoderLeavesUnknownSatellitesAndAltitudeBlankAndOmitsVtgWithoutMotion(){
         val fix=NavigationFix(0.0,0.0,1_720_000_000_000,10_000,horizontalAccuracyMeters=6.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
-        val output=mux.systemPosition(fix,10_100)
+        val output=mux.acceptedPosition(fix,10_100)
         assertEquals(2,output.size)
         val gga=output.first{it.startsWith("\$GNGGA")}.substringBefore('*').split(',')
         assertEquals("",gga[7]);assertEquals("",gga[9]);assertTrue(output.none{it.startsWith("\$GNVTG")})
@@ -42,7 +42,7 @@ class NmeaOutputMuxTest {
     }
 
     @Test fun systemEncoderFormatsSouthernEasternNorthernWesternAndDatelineCoordinates(){
-        fun rmc(lat:Double,lon:Double)=mux.systemPosition(NavigationFix(lat,lon,1_720_000_000_000,10_000,sogKnots=1.0,cogTrueDegrees=90.0,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100).first{it.startsWith("\$GNRMC")}
+        fun rmc(lat:Double,lon:Double)=mux.acceptedPosition(NavigationFix(lat,lon,1_720_000_000_000,10_000,sogKnots=1.0,cogTrueDegrees=90.0,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100).first{it.startsWith("\$GNRMC")}
         assertTrue(rmc(-36.8485,174.7633).contains(",3650.91000,S,17445.79800,E,"))
         assertTrue(rmc(48.25,-123.5).contains(",4815.00000,N,12330.00000,W,"))
         assertTrue(rmc(0.0,0.0).contains(",0000.00000,N,00000.00000,E,"))
@@ -54,14 +54,14 @@ class NmeaOutputMuxTest {
         val boat=listOf("GNRMC,1","GNGGA,1","GNVTG,1","GPGLL,1","IIHDT,120.0,T","IIDPT,8.0,0.0","IIMWV,90.0,R,12.0,N,A")
         val passthrough=boat.mapNotNull{mux.boatSentence(NmeaChecksum.append(it),GpsDataSource.SYSTEM)}
         assertEquals(3,passthrough.size);assertTrue(passthrough.any{it.contains("IIHDT")});assertTrue(passthrough.any{it.contains("IIDPT")});assertTrue(passthrough.any{it.contains("IIMWV")})
-        val generated=mux.systemPosition(NavigationFix(-36.0,174.0,1_720_000_000_000,10_000,sogKnots=2.4,cogTrueDegrees=123.4,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100)
+        val generated=mux.acceptedPosition(NavigationFix(-36.0,174.0,1_720_000_000_000,10_000,sogKnots=2.4,cogTrueDegrees=123.4,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100)
         assertTrue((passthrough+generated).all{NmeaChecksum.validate(it,true)})
     }
 
     @Test fun staleNetworkAndMockSystemPositionsAreNotShared(){
         fun fix(provider:PositionProvider=PositionProvider.ANDROID_GNSS,mock:Boolean=false)=NavigationFix(1.0,2.0,receivedElapsedRealtime=1_000,horizontalAccuracyMeters=5.0,positionProvider=provider,isMockLocation=mock,sourceSentence="SYSTEM",valid=true)
-        assertTrue(mux.systemPosition(fix(),5_000).isEmpty())
-        assertTrue(mux.systemPosition(fix(PositionProvider.ANDROID_NETWORK),1_100).isEmpty())
-        assertTrue(mux.systemPosition(fix(mock=true),1_100).isEmpty())
+        assertTrue(mux.acceptedPosition(fix(),5_000).isEmpty())
+        assertTrue(mux.acceptedPosition(fix(PositionProvider.ANDROID_NETWORK),1_100).isEmpty())
+        assertTrue(mux.acceptedPosition(fix(mock=true),1_100).isEmpty())
     }
 }

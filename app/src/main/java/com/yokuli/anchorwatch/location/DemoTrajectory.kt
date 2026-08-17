@@ -70,7 +70,7 @@ object DemoTrajectory {
         val after = seconds - payoutDuration(placement, geometry, speed)
         val simulated = after * simulationRate(speed)
         val transition = smoothStep((after / 18.0).coerceIn(0.0, 1.0))
-        val angle = geometry.downwind + lingeringOffset(simulated, seed) * transition + smoothNoise(simulated / 13.0, seed + 8) * .055
+        val angle = geometry.downwind + lingeringOffset(simulated, seed) * transition + smoothNoise(simulated / 13.0, seed + 8) * .055 * transition
         val targetRadius = geometry.radius * (.90 + .055 * smoothNoise(simulated / 21.0, seed + 9))
         val radius = geometry.radius + (targetRadius - geometry.radius) * transition
         return orbit(geometry, radius, angle, geometry.radius * .028 * simulationRate(speed))
@@ -82,7 +82,7 @@ object DemoTrajectory {
         val simulated = after * simulationRate(speed)
         val transition = smoothStep((after / 18.0).coerceIn(0.0, 1.0))
         val veer = smoothStep(((simulated - 70.0) / 85.0).coerceIn(0.0, 1.0)) * (1.25 + seeded(seed, 71) * .55)
-        val angle = geometry.downwind + (lingeringOffset(simulated, seed + 70) + veer) * transition + smoothNoise(simulated / 15.0, seed + 72) * .06
+        val angle = geometry.downwind + (lingeringOffset(simulated, seed + 70) + veer) * transition + smoothNoise(simulated / 15.0, seed + 72) * .06 * transition
         val targetRadius = geometry.radius * (.88 + .07 * smoothNoise(simulated / 24.0, seed + 73))
         val radius = geometry.radius + (targetRadius - geometry.radius) * transition
         return orbit(geometry, radius, angle, geometry.radius * .032 * simulationRate(speed))
