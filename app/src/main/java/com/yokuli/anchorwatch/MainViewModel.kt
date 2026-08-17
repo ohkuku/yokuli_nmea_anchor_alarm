@@ -79,9 +79,14 @@ import com.yokuli.anchorwatch.data.condition.LiveWindRepository
 import com.yokuli.anchorwatch.data.condition.LiveWindState
 import com.yokuli.anchorwatch.runtime.condition.ConditionRuntime
 import com.yokuli.anchorwatch.data.anchorage.AnchorageRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageQrImageGenerator
+import com.yokuli.anchorwatch.data.anchorage.AnchorageShareContent
+import com.yokuli.anchorwatch.data.anchorage.DuplicateAnchorageException
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
+import com.yokuli.anchorwatch.localization.usesChinese
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -150,18 +155,13 @@ data class MainUiState(
     val liveWind:LiveWindState=LiveWindState(),
     val conditions:ConditionRuntimeSnapshot=ConditionRuntimeSnapshot(),
     val savedAnchorages:List<SavedAnchorageEntity> = emptyList(),
-    val mapPreviewAnchorage:SavedAnchorageEntity?=null,
-    val anchorageSetupPrefill:SavedAnchorageEntity?=null,
-    val anchorageSetupRequested:Boolean=false,
     val anchorageDuplicateExisting:SavedAnchorageEntity?=null,
-    val anchorageDuplicateProposed:SavedAnchorageEntity?=null,
-    val pendingAnchorageVisit:SavedAnchorageEntity?=null,
-    val pendingAnchorageVisitSession:AnchorSessionEntity?=null,
+    val anchorageOperationError:String?=null,
 )
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
 private data class AvailablePositions(val nmea:NavigationFix?,val system:NavigationFix?,val demo:NavigationFix?,val demoStatus:DemoGpsStatus)
-data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=false,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig(),val savedAnchorageId:Long?=null)
+data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=false,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig())
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -192,6 +192,7 @@ class MainViewModel @Inject constructor(
     private val liveWindRepository:LiveWindRepository,
     private val conditionRuntime:ConditionRuntime,
     private val anchorageRepository:AnchorageRepository,
+    private val anchorageQrImageGenerator:AnchorageQrImageGenerator,
 ):AndroidViewModel(app){
     private val _ui=MutableStateFlow(MainUiState());val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
@@ -461,7 +462,6 @@ class MainViewModel @Inject constructor(
             .putExtra("warning",maxOf(input.alarmRadiusMeters*.8,input.alarmRadiusMeters-10).coerceAtMost(input.alarmRadiusMeters-.1)).putExtra("alarm",input.alarmRadiusMeters).putExtra("placement",input.placement.name).putExtra("rangeMode",input.rangeMode.name).putExtra("safetyPreset",input.safetyPreset.name).putExtra("positionSource",input.positionSource.name).putExtra("centerSource",input.centerSource.name).putExtra("usePhoneHeading",input.usePhoneHeading)
             .putExtra("depthSource",input.depthSource.name)
             .putExtra("depthGuard",input.conditions.depthGuardEnabled).putExtra("shallowDepth",input.conditions.shallowDepthAlarmMeters?:Double.NaN).putExtra("deepDepth",input.conditions.deepDepthAlarmMeters?:Double.NaN).putExtra("windGuard",input.conditions.windGuardEnabled).putExtra("windWarning",input.conditions.windWarningKnots?:Double.NaN).putExtra("windAlarm",input.conditions.windAlarmKnots?:Double.NaN).putExtra("windShift",input.conditions.windShiftEnabled).putExtra("windShiftDegrees",input.conditions.windShiftThresholdDegrees?:Double.NaN).putExtra("apparentFallback",input.conditions.windAllowApparentFallback)
-            .also{intent->input.savedAnchorageId?.let{intent.putExtra("savedAnchorageId",it)}}
         ContextCompat.startForegroundService(app,intent)
     }
     fun updateAnchorSettings(input:AnchorWatchInput){val intent=Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_RADIUS).putExtra("alarm",input.alarmRadiusMeters);ContextCompat.startForegroundService(app,intent)}
@@ -470,12 +470,7 @@ class MainViewModel @Inject constructor(
     fun resetWindBaseline()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.RESET_WIND_BASELINE))
     fun pauseWatch()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.PAUSE_WATCH))
     fun resumeWatch()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.RESUME_WATCH))
-    fun liftAnchor(){
-        val active=_ui.value.active
-        val saved=active?.savedAnchorageId?.let{id->_ui.value.savedAnchorages.firstOrNull{it.id==id}}
-        if(active!=null&&saved!=null)_ui.update{it.copy(pendingAnchorageVisit=saved,pendingAnchorageVisitSession=active)}
-        ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.LIFT_ANCHOR))
-    }
+    fun liftAnchor()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.LIFT_ANCHOR))
     fun stop()=pauseWatch()
     fun acknowledge()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ACK))
     fun acceptEstimatedCenter(session:AnchorSessionEntity)=session.candidateId?.let{candidateId->ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ACCEPT_ESTIMATED_CENTER).putExtra("sessionId",session.id).putExtra("candidateId",candidateId))}
@@ -512,45 +507,53 @@ class MainViewModel @Inject constructor(
     }
     fun openAnchorInGoogleMaps(session:AnchorSessionEntity){
         if(session.centerStatus!=com.yokuli.anchorwatch.domain.model.AnchorCenterStatus.RESOLVED.name)return
-        val coordinates="${"%.7f".format(java.util.Locale.US,session.anchorLatitude)},${"%.7f".format(java.util.Locale.US,session.anchorLongitude)}"
-        val uri=android.net.Uri.parse("https://www.google.com/maps/search/?api=1&query=$coordinates")
+        openCoordinatesInGoogleMaps(session.anchorLatitude,session.anchorLongitude)
+    }
+    fun openAnchorageInGoogleMaps(value:SavedAnchorageEntity)=openCoordinatesInGoogleMaps(value.latitude,value.longitude)
+    private fun openCoordinatesInGoogleMaps(latitude:Double,longitude:Double){
+        val uri=android.net.Uri.parse(AnchorageShareContent.googleMapsUrl(latitude,longitude))
         val google=Intent(Intent.ACTION_VIEW,uri).setPackage("com.google.android.apps.maps").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val intent=if(google.resolveActivity(app.packageManager)!=null)google else Intent(Intent.ACTION_VIEW,uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching{app.startActivity(intent)}.onFailure{_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"No map application or browser is available to open the anchor position."))}}
+    }
+    fun shareAnchorageQr(value:SavedAnchorageEntity)=viewModelScope.launch{
+        runCatching{
+            val file=withContext(Dispatchers.IO){anchorageQrImageGenerator.generate(value,_ui.value.settings.appLanguage.usesChinese())}
+            val uri=androidx.core.content.FileProvider.getUriForFile(app,"${app.packageName}.files",file)
+            val send=Intent(Intent.ACTION_SEND).setType("image/png")
+                .putExtra(Intent.EXTRA_STREAM,uri)
+                .putExtra(Intent.EXTRA_TEXT,AnchorageShareContent.shareText(value))
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            send.clipData=android.content.ClipData.newUri(app.contentResolver,"Saved anchorage",uri)
+            val title=if(_ui.value.settings.appLanguage.usesChinese())"分享收藏锚地" else "Share saved anchorage"
+            app.startActivity(Intent.createChooser(send,title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure{_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Could not create or share the anchorage QR image."))}}
     }
     fun page(index:Int)=_ui.update{it.copy(page=index,sonarGridChangedCells=emptySet())}
     fun follow(value:Boolean)=_ui.update{it.copy(follow=value)}
     fun requestRangeEditor()=_ui.update{it.copy(page=0,rangeEditorRequested=true)}
     fun consumeRangeEditorRequest()=_ui.update{it.copy(rangeEditorRequested=false)}
     fun loadHistoryEvents(sessionId:Long)=viewModelScope.launch{val events=dao.recentEvents(sessionId,30);_ui.update{it.copy(eventsBySession=mapOf(sessionId to events))}}
-    fun saveAnchorageFromSession(session:AnchorSessionEntity,name:String,notes:String="")=viewModelScope.launch{anchorageRepository.saveFromSession(session,name,notes)}
     fun saveAnchorage(value:SavedAnchorageEntity)=viewModelScope.launch{
         val proposed=value.copy(updatedAt=System.currentTimeMillis())
-        val duplicate=if(proposed.id==0L)anchorageRepository.duplicate(proposed.latitude,proposed.longitude)else null
-        if(duplicate!=null)_ui.update{it.copy(anchorageDuplicateExisting=duplicate,anchorageDuplicateProposed=proposed)}
-        else anchorageRepository.save(proposed)
-    }
-    fun resolveAnchorageDuplicate(replaceExisting:Boolean)=viewModelScope.launch{
-        val state=_ui.value;val existing=state.anchorageDuplicateExisting;val proposed=state.anchorageDuplicateProposed
-        if(existing!=null&&proposed!=null){
-            val value=if(replaceExisting)proposed.copy(id=existing.id,createdAt=existing.createdAt,lastVisitedAt=existing.lastVisitedAt,visitCount=existing.visitCount)else proposed
-            anchorageRepository.save(value)
+        try{anchorageRepository.save(proposed)}catch(cancelled:CancellationException){throw cancelled}catch(duplicate:DuplicateAnchorageException){
+            _ui.update{it.copy(anchorageDuplicateExisting=duplicate.existing)}
+        }catch(error:Throwable){
+            android.util.Log.e("AnchorLibrary","Failed to save anchorage",error)
+            _ui.update{it.copy(anchorageOperationError="Could not save the anchorage. No data was changed.")}
         }
-        _ui.update{it.copy(anchorageDuplicateExisting=null,anchorageDuplicateProposed=null)}
     }
-    fun dismissAnchorageDuplicate()=_ui.update{it.copy(anchorageDuplicateExisting=null,anchorageDuplicateProposed=null)}
-    fun resolveAnchorageVisitUpdate(update:Boolean)=viewModelScope.launch{
-        val state=_ui.value;val saved=state.pendingAnchorageVisit;val session=state.pendingAnchorageVisitSession
-        if(update&&saved!=null&&session!=null)anchorageRepository.updateFromVisit(saved.id,dao.session(session.id)?:session)
-        _ui.update{it.copy(pendingAnchorageVisit=null,pendingAnchorageVisitSession=null)}
+    fun dismissAnchorageDuplicate()=_ui.update{it.copy(anchorageDuplicateExisting=null)}
+    fun deleteAnchorage(id:Long)=viewModelScope.launch{
+        try{
+            anchorageRepository.delete(id)
+            _ui.update{state->state.copy(anchorageDuplicateExisting=state.anchorageDuplicateExisting?.takeUnless{it.id==id})}
+        }catch(cancelled:CancellationException){throw cancelled}catch(error:Throwable){
+            android.util.Log.e("AnchorLibrary","Failed to delete anchorage $id",error)
+            _ui.update{it.copy(anchorageOperationError="Could not delete the anchorage. It is still saved.")}
+        }
     }
-    fun deleteAnchorage(id:Long)=viewModelScope.launch{anchorageRepository.delete(id)}
-    fun viewAnchorageOnMap(value:SavedAnchorageEntity)=_ui.update{it.copy(page=0,mapPreviewAnchorage=value)}
-    fun clearAnchorageMapPreview()=_ui.update{it.copy(mapPreviewAnchorage=null)}
-    /** Copies only setup geometry. The saved coordinate is never reused as a new anchor. */
-    fun useAnchorageSetup(value:SavedAnchorageEntity)=viewModelScope.launch{_ui.update{it.copy(page=0,anchorageSetupPrefill=value,anchorageSetupRequested=true,mapPreviewAnchorage=null)}}
-    fun consumeAnchorageSetupPrefill()=_ui.update{it.copy(anchorageSetupRequested=false)}
-    fun clearAnchorageSetupPrefill()=_ui.update{it.copy(anchorageSetupPrefill=null,anchorageSetupRequested=false)}
+    fun dismissAnchorageOperationError()=_ui.update{it.copy(anchorageOperationError=null)}
     fun exportCsv(session:AnchorSessionEntity)=viewModelScope.launch{
         val points=dao.points(session.id).first()
         val file=java.io.File(app.cacheDir,"anchor-${session.id}.csv")

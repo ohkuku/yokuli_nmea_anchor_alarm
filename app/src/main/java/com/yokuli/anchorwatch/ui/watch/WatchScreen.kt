@@ -46,6 +46,7 @@ import com.google.maps.android.compose.*
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.Protocol
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
+import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchor.AnchorRangeCalculator
 import com.yokuli.anchorwatch.domain.anchor.CoordinateParser
@@ -104,6 +105,7 @@ private data class SonarMapInspection(
 @Composable @OptIn(ExperimentalMaterial3Api::class)
 internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
+    var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
     val fix = state.fix; val active = state.active
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -178,8 +180,6 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
             followedSource = state.settings.gpsDataSource
         }
     }
-    LaunchedEffect(mapLoaded,state.mapPreviewAnchorage?.id){state.mapPreviewAnchorage?.takeIf{mapLoaded}?.let{saved->vm.follow(false);camera.animate(CameraUpdateFactory.newLatLngZoom(LatLng(saved.latitude,saved.longitude),16f))}}
-    LaunchedEffect(state.anchorageSetupRequested){if(state.anchorageSetupRequested){showSetup=true;vm.consumeAnchorageSetupPrefill()}}
     val bottomSheetState=rememberStandardBottomSheetState(initialValue=SheetValue.PartiallyExpanded,skipHiddenState=true)
     val scaffoldState=rememberBottomSheetScaffoldState(bottomSheetState=bottomSheetState)
     BottomSheetScaffold(
@@ -188,7 +188,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
         sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,{showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,vm::useAnchorageSetup,vm::viewAnchorageOnMap,vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
+        sheetContent={WatchPanel(state,{showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,{anchorageDetails=it},vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -206,7 +206,6 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                         if(sonarOverlayMounted)TileOverlay(tileProvider=sonarTileProvider,state=sonarTileOverlayState,fadeIn=false,transparency=.25f,visible=true,zIndex=MapOverlayZ.SONAR)
                         if(baseMapPolicy.showSeamarks)TileOverlay(tileProvider=nauticalTileProvider,fadeIn=true,transparency=0f,visible=true,zIndex=MapOverlayZ.NAUTICAL_SEAMARKS)
                         fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(displayHeading(position,active,state.points,state.phoneHeading)?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
-                        state.mapPreviewAnchorage?.let{saved->Marker(state=remember(saved.id){MarkerState(LatLng(saved.latitude,saved.longitude))},title=saved.name,snippet=tr("Saved anchorage preview · not armed","收藏锚地预览 · 未布防"),icon=anchorIcon,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.ANCHOR)}
                         active?.let { session ->
                             if(session.centerStatus==AnchorCenterStatus.RESOLVED.name){val anchor=LatLng(session.anchorLatitude,session.anchorLongitude)
                              Marker(state=remember(session.anchorLatitude,session.anchorLongitude){MarkerState(anchor)},title=tr("Anchor","锚点"),icon=anchorIcon,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.ANCHOR)
@@ -231,7 +230,6 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                 FilledTonalIconButton(onClick={hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)},modifier=Modifier.testTag("map_recenter")) { Icon(Icons.Default.MyLocation, tr("Recenter on boat","回到船位")) }
                 FilledTonalIconButton({showLayers=true},modifier=Modifier.testTag("map_layers")){Icon(Icons.Default.Layers,tr("Map layers","地图图层"))}
             }
-            state.mapPreviewAnchorage?.let{saved->Surface(Modifier.align(Alignment.TopCenter).padding(top=72.dp,start=16.dp,end=16.dp),shape=MaterialTheme.shapes.medium,tonalElevation=5.dp){Row(Modifier.padding(horizontal=12.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(saved.name,fontWeight=FontWeight.SemiBold);Text(tr("Saved anchorage preview · watch not armed","收藏锚地预览 · 未布防"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton({vm.useAnchorageSetup(saved)}){Text(tr("Use setup","使用设置"))};IconButton(vm::clearAnchorageMapPreview){Icon(Icons.Default.Close,tr("Close","关闭"))}}}}
             if(mapAttribution.isNotBlank())Surface(Modifier.align(Alignment.BottomCenter).padding(horizontal=12.dp).padding(bottom=112.dp),color=MaterialTheme.colorScheme.surface.copy(alpha=.88f),shape=MaterialTheme.shapes.small){Text(mapAttribution,Modifier.padding(horizontal=8.dp,vertical=4.dp),style=MaterialTheme.typography.labelSmall)}
             sonarInspection?.let{inspection->
                 val survey=state.selectedSonarSurveyId?.takeIf{it!=CORRECTED_SONAR_HISTORY_ID}?.let{id->state.sonarSurveys.firstOrNull{it.id==id}}
@@ -241,21 +239,12 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false;vm.clearAnchorageSetupPrefill()}){lat,lon,input->vm.arm(lat,lon,input);showSetup=false;vm.clearAnchorageSetupPrefill()}
+        AnchorSetupSheet(state,{showSetup=false}){lat,lon,input->vm.arm(lat,lon,input);showSetup=false}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
     if (confirmLift) AlertDialog({ confirmLift = false }, confirmButton = { Button({ vm.liftAnchor(); confirmLift = false },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text(tr("Lift anchor","起锚")) } }, dismissButton = { TextButton({ confirmLift = false }) { Text(tr("Cancel","取消")) } }, title = { Text(tr("End this anchoring session?","结束本次锚泊？")) }, text = { Text(tr("Lift anchor permanently closes this session. Its track remains in History, but it cannot be resumed.","起锚会永久结束本次锚泊。轨迹仍保留在历史记录中，但不能再恢复。")) })
-    state.pendingAnchorageVisit?.let{saved->
-        val session=state.pendingAnchorageVisitSession
-        AlertDialog(
-            onDismissRequest={vm.resolveAnchorageVisitUpdate(false)},
-            title={Text(tr("Update ${saved.name} with this visit?","用本次锚泊更新 ${saved.name}？"))},
-            text={Text(buildString{append(tr("Your name, seabed, rating and notes stay unchanged.","名称、底质、评分和备注不会改变。"));session?.let{append("\n\n");append(tr("Depth ${it.waterDepthMeters?.let{v->"%.1f m".format(v)}?:"—"} · Rode ${it.rodeLengthMeters.toInt()} m · Radius ${it.alarmRadiusMeters.toInt()} m","水深 ${it.waterDepthMeters?.let{v->"%.1f 米".format(v)}?:"—"} · 锚链 ${it.rodeLengthMeters.toInt()} 米 · 范围 ${it.alarmRadiusMeters.toInt()} 米"))}})},
-            confirmButton={Button({vm.resolveAnchorageVisitUpdate(true)}){Text(tr("Update visit","更新本次记录"))}},
-            dismissButton={TextButton({vm.resolveAnchorageVisitUpdate(false)}){Text(tr("Not now","暂不更新"))}},
-        )
-    }
+    anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)})}
     if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})
     if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is a navigation aid only. It may be unavailable or outdated and does not replace official charts, Notices to Mariners, depth instruments or a proper passage plan.","该海图影像层仅供辅助参考，可能不可用或已过期，不能替代官方海图、航海通告、测深仪或正规的航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})

@@ -21,6 +21,7 @@ playLocation = "21.3.0"
 core = "1.16.0"
 junit = "4.13.2"
 gson = "2.13.1"
+zxing = "3.5.4"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core" }
@@ -54,6 +55,7 @@ androidx-test-orchestrator = { module = "androidx.test:orchestrator", version.re
 androidx-test-espresso = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
 junit = { module = "junit:junit", version.ref = "junit" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

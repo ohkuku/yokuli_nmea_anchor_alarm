@@ -37,6 +37,10 @@ data class ConditionGuardConfig(
     }
 }
 
+/** Compares the values that would actually be persisted after validation. */
+fun ConditionGuardConfig.hasMeaningfulDiff(other:ConditionGuardConfig):Boolean =
+    validated()!=other.validated()
+
 data class DepthGuardSnapshot(
     val status:DepthGuardStatus=DepthGuardStatus.OFF,
     val filteredDepthMeters:Double?=null,

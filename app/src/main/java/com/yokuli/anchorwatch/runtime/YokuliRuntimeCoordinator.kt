@@ -34,7 +34,6 @@ import com.yokuli.anchorwatch.runtime.notification.AlarmAudioArbiter
 import com.yokuli.anchorwatch.runtime.condition.ConditionRuntime
 import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
 import com.yokuli.anchorwatch.data.condition.LiveWindRepository
-import com.yokuli.anchorwatch.data.anchorage.AnchorageRepository
 import com.yokuli.anchorwatch.runtime.sonar.SonarRuntime
 import com.yokuli.anchorwatch.runtime.sharing.NmeaSharingRuntime
 import com.yokuli.anchorwatch.runtime.proxy.GpsProxyRuntime
@@ -73,7 +72,6 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private val conditionRuntime:ConditionRuntime,
  private val liveDepth:LiveDepthRepository,
  private val liveWind:LiveWindRepository,
- private val anchorageRepository:AnchorageRepository,
  private val batteryHealth:BatteryHealthMonitor
 ){
  private lateinit var host:RuntimeServiceHost
@@ -132,7 +130,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
 
  fun submit(command:RuntimeCommand){
   when(command){
-   is RuntimeCommand.ArmWatch->{armPending=true;val request=ArmRequest(command.config,command.placement,command.rangeMode,command.safetyPreset,command.boatLength,command.positionSource,command.centerSource,command.usePhoneHeading,command.depthSource,command.conditions,command.savedAnchorageId);launchCommand{try{anchorActor.execute{val before=activeSession()?.id;arm(request);val started=activeSession();if(before==null&&started?.savedAnchorageId==command.savedAnchorageId)command.savedAnchorageId?.let{anchorageRepository.markUsed(it)};conditionRuntime.sync(started)}}finally{armPending=false;releaseIfIdle()}}}
+   is RuntimeCommand.ArmWatch->{armPending=true;val request=ArmRequest(command.config,command.placement,command.rangeMode,command.safetyPreset,command.boatLength,command.positionSource,command.centerSource,command.usePhoneHeading,command.depthSource,command.conditions);launchCommand{try{anchorActor.execute{arm(request);conditionRuntime.sync(activeSession())}}finally{armPending=false;releaseIfIdle()}}}
    RuntimeCommand.SnoozeAlarm->launchCommand{val until=wallClock.currentTimeMillis()+alarmSnoozeMinutes*60_000L;anchorActor.execute{snooze();conditionRuntime.snooze(until);refreshSessionFromDatabase()};audioArbiter.snoozeActive(wallClock.currentTimeMillis(),until);reconcileAudio()}
    RuntimeCommand.PauseWatch->launchCommand{anchorActor.execute{conditionRuntime.flush();refreshSessionFromDatabase();pause();conditionRuntime.sync(activeSession())};clearConditionSources()}
    RuntimeCommand.ResumeWatch->launchCommand{anchorActor.execute{resume();conditionRuntime.sync(activeSession())}}
