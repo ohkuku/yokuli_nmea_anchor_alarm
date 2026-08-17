@@ -111,8 +111,10 @@ release tag with:
 scripts/release/manage-release.sh publish v1.1.0-alpha.1
 ```
 
-GitHub Actions performs the safety gates, signing, APK/AAB build, verification, and GitHub Release
-publication. The manual workflow remains available as a tag-only fallback.
+GitHub Actions performs early signing preflight, API 36 launch smoke, JVM tests, Release Lint,
+signing, APK/AAB verification, and GitHub Release publication. The full device-story integration line
+runs independently and gates `debug-verified` artifacts without blocking a signed release. The manual
+workflow remains available as a tag-only fallback.
 
 The tool deliberately has no delete, reset or rotate operation. Replacing the key prevents
 installed direct-distribution APKs from receiving future updates.

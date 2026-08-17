@@ -52,8 +52,10 @@ gitGraph
 
 发布由 Git tag 驱动：`scripts/release/manage-release.sh publish TAG` 会验证当前分支干净且已完整
 推送，然后只创建并推送不可变 tag。GitHub 的 `Publish Anchor Watch Release` Action 会自动识别
-channel 和版本号，运行完整设备 story、Unit、Release Lint，生成签名 APK/AAB、校验签名和
-SHA‑256，再创建可下载的 GitHub Release。本机不负责编译正式包。网页上的手动 Action 仍是
+channel 和版本号，先执行签名预检与 API 36 启动 smoke，再运行 Unit、Release Lint，生成签名
+APK/AAB、校验签名和 SHA‑256，并创建可下载的 GitHub Release。本机不负责编译正式包。
+完整设备 story 保留在独立的 `Anchor Watch Android CI` 三分片集成线上，用于发布
+`debug-verified` 和持续发现回归，但不阻塞 alpha/stable 签名发布。网页上的手动 Action 仍是
 兜底入口，只需选择正确来源分支并填写同样格式的 tag。
 
 ```bash
@@ -123,10 +125,12 @@ Debug APK 使用调试签名，不能覆盖由正式签名安装的 stable APK�
 
 Releases are tag-driven. `scripts/release/manage-release.sh publish TAG` validates that the selected
 branch is clean and exactly matches its remote, then creates and pushes only an immutable tag. GitHub
-Actions derives the channel, `versionName`, and monotonic `versionCode`, performs the full device story
-gate, runs JVM tests and Release Lint, builds signed APK/AAB files, verifies the signature, emits
-SHA‑256 checksums, and creates a downloadable GitHub Release. The web-based manual action remains a
-fallback and requires only the tag. Non-stable channels are marked as pre-releases.
+Actions derives the channel, `versionName`, and monotonic `versionCode`, performs an early signing
+preflight and API 36 launch smoke, runs JVM tests and Release Lint, builds signed APK/AAB files,
+verifies the signature, emits SHA‑256 checksums, and creates a downloadable GitHub Release. The full
+device-story suite remains on the separate three-shard `Anchor Watch Android CI` integration line; it
+gates `debug-verified` artifacts and reports regressions without blocking alpha/stable signing. The
+web-based manual action remains a tag-only fallback. Non-stable channels are marked as pre-releases.
 
 For routine publishing, open the [visual Release Console](RELEASE_CONSOLE.md):
 
