@@ -36,6 +36,17 @@ jobs:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
         run: ./gradlew --no-daemon testDebugUnitTest --tests com.yokuli.anchorwatch.LongRunningFaultStoryTest --tests com.yokuli.anchorwatch.NmeaTransportFaultTest --tests com.yokuli.anchorwatch.TidePredictionTest --tests com.yokuli.anchorwatch.RuntimeWallClockSoakTest --stacktrace
+      - name: Collect accelerated-soak failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh accelerated-soak
+      - name: Upload downloadable accelerated-soak failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-accelerated-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/accelerated-soak
+          if-no-files-found: error
+          retention-days: 30
       - name: Reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -78,6 +89,17 @@ jobs:
       - name: Expose device-story failures
         if: failure()
         run: python3 .github/scripts/report_android_test_failures.py
+      - name: Collect device-soak failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh device-soak
+      - name: Upload downloadable device-soak failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-device-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/device-soak
+          if-no-files-found: error
+          retention-days: 30
       - name: Device reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -110,6 +132,17 @@ jobs:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
         run: ./gradlew --no-daemon testDebugUnitTest --tests com.yokuli.anchorwatch.RuntimeWallClockSoakTest --stacktrace
+      - name: Collect wall-clock-soak failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh wall-clock-soak
+      - name: Upload downloadable wall-clock-soak failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-wall-clock-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/wall-clock-soak
+          if-no-files-found: error
+          retention-days: 30
       - name: Reports
         if: always()
         uses: actions/upload-artifact@v6

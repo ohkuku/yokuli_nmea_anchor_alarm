@@ -48,25 +48,27 @@ class SonarRuntime @Inject constructor(
         return active.active
     }
 
-    suspend fun start(name:String,tideMode:TideMode,manualTideOffsetMeters:Double,tideStationId:String?=null):SonarRuntimeResult{
+    suspend fun start(name:String,tideMode:TideMode,manualTideOffsetMeters:Double,tideStationId:String?=null,demoWatchRunning:Boolean=false):SonarRuntimeResult{
         val appSettings=settings.settings.first()
         val demo=appSettings.demoMode
-        // Freshness remains a strict 2 s pairing rule. Waiting here only lets the
-        // serialized command observe the next complete same-stream pair.
+        // Position pairing stays strict. Depth may be a bounded held value from
+        // the same connection because many gateways emit DBT/DPT only on change.
         if(!demo){
             withTimeoutOrNull(5_000){
                 recorder.status.first{status->
                     val now=clock.elapsedRealtime()
                     navigation.connectionState.value==NmeaConnectionState.CONNECTED&&
-                        status.hasFreshRealDepth(now)&&status.hasFreshNmeaPosition(now)
+                        status.realDepthHoldState()!=com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.NO_DEPTH&&status.hasFreshNmeaPosition(now)
                 }
             }
         }
         val now=clock.elapsedRealtime()
         val current=recorder.status.value
-        when(SonarSurveyStartPolicy.evaluate(demo,navigation.connectionState.value,current.hasFreshRealDepth(now),current.hasFreshNmeaPosition(now))){
+        when(SonarSurveyStartPolicy.evaluate(demo,demoWatchRunning,navigation.connectionState.value,current.realDepthHoldState(),current.hasFreshNmeaPosition(now))){
+            SonarSurveyStartDecision.DEMO_WATCH_REQUIRED->return rejected("Start and resume a Demo anchor watch before starting its sonar survey.")
             SonarSurveyStartDecision.NMEA_NOT_CONNECTED->return rejected("Connect the NMEA server before starting a sonar survey.")
-            SonarSurveyStartDecision.DEPTH_NOT_FRESH->return rejected("The NMEA server is connected but has not supplied fresh DPT/DBT depth data.")
+            SonarSurveyStartDecision.DEPTH_NOT_SEEN->return rejected("Waiting for the first valid DPT/DBT depth from this NMEA connection.")
+            SonarSurveyStartDecision.DEPTH_HOLD_EXPIRED->return rejected("The last real DPT/DBT depth is no longer valid. Wait for a new depth sentence.")
             SonarSurveyStartDecision.NMEA_POSITION_NOT_FRESH->return rejected("The NMEA server is sending depth but has not supplied a fresh valid GPS position from the same stream.")
             SonarSurveyStartDecision.ALLOWED->Unit
         }
@@ -83,6 +85,16 @@ class SonarRuntime @Inject constructor(
         recorder.stop()
         resources.release(RuntimeOwner.SONAR_MAPPING)
         releaseNmeaIfUnowned()
+    }
+
+    suspend fun watchdog():SonarRuntimeResult?{
+        val reason=recorder.evaluateDepthHold(clock.elapsedRealtime())?:return null
+        val message=when(reason){
+            com.yokuli.anchorwatch.domain.sonar.SonarAutoStopReason.DEPTH_HOLD_EXPIRED_TIME->"Sonar survey stopped because no new real DPT/DBT depth was received for 5 minutes."
+            com.yokuli.anchorwatch.domain.sonar.SonarAutoStopReason.DEPTH_HOLD_EXPIRED_DISTANCE->"Sonar survey stopped because the vessel travelled more than 500 m without a new real DPT/DBT depth."
+        }
+        recorder.stop(message);resources.release(RuntimeOwner.SONAR_MAPPING);releaseNmeaIfUnowned()
+        return SonarRuntimeResult(false,"Sonar survey stopped",message)
     }
 
     fun shutdown(){resources.release(RuntimeOwner.SONAR_MAPPING)}

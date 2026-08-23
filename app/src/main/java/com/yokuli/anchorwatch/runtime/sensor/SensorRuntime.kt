@@ -2,12 +2,15 @@ package com.yokuli.anchorwatch.runtime.sensor
 
 import com.yokuli.anchorwatch.location.PhoneHeadingRepository
 import com.yokuli.anchorwatch.location.PhoneMotionRepository
+import com.yokuli.anchorwatch.location.vessel.PhonePressureRepository
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
 data class SensorRuntimeState(
     val phoneMotionActive: Boolean = false,
     val phoneHeadingActive: Boolean = false,
+    val phonePressureActive: Boolean = false,
 )
 
 /**
@@ -22,13 +25,18 @@ data class SensorRuntimeState(
 class SensorRuntime @Inject constructor(
     private val phoneMotion: PhoneMotionRepository,
     private val phoneHeading: PhoneHeadingRepository,
+    private val vesselAttitude:PhoneVesselAttitudeRepository,
+    private val phonePressure:PhonePressureRepository,
 ) {
     @Synchronized
-    fun reconcile(needsPhoneMotion: Boolean, needsPhoneHeading: Boolean): SensorRuntimeState {
+    fun reconcile(needsPhoneMotion: Boolean, needsPhoneHeading: Boolean, needsPhonePressure: Boolean): SensorRuntimeState {
         val motionActive = if (needsPhoneMotion) {
-            phoneMotion.start()
+            val integrity=phoneMotion.start()
+            val attitude=vesselAttitude.start()
+            integrity||attitude
         } else {
             phoneMotion.stop()
+            vesselAttitude.stop()
             false
         }
         val headingActive = if (needsPhoneHeading) {
@@ -37,9 +45,10 @@ class SensorRuntime @Inject constructor(
             phoneHeading.stop()
             false
         }
-        return SensorRuntimeState(motionActive, headingActive)
+        val pressureActive=if(needsPhonePressure)phonePressure.start() else{phonePressure.stop();false}
+        return SensorRuntimeState(motionActive, headingActive, pressureActive)
     }
 
     @Synchronized
-    fun stop(): SensorRuntimeState = reconcile(false, false)
+    fun stop(): SensorRuntimeState = reconcile(false, false, false)
 }

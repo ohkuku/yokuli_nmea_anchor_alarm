@@ -3,10 +3,13 @@ package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.FixTrust
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.model.HeadingSource
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.location.PositionIntegrityFilter
 import com.yokuli.anchorwatch.location.PositionIntegrityResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,6 +51,58 @@ class PositionIntegrityFilterTest {
         val result=PositionIntegrityFilter().evaluate(fix(0.0,0).copy(horizontalAccuracyMeters=null,hdop=null)) as PositionIntegrityResult.Accepted
         assertEquals(FixTrust.DEGRADED,result.fixes.single().trust)
         assertEquals("QUALITY_NOT_REPORTED",result.fixes.single().reason)
+    }
+
+    @Test fun heldNmeaQualityRemainsDiagnosticButCannotMasqueradeAsFreshEvidence() {
+        val result=PositionIntegrityFilter().evaluate(fix(0.0,10_000).copy(
+            positionProvider=PositionProvider.NMEA,
+            hdop=.8,
+            fixQuality=1,
+            satellites=12,
+            hdopReceivedElapsedRealtime=1_000,
+            fixQualityReceivedElapsedRealtime=1_000,
+            satellitesReceivedElapsedRealtime=1_000,
+            horizontalAccuracyMeters=null,
+        )) as PositionIntegrityResult.Accepted
+        assertNull(result.fixes.single().fix.hdop)
+        assertNull(result.fixes.single().fix.fixQuality)
+        assertNull(result.fixes.single().fix.satellites)
+        assertEquals(FixTrust.DEGRADED,result.fixes.single().trust)
+    }
+
+    @Test fun freshNmeaQualityStillParticipatesInIntegrity() {
+        val result=PositionIntegrityFilter().evaluate(fix(0.0,10_000).copy(
+            positionProvider=PositionProvider.NMEA,
+            hdop=.8,
+            fixQuality=1,
+            satellites=12,
+            hdopReceivedElapsedRealtime=9_500,
+            fixQualityReceivedElapsedRealtime=9_500,
+            satellitesReceivedElapsedRealtime=9_500,
+            horizontalAccuracyMeters=2.5,
+        )) as PositionIntegrityResult.Accepted
+        assertEquals(.8,result.fixes.single().fix.hdop!!,.001)
+        assertEquals(FixTrust.TRUSTED,result.fixes.single().trust)
+    }
+
+    @Test fun heldCourseAndHeadingRemainDiagnosticButCannotBecomeCurrentAcceptedEvidence() {
+        val result=PositionIntegrityFilter().evaluate(fix(0.0,20_001).copy(
+            positionProvider=PositionProvider.NMEA,
+            sogKnots=2.2,
+            cogTrueDegrees=91.0,
+            headingTrueDegrees=88.0,
+            sogReceivedElapsedRealtime=10_000,
+            cogReceivedElapsedRealtime=10_000,
+            headingReceivedElapsedRealtime=10_000,
+            headingSource=HeadingSource.NMEA_PHYSICAL,
+            headingQuality=HeadingQuality.STABLE,
+        )) as PositionIntegrityResult.Accepted
+        val accepted=result.fixes.single().fix
+        assertNull(accepted.sogKnots)
+        assertNull(accepted.cogTrueDegrees)
+        assertNull(accepted.headingTrueDegrees)
+        assertEquals(HeadingSource.NONE,accepted.headingSource)
+        assertEquals(HeadingQuality.UNAVAILABLE,accepted.headingQuality)
     }
 
     private fun fix(northMeters:Double,time:Long):NavigationFix {

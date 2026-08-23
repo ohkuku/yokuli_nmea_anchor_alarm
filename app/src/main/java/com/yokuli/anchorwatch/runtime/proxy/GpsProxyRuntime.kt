@@ -4,12 +4,14 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import com.yokuli.anchorwatch.data.NavigationRepository
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.location.GlobalMockLocationManager
 import com.yokuli.anchorwatch.location.MockGpsPolicy
 import com.yokuli.anchorwatch.location.MockGpsState
+import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import com.yokuli.anchorwatch.runtime.RuntimeOwner
 import com.yokuli.anchorwatch.runtime.RuntimeRequirement
 import com.yokuli.anchorwatch.runtime.RuntimeResourceManager
@@ -19,6 +21,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -35,6 +40,7 @@ data class ProxyRuntimeResult(
 class GpsProxyRuntime @Inject constructor(
     @ApplicationContext private val context:Context,
     private val manager:GlobalMockLocationManager,
+    private val navigation:NavigationRepository,
     private val settings:SettingsRepository,
     private val resources:RuntimeResourceManager,
     private val nmeaRuntime:NmeaRuntime,
@@ -51,16 +57,27 @@ class GpsProxyRuntime @Inject constructor(
             manager.stop("Select NMEA GPS before enabling the global proxy.")
             return@withLock ProxyRuntimeResult("Android GPS proxy not active","Select NMEA GPS before enabling the global proxy.",true)
         }
+        val now=clock.elapsedRealtime()
+        val liveFix=navigation.fix.value
+        if(!NmeaSourceSelectionPolicy.isUsablePosition(navigation.connectionState.value,liveFix,navigation.connectionStartedElapsed.value,now,current.gpsLossSeconds*1_000L)){
+            return@withLock fail(
+                "GPS proxy was not enabled because no fresh, acceptable NMEA position was available. Android GPS is using its normal source.",
+                "Connect the NMEA server and wait for a fresh valid position with acceptable quality before enabling the global proxy.",
+            )
+        }
         nmeaRuntime.ensureConnected(current.profile)
         resources.set(RuntimeOwner.GPS_PROXY,RuntimeRequirement(needsNmeaTransport=true,needsWakeLock=true,needsWifiLock=current.keepWifiAwake))
-        policy=MockGpsPolicy(current.gpsLossSeconds*1_000L,current.mockHz).apply{start(clock.elapsedRealtime())}
+        policy=MockGpsPolicy(current.gpsLossSeconds*1_000L,current.mockHz).apply{start(now)}
         if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
             return@withLock fail("GPS proxy was not enabled. Fine location permission is required; Android GPS is using its normal source.","Grant Fine location permission before enabling GPS proxy.")
         }
         if(!ensureLocationForeground()){
             return@withLock fail("GPS proxy was not enabled. Android did not allow a location foreground service; Android GPS is using its normal source.","Open the app and grant location permission before enabling GPS proxy.")
         }
-        val result=manager.start(current.enhancedMock)
+        val result=withTimeoutOrNull(10_000){manager.start(current.enhancedMock)}?:return@withLock fail(
+            "GPS proxy startup timed out. Android GPS was restored to its normal source.",
+            "Android did not confirm mock-location startup within 10 seconds. Check Developer Options, then try again.",
+        )
         val enabled=result.state==MockGpsState.ACTIVE
         settings.setMockEnabled(enabled)
         if(!enabled)policy=null
@@ -76,7 +93,29 @@ class GpsProxyRuntime @Inject constructor(
     suspend fun restoreIfRequested(ensureLocationForeground:()->Boolean):ProxyRuntimeResult?{
         val current=settings.settings.first()
         return when{
-            current.mockEnabled&&current.gpsDataSource==GpsDataSource.NMEA->start(ensureLocationForeground)
+            current.mockEnabled&&current.gpsDataSource==GpsDataSource.NMEA->{
+                // Process restore starts from normal Android location. Reclaim
+                // the saved upstream first and wait for proof from this new
+                // connection before re-entering mock mode; otherwise a normal
+                // cold start would permanently clear a previously valid proxy
+                // merely because NMEA had not produced its first sentence yet.
+                manager.stop("Waiting for a fresh NMEA position before restoring the global GPS proxy.")
+                resources.set(RuntimeOwner.GPS_PROXY,RuntimeRequirement(needsNmeaTransport=true,needsWakeLock=true,needsWifiLock=current.keepWifiAwake))
+                val ready=try{
+                    nmeaRuntime.ensureConnected(current.profile)
+                    withTimeoutOrNull(15_000){
+                        combine(navigation.connectionState,navigation.fix,navigation.connectionStartedElapsed){connection,fix,started->
+                            NmeaSourceSelectionPolicy.isUsablePosition(connection,fix,started,clock.elapsedRealtime(),current.gpsLossSeconds*1_000L)
+                        }.first{it}
+                    }==true
+                }catch(cancelled:CancellationException){throw cancelled}
+                catch(_:Exception){false}
+                if(ready)start(ensureLocationForeground)
+                else fail(
+                    "The saved GPS proxy was not restored because its NMEA source did not become ready. Android GPS is using its normal source.",
+                    "The saved global GPS proxy stayed off because no fresh acceptable NMEA position arrived within 15 seconds. Reconnect NMEA, then enable the proxy again.",
+                )
+            }
             current.mockEnabled->{settings.setMockEnabled(false);manager.stop("A non-NMEA App GPS source is selected — global NMEA proxy disabled.");null}
             else->null
         }

@@ -36,4 +36,6 @@ private fun SavedAnchorageEntity.toApproachReference() = SavedAnchorageReference
     sourceSessionId = sourceSessionId,
     updatedAt = updatedAt,
     lastVisitedAt = lastVisitedAt,
+    coordinateSource = coordinateSource,
+    coordinateUncertaintyMeters = coordinateUncertaintyMeters,
 )

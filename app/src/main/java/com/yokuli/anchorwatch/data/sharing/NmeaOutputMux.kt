@@ -11,6 +11,8 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
+import com.yokuli.anchorwatch.domain.vessel.VesselAttitude
+import com.yokuli.anchorwatch.domain.vessel.VesselMotion
 
 @Singleton
 class NmeaOutputMux @Inject constructor() {
@@ -56,6 +58,29 @@ class NmeaOutputMux @Inject constructor() {
             add(sentence("GNGGA,$time,$lat,$ns,$lon,$ew,1,$satellites,${hdop?.let{f(it,1)}.orEmpty()},$altitude,M,,M,,"))
             if (sog != null && cog != null) add(sentence("GNVTG,${f(cog, 2)},T,,M,${f(sog, 2)},N,${f(sog * 1.852, 2)},K,A"))
         }
+    }
+
+    fun phonePosition(fix:NavigationFix,nowElapsed:Long):List<String>{
+        val position=acceptedPosition(fix,nowElapsed)
+        if(position.isEmpty())return emptyList()
+        val instant=Instant.ofEpochMilli(fix.timestampUtcMillis?:System.currentTimeMillis()).atZone(ZoneOffset.UTC)
+        val time=instant.format(DateTimeFormatter.ofPattern("HHmmss.SS",Locale.US))
+        val date=instant.toLocalDate()
+        return position+sentence("GNZDA,$time,${date.dayOfMonth.toString().padStart(2,'0')},${date.monthValue.toString().padStart(2,'0')},${date.year},00,00")
+    }
+
+    fun phoneHeading(trueHeadingDegrees:Double):String=sentence("IIHDT,${f(normalizeDegrees(trueHeadingDegrees),2)},T")
+    fun phoneRateOfTurn(degreesPerMinute:Double):String=sentence("IIROT,${f(degreesPerMinute.coerceIn(-720.0,720.0),2)},A")
+    fun phoneXdr(attitude:VesselAttitude?,pressureHpa:Double?):String?{
+        val groups=buildList{
+            attitude?.let{add("A,${f(it.heelDegrees,2)},D,PHONE_HEEL");add("A,${f(it.pitchDegrees,2)},D,PHONE_PITCH")}
+            pressureHpa?.takeIf{it in 800.0..1_200.0}?.let{add("P,${f(it/1_000.0,5)},B,PHONE_BARO")}
+        }
+        return groups.takeIf{it.isNotEmpty()}?.let{sentence("IIXDR,${it.joinToString(",")}")}
+    }
+    fun phoneProprietary(attitude:VesselAttitude?,motion:VesselMotion?,headingDegrees:Double?,pressureHpa:Double?):String?{
+        if(attitude==null&&motion==null&&headingDegrees==null&&pressureHpa==null)return null
+        return sentence("PYOK,SENS,${headingDegrees?.let{f(normalizeDegrees(it),2)}.orEmpty()},${attitude?.heelDegrees?.let{f(it,2)}.orEmpty()},${attitude?.pitchDegrees?.let{f(it,2)}.orEmpty()},${attitude?.yawRateDegreesPerSecond?.let{f(it,2)}.orEmpty()},${motion?.score?.let{f(it,1)}.orEmpty()},${pressureHpa?.let{f(it,2)}.orEmpty()}")
     }
 
     fun sentenceType(line: String): String? = line.trim().removePrefix("$").substringBefore('*').substringBefore(',')

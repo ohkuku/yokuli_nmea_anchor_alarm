@@ -16,6 +16,7 @@ class NmeaRuntime @Inject constructor(
     private val navigation:NavigationRepository,
     private val resources:RuntimeResourceManager,
 ){
+    val connectionState get()=navigation.connectionState
     /**
      * Claim an already-live user connection before considering a new transport.
      * Restoring a foreground service must not bounce, replace, or synchronously

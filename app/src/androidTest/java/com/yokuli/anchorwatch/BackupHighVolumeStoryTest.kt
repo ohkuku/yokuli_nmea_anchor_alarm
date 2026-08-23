@@ -10,6 +10,9 @@ import com.yokuli.anchorwatch.data.database.DepthSampleEntity
 import com.yokuli.anchorwatch.data.database.SonarSurveyEntity
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
+import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
+import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
+import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -25,7 +28,7 @@ class BackupHighVolumeStoryTest{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
         val anchor=database.anchorDao();val sonar=database.sonarDao();val preferences=SettingsRepository(context);val original=preferences.settings.first()
-        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao())
+        val manager=YokuliBackupManager(context,database,anchor,sonar,preferences,SonarIncrementalGridUpdater(sonar),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao(),database.tripDao(),VesselSettingsRepository(context),OutputSettingsRepository(context),VesselMountCalibrationRepository(context))
         val file=File(context.cacheDir,"500k-${System.nanoTime()}.yokuli-backup")
         try{
             sonar.importSurveys(listOf(SonarSurveyEntity(id=700,name="500k streaming fixture",startedAt=1_700_000_000_000L,endedAt=1_700_500_000_000L,active=false,sampleCount=SAMPLE_COUNT)))

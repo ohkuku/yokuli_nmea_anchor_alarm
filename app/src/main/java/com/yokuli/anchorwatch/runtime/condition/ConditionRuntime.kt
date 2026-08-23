@@ -49,7 +49,7 @@ class ConditionRuntime @Inject constructor(
             shiftEngine.restore(current.windBaselineDirectionDegrees,current.windBaselineEstablishedAt,current.windBaselineSource?.let{runCatching{TrueWindDirectionSource.valueOf(it)}.getOrNull()})
         }
         val config=current.conditionConfig()
-        if(current.paused){resources.release(RuntimeOwner.CONDITION_MONITOR);_state.value=ConditionRuntimeSnapshot(current.id,true,config,DepthGuardSnapshot(DepthGuardStatus.PAUSED),WindSpeedGuardSnapshot(WindSpeedGuardStatus.PAUSED),WindShiftGuardSnapshot(WindShiftGuardStatus.PAUSED,current.windBaselineDirectionDegrees,current.windBaselineEstablishedAt,current.windBaselineSource?.let{runCatching{TrueWindDirectionSource.valueOf(it)}.getOrNull()}));return}
+        if(current.paused){releaseResources();_state.value=ConditionRuntimeSnapshot(current.id,true,config,DepthGuardSnapshot(DepthGuardStatus.PAUSED),WindSpeedGuardSnapshot(WindSpeedGuardStatus.PAUSED),WindShiftGuardSnapshot(WindShiftGuardStatus.PAUSED,current.windBaselineDirectionDegrees,current.windBaselineEstablishedAt,current.windBaselineSource?.let{runCatching{TrueWindDirectionSource.valueOf(it)}.getOrNull()}));return}
         if(changed||resumed||_state.value.config!=config)setResources(config,current.positionSource=="DEMO")
         _state.value=if(changed||resumed)ConditionRuntimeSnapshot(
             activeSessionId=current.id,paused=false,config=config,
@@ -67,7 +67,28 @@ class ConditionRuntime @Inject constructor(
         event("CONDITION_SETTINGS_CHANGED","depth=${next.depthGuardEnabled};shallow=${next.shallowDepthAlarmMeters};deep=${next.deepDepthAlarmMeters};wind=${next.windGuardEnabled};warning=${next.windWarningKnots};alarm=${next.windAlarmKnots};shift=${next.windShiftEnabled};shiftDegrees=${next.windShiftThresholdDegrees};apparentFallback=${next.windAllowApparentFallback}")
         event(if(next.depthGuardEnabled&&!previous.depthGuardEnabled)"DEPTH_GUARD_ENABLED" else if(!next.depthGuardEnabled&&previous.depthGuardEnabled)"DEPTH_GUARD_DISABLED" else "DEPTH_GUARD_UPDATED")
         event(if((next.windGuardEnabled||next.windShiftEnabled)&&!(previous.windGuardEnabled||previous.windShiftEnabled))"WIND_GUARD_ENABLED" else if(!(next.windGuardEnabled||next.windShiftEnabled)&&(previous.windGuardEnabled||previous.windShiftEnabled))"WIND_GUARD_DISABLED" else "WIND_GUARD_UPDATED")
-        setResources(next,updated.positionSource=="DEMO");_state.value=_state.value.copy(config=next)
+        if(updated.paused){
+            // Editing the remembered configuration of a paused anchor session must
+            // not silently restart NMEA, Wi-Fi locks or condition alarms. Resume is
+            // the single transition that reacquires sensors and fresh samples.
+            releaseResources()
+            _state.value=ConditionRuntimeSnapshot(
+                activeSessionId=updated.id,
+                paused=true,
+                config=next,
+                depth=DepthGuardSnapshot(DepthGuardStatus.PAUSED),
+                windSpeed=WindSpeedGuardSnapshot(WindSpeedGuardStatus.PAUSED),
+                windShift=WindShiftGuardSnapshot(
+                    WindShiftGuardStatus.PAUSED,
+                    updated.windBaselineDirectionDegrees,
+                    updated.windBaselineEstablishedAt,
+                    updated.windBaselineSource?.let{runCatching{TrueWindDirectionSource.valueOf(it)}.getOrNull()},
+                ),
+            )
+        }else{
+            setResources(next,updated.positionSource=="DEMO")
+            _state.value=_state.value.copy(config=next)
+        }
     }
 
     suspend fun resetWindBaseline(){
@@ -77,9 +98,9 @@ class ConditionRuntime @Inject constructor(
     suspend fun snooze(until:Long){
         val memory=session?:return;val current=dao.session(memory.id)?.withConditionFieldsFrom(memory)?:memory;val snapshot=_state.value
         val updated=current.copy(
-            depthAlarmSnoozedUntil=until.takeIf{snapshot.depth.alarmActive}?:current.depthAlarmSnoozedUntil,
-            windAlarmSnoozedUntil=until.takeIf{snapshot.windSpeed.alarmActive}?:current.windAlarmSnoozedUntil,
-            windShiftAlarmSnoozedUntil=until.takeIf{snapshot.windShift.alarmActive}?:current.windShiftAlarmSnoozedUntil,
+            depthAlarmSnoozedUntil=until.takeIf{snapshot.depth.alarmActive||snapshot.depth.dataUnavailable}?:current.depthAlarmSnoozedUntil,
+            windAlarmSnoozedUntil=until.takeIf{snapshot.windSpeed.alarmActive||snapshot.windSpeed.dataUnavailable}?:current.windAlarmSnoozedUntil,
+            windShiftAlarmSnoozedUntil=until.takeIf{snapshot.windShift.alarmActive||snapshot.windShift.dataUnavailable}?:current.windShiftAlarmSnoozedUntil,
         );session=updated;dao.updateSession(updated)
     }
 
@@ -121,9 +142,9 @@ class ConditionRuntime @Inject constructor(
 
     fun currentSession()=session
     fun audibleSources(nowWall:Long):Set<ConditionAlarmSource>{val active=session?:return emptySet();val value=_state.value;return buildSet{
-        if(value.depth.alarmActive&&(active.depthAlarmSnoozedUntil==null||active.depthAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.DEPTH)
-        if(value.windSpeed.alarmActive&&(active.windAlarmSnoozedUntil==null||active.windAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.WIND_SPEED)
-        if(value.windShift.alarmActive&&(active.windShiftAlarmSnoozedUntil==null||active.windShiftAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.WIND_SHIFT)
+        if((value.depth.alarmActive||value.depth.dataUnavailable)&&(active.depthAlarmSnoozedUntil==null||active.depthAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.DEPTH)
+        if((value.windSpeed.alarmActive||value.windSpeed.dataUnavailable)&&(active.windAlarmSnoozedUntil==null||active.windAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.WIND_SPEED)
+        if((value.windShift.alarmActive||value.windShift.dataUnavailable)&&(active.windShiftAlarmSnoozedUntil==null||active.windShiftAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.WIND_SHIFT)
     }}
 
     private suspend fun transitionEvents(current:AnchorSessionEntity,before:ConditionRuntimeSnapshot,depth:DepthGuardSnapshot,wind:WindSpeedGuardSnapshot,shift:WindShiftGuardSnapshot):AnchorSessionEntity{
@@ -151,10 +172,11 @@ class ConditionRuntime @Inject constructor(
     }
     private suspend fun event(type:String,detail:String=""){session?.let{dao.insertEvent(AlarmEventEntity(sessionId=it.id,timestamp=wallClock.currentTimeMillis(),type=type,detail=detail))}}
     private suspend fun setResources(config:ConditionGuardConfig,demo:Boolean){
-        if(!config.depthGuardEnabled&&!config.windGuardEnabled&&!config.windShiftEnabled){resources.release(RuntimeOwner.CONDITION_MONITOR);return}
+        if(!config.depthGuardEnabled&&!config.windGuardEnabled&&!config.windShiftEnabled){releaseResources();return}
         val value=settings.settings.first();resources.set(RuntimeOwner.CONDITION_MONITOR,RuntimeRequirement(needsNmeaTransport=!demo,needsWakeLock=true,needsWifiLock=!demo&&value.keepWifiAwake));if(!demo)nmeaRuntime.ensureConnected(value.profile)
     }
-    private fun release(){session=null;depthEngine.reset();windEngine.reset();shiftEngine.reset();acceptSamplesReceivedAfter=0L;acceptDirectionReceivedAfter=0L;resources.release(RuntimeOwner.CONDITION_MONITOR);_state.value=ConditionRuntimeSnapshot()}
+    private fun releaseResources(){resources.release(RuntimeOwner.CONDITION_MONITOR);nmeaRuntime.releaseIfUnowned()}
+    private fun release(){session=null;depthEngine.reset();windEngine.reset();shiftEngine.reset();acceptSamplesReceivedAfter=0L;acceptDirectionReceivedAfter=0L;releaseResources();_state.value=ConditionRuntimeSnapshot()}
     private fun AnchorSessionEntity.conditionConfig()=ConditionGuardConfig(depthGuardEnabled,shallowDepthAlarmMeters,deepDepthAlarmMeters,windGuardEnabled,windWarningKnots,windAlarmKnots,windShiftEnabled,windShiftThresholdDegrees,windAllowApparentFallback).validated()
     private fun AnchorSessionEntity.withConditionFieldsFrom(value:AnchorSessionEntity)=copy(
         depthGuardEnabled=value.depthGuardEnabled,

@@ -14,6 +14,7 @@ import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionReference
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDistanceFormatter
 import com.yokuli.anchorwatch.domain.anchorage.ApproachPhase
 import com.yokuli.anchorwatch.domain.anchorage.SavedAnchorageReference
+import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -95,6 +96,11 @@ class AnchorageClusterRadiusTest {
     @Test fun missingSavedRadiusUsesFortyMetresAndIsMarkedEstimated() {
         val cluster = AnchorageClusterer.cluster(listOf(reference(1, radiusMeters = null))).single()
         assertEquals(40.0, cluster.radiusMeters, .01)
+        assertTrue(cluster.radiusEstimated)
+    }
+
+    @Test fun oneMissingRadiusMakesMixedClusterPartiallyEstimated() {
+        val cluster=AnchorageClusterer.cluster(listOf(reference(1,radiusMeters=50.0),reference(2,eastMeters=30.0,radiusMeters=null))).single()
         assertTrue(cluster.radiusEstimated)
     }
 }
@@ -204,6 +210,17 @@ class ApproachDirectionPolicyTest {
     @Test fun circularRelativeBearingUsesTheShortestAngle() {
         val value = ApproachDirectionPolicy.resolve(now, 1.0, 359.0, 9_000L, null, null, null, null, false)
         assertEquals(2.0, value.relativeBearingDegrees, .001)
+    }
+
+    @Test fun vesselModeUsesFreshInstrumentHeadingWithoutAnNmeaGpsFix() {
+        assertTrue(ApproachDirectionPolicy.vesselModeAvailable(NmeaConnectionState.CONNECTED_NO_FIX, true, false))
+        assertTrue(ApproachDirectionPolicy.vesselModeAvailable(NmeaConnectionState.STALE, true, false))
+    }
+
+    @Test fun vesselModeRequiresRealTrafficAndFreshDirectionEvidence() {
+        assertFalse(ApproachDirectionPolicy.vesselModeAvailable(NmeaConnectionState.CONNECTED_NO_DATA, true, false))
+        assertFalse(ApproachDirectionPolicy.vesselModeAvailable(NmeaConnectionState.CONNECTED_NO_FIX, false, false))
+        assertTrue(ApproachDirectionPolicy.vesselModeAvailable(NmeaConnectionState.CONNECTED, false, true))
     }
 }
 

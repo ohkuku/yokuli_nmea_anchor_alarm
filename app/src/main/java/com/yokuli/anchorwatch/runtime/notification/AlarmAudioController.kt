@@ -28,21 +28,24 @@ class AlarmAudioController @Inject constructor(@ApplicationContext private val c
     private val vibrator=context.getSystemService(Vibrator::class.java)
     private var player:MediaPlayer?=null
     private var focus:AudioFocusRequest?=null
+    private var playingSelection:Pair<AlarmSound,String?>?=null
 
     @Synchronized fun start(sound:AlarmSound,customUri:String?):AlarmPlayback{
         val volume=audio.getStreamVolume(AudioManager.STREAM_ALARM)
-        if(player?.isPlaying==true)return AlarmPlayback(true,volume)
+        val requested=sound to customUri.takeIf{sound==AlarmSound.CUSTOM}
+        if(player?.isPlaying==true&&playingSelection==requested)return AlarmPlayback(true,volume)
         stop()
         val attributes=AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
         focus=AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE).setAudioAttributes(attributes).setAcceptsDelayedFocusGain(false).build().also(audio::requestAudioFocus)
         val builtIn=anchorAlarmUri();val selected=if(sound==AlarmSound.CUSTOM)customUri?.let{runCatching{Uri.parse(it)}.getOrNull()}else builtIn
         val started=play(selected)||play(builtIn)||play(android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI)
-        if(started)vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0,800,400),0))
+        if(started){playingSelection=requested;vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0,800,400),0))}
         return AlarmPlayback(started,volume)
     }
 
     @Synchronized fun stop(){
         val current=player;player=null
+        playingSelection=null
         runCatching{if(current?.isPlaying==true)current.stop()};runCatching{current?.reset()};runCatching{current?.release()}
         focus?.let{runCatching{audio.abandonAudioFocusRequest(it)}};focus=null;vibrator.cancel()
     }

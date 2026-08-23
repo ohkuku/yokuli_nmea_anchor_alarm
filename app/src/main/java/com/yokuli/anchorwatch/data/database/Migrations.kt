@@ -178,3 +178,48 @@ object Migration12To13:Migration(12,13){
         db.execSQL("ALTER TABLE saved_anchorages ADD COLUMN coordinateUncertaintyMeters REAL")
     }
 }
+
+/** Persists whether a sounding reused the last real DPT/DBT and exactly how old it was. */
+object Migration13To14:Migration(13,14){
+    override fun migrate(db:SupportSQLiteDatabase){
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateTrackDiameterMeters REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateFittedRadiusMeters REAL")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateMaximumRodeMeters REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateGpsMarginMeters REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateRadialObservable INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN candidateObservabilityReason TEXT NOT NULL DEFAULT 'NO_USABLE_CIRCLE_FIT'")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN depthHeld INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN depthAgeMillis INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE depth_samples ADD COLUMN depthSourceElapsedRealtime INTEGER")
+        db.execSQL("UPDATE depth_samples SET depthSourceElapsedRealtime=sourceElapsedRealtime WHERE depthSourceElapsedRealtime IS NULL")
+    }
+}
+
+/** Adds Trip Watch persistence without changing the Anchor safety tables. */
+object Migration14To15:Migration(14,15){
+ override fun migrate(db:SupportSQLiteDatabase){
+  db.execSQL("CREATE TABLE IF NOT EXISTS `trip_sessions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `active` INTEGER NOT NULL, `paused` INTEGER NOT NULL, `accumulatedPausedMillis` INTEGER NOT NULL, `pausedAt` INTEGER, `boatLengthMeters` REAL, `draftMeters` REAL, `positionPreference` TEXT NOT NULL, `headingPreference` TEXT NOT NULL, `phoneMotionEnabled` INTEGER NOT NULL, `mountCalibrationVersion` INTEGER, `motionAlgorithmVersion` TEXT NOT NULL, `sampleCount` INTEGER NOT NULL, `eventCount` INTEGER NOT NULL, `waypointCount` INTEGER NOT NULL, `droppedSampleCount` INTEGER NOT NULL, `distanceMeters` REAL NOT NULL, `movingDurationMillis` INTEGER NOT NULL, `maxSogKnots` REAL, `maxAbsHeelDegrees` REAL, `minDepthMeters` REAL, `minUkcMeters` REAL, `nmeaWasActiveAtStart` INTEGER NOT NULL, `restoredAfterProcessDeath` INTEGER NOT NULL)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_sessions_startedAt` ON `trip_sessions` (`startedAt`)");db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_sessions_endedAt` ON `trip_sessions` (`endedAt`)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS `trip_samples` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL, `longitude` REAL, `positionSource` TEXT NOT NULL, `positionQuality` TEXT NOT NULL, `positionAgeMillis` INTEGER, `sogKnots` REAL, `cogTrueDegrees` REAL, `headingTrueDegrees` REAL, `headingSource` TEXT NOT NULL, `headingAgeMillis` INTEGER, `depthMeters` REAL, `depthSource` TEXT NOT NULL, `depthAgeMillis` INTEGER, `speedThroughWaterKnots` REAL, `stwSource` TEXT, `stwAgeMillis` INTEGER, `trueWindSpeedKnots` REAL, `trueWindDirectionDegrees` REAL, `trueWindAngleDegrees` REAL, `apparentWindSpeedKnots` REAL, `apparentWindAngleDegrees` REAL, `windSource` TEXT, `windAgeMillis` INTEGER, `heelDegrees` REAL, `pitchDegrees` REAL, `rollRateDegPerSec` REAL, `pitchRateDegPerSec` REAL, `yawRateDegPerSec` REAL, `motionScore` REAL, `rollPeriodSeconds` REAL, `rollPeriodConfidence` TEXT, `attitudeAgeMillis` INTEGER, `pressureHpa` REAL, `pressureAgeMillis` INTEGER, `ukcMeters` REAL, `sourceFlags` INTEGER NOT NULL, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_samples_tripId` ON `trip_samples` (`tripId`)");db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_samples_tripId_timestamp` ON `trip_samples` (`tripId`,`timestamp`)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS `trip_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `type` TEXT NOT NULL, `severity` TEXT NOT NULL, `latitude` REAL, `longitude` REAL, `detailJson` TEXT NOT NULL, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_events_tripId` ON `trip_events` (`tripId`)");db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_events_tripId_timestamp` ON `trip_events` (`tripId`,`timestamp`)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS `trip_waypoints` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `name` TEXT NOT NULL, `note` TEXT NOT NULL, `type` TEXT NOT NULL, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_waypoints_tripId` ON `trip_waypoints` (`tripId`)");db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_waypoints_tripId_timestamp` ON `trip_waypoints` (`tripId`,`timestamp`)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS `anchor_telemetry_samples` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `depthMeters` REAL, `depthAgeMillis` INTEGER, `trueWindSpeedKnots` REAL, `trueWindDirectionDegrees` REAL, `windAgeMillis` INTEGER, `heelDegrees` REAL, `pitchDegrees` REAL, `rollRateDegPerSec` REAL, `pitchRateDegPerSec` REAL, `yawRateDegPerSec` REAL, `motionScore` REAL, `rollPeriodSeconds` REAL, `rollPeriodConfidence` TEXT, `pressureHpa` REAL, FOREIGN KEY(`sessionId`) REFERENCES `anchor_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_anchor_telemetry_samples_sessionId` ON `anchor_telemetry_samples` (`sessionId`)");db.execSQL("CREATE INDEX IF NOT EXISTS `index_anchor_telemetry_samples_sessionId_timestamp` ON `anchor_telemetry_samples` (`sessionId`,`timestamp`)")
+ }
+}
+
+/** Trip Watch V2: immutable waypoint snapshots, custom NMEA samples and durable dashboards. */
+object Migration15To16:Migration(15,16){
+ override fun migrate(db:SupportSQLiteDatabase){
+  listOf("positionSource TEXT","sogKnots REAL","cogTrueDegrees REAL","headingTrueDegrees REAL","speedThroughWaterKnots REAL","depthMeters REAL","trueWindSpeedKnots REAL","trueWindAngleDegrees REAL","apparentWindSpeedKnots REAL","apparentWindAngleDegrees REAL","heelDegrees REAL","pitchDegrees REAL","pressureHpa REAL").forEach{column->db.execSQL("ALTER TABLE trip_waypoints ADD COLUMN $column")}
+  db.execSQL("CREATE TABLE IF NOT EXISTS `trip_custom_metric_samples` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `fieldId` TEXT NOT NULL, `displayName` TEXT NOT NULL, `numericValue` REAL, `textValue` TEXT, `unit` TEXT, `sentenceType` TEXT NOT NULL, `fieldAgeMillis` INTEGER NOT NULL, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_custom_metric_samples_tripId` ON `trip_custom_metric_samples` (`tripId`)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_custom_metric_samples_tripId_timestamp` ON `trip_custom_metric_samples` (`tripId`,`timestamp`)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_custom_metric_samples_tripId_fieldId_timestamp` ON `trip_custom_metric_samples` (`tripId`,`fieldId`,`timestamp`)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS `trip_dashboards` (`id` TEXT NOT NULL, `preset` TEXT NOT NULL, `title` TEXT NOT NULL, `layoutJson` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+  db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_dashboards_preset` ON `trip_dashboards` (`preset`)")
+ }
+}

@@ -44,7 +44,7 @@ fun AnchorApp(vm:MainViewModel){
             return@CompositionLocalProvider
         }
         val destinations=listOf(
-            Destination(tr("Watch","锚警"),Icons.Default.Map),
+            Destination(tr("Watch","监控"),Icons.Default.Map),
             Destination(tr("Data","数据"),Icons.Default.DataObject),
             Destination(tr("History","历史"),Icons.AutoMirrored.Filled.List),
             Destination(tr("Settings","设置"),Icons.Default.Settings),

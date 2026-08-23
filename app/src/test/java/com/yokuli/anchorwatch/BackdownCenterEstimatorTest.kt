@@ -2,6 +2,9 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.domain.anchor.BackdownCenterEstimator
 import com.yokuli.anchorwatch.domain.model.NavigationFix
+import com.yokuli.anchorwatch.domain.model.HeadingSource
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.anchor.AnchorCentreObservabilityReason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -36,6 +39,8 @@ class BackdownCenterEstimatorTest {
     @Test fun gpsOnlyCanResolveAfterFifteenMinutesWithFullGeometry(){
         val estimate=BackdownCenterEstimator().estimate(gpsOnlySwing(900),40.0)!!
         assertEquals(estimate.debugSummary(),com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
+        assertTrue(estimate.debugSummary(),estimate.radialObservable)
+        assertEquals(AnchorCentreObservabilityReason.OBSERVABLE,estimate.observabilityReason)
         assertTrue(kotlin.math.abs(estimate.latitude)<3.0/110_540.0)
         assertTrue(kotlin.math.abs(estimate.longitude)<3.0/111_320.0)
         assertTrue(estimate.angularCoverageDegrees>=200.0)
@@ -50,7 +55,7 @@ class BackdownCenterEstimatorTest {
             val angleDegrees=angles[((index/10)%angles.size)]
             val angle=Math.toRadians(angleDegrees)
             val heading=(angleDegrees+180.0)%360.0
-            BackdownCenterEstimator.Sample(latitude=25.0*kotlin.math.cos(angle)/110_540.0,longitude=25.0*kotlin.math.sin(angle)/111_320.0,timestamp=index*1_000L,hdop=.8,headingTrueDegrees=heading,sogKnots=.15,windDirectionTrueDegrees=(heading+12.0)%360.0,apparentWindAngleDegrees=12.5,trueWindAngleDegrees=12.0,trueWindSpeedKnots=12.0,apparentWindSpeedKnots=12.4)
+            BackdownCenterEstimator.Sample(latitude=25.0*kotlin.math.cos(angle)/110_540.0,longitude=25.0*kotlin.math.sin(angle)/111_320.0,timestamp=index*1_000L,hdop=.8,headingTrueDegrees=heading,sogKnots=.15,windDirectionTrueDegrees=(heading+12.0)%360.0,apparentWindAngleDegrees=12.5,trueWindAngleDegrees=12.0,trueWindSpeedKnots=12.0,apparentWindSpeedKnots=12.4,headingSource=HeadingSource.NMEA_PHYSICAL,headingQuality=HeadingQuality.STABLE)
         }
         val estimate=BackdownCenterEstimator().estimateSamples(stable+swings,40.0)!!
         assertEquals("$estimate",com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
@@ -95,7 +100,9 @@ class BackdownCenterEstimatorTest {
     }
 
     @Test fun rejectsAStationaryTrack(){
-        assertNull(BackdownCenterEstimator().estimate((0..20).map{fix(0.2,time=it*1_000L)}))
+        val estimate=BackdownCenterEstimator().estimate((0..20).map{fix(0.2,time=it*1_000L)},40.0)!!
+        assertTrue(!estimate.radialObservable)
+        assertTrue(estimate.confidence!=com.yokuli.anchorwatch.domain.model.Confidence.HIGH)
     }
 
     @Test fun doesNotGuessFromTooFewSamples(){
@@ -142,5 +149,41 @@ class BackdownCenterEstimatorTest {
         assertEquals(estimate.debugSummary(),com.yokuli.anchorwatch.domain.model.Confidence.HIGH,estimate.confidence)
         assertTrue(kotlin.math.abs(estimate.latitude)<3.0/110_540.0)
         assertTrue(kotlin.math.abs(estimate.longitude)<3.0/111_320.0)
+    }
+
+    private fun localCircle(radius:Double=5.0,lastSecond:Int=1_000,headingSource:HeadingSource=HeadingSource.NONE)=(0..lastSecond).map{second->
+        val angle=2.0*Math.PI*second/120.0
+        val heading=(Math.toDegrees(angle)+180.0)%360.0
+        BackdownCenterEstimator.Sample(latitude=radius*kotlin.math.cos(angle)/110_540.0,longitude=radius*kotlin.math.sin(angle)/111_320.0,timestamp=second*1_000L,hdop=.8,headingTrueDegrees=heading.takeIf{headingSource!=HeadingSource.NONE},headingSource=headingSource,headingQuality=if(headingSource==HeadingSource.NONE)HeadingQuality.UNAVAILABLE else HeadingQuality.STABLE,sogKnots=.1)
+    }
+
+    @Test fun fortyMetreRodeRejectsAThousandSamplesOnFiveMetreLocalCircle(){
+        val estimate=BackdownCenterEstimator().estimateSamples(localCircle(),40.0)!!
+        assertTrue(estimate.debugSummary(),!estimate.radialObservable)
+        assertTrue(estimate.observabilityReason in setOf(AnchorCentreObservabilityReason.TRACK_TOO_SMALL,AnchorCentreObservabilityReason.FIT_RADIUS_TOO_SMALL))
+        assertTrue(estimate.confidence!=com.yokuli.anchorwatch.domain.model.Confidence.HIGH)
+    }
+
+    @Test fun perfectPhoneHeadingCannotMakeLocalCircleObservable(){
+        val estimate=BackdownCenterEstimator().estimateSamples(localCircle(headingSource=HeadingSource.PHONE),40.0)!!
+        assertEquals(0,estimate.nmeaPhysicalHeadingEvidenceCount)
+        assertTrue(estimate.phoneHeadingEvidenceCount>0)
+        assertTrue(!estimate.radialObservable)
+        assertTrue(estimate.confidence!=com.yokuli.anchorwatch.domain.model.Confidence.HIGH)
+    }
+
+    @Test fun physicalHeadingAndWindCannotBypassRadialGate(){
+        val samples=localCircle(headingSource=HeadingSource.NMEA_PHYSICAL).map{sample->sample.copy(windDirectionTrueDegrees=((sample.headingTrueDegrees?:0.0)+12.0)%360.0,trueWindAngleDegrees=12.0,apparentWindAngleDegrees=12.0,trueWindSpeedKnots=14.0,apparentWindSpeedKnots=14.0)}
+        val estimate=BackdownCenterEstimator().estimateSamples(samples,40.0)!!
+        assertTrue(estimate.nmeaPhysicalHeadingEvidenceCount>0)
+        assertTrue(!estimate.radialObservable)
+        assertTrue(estimate.confidence!=com.yokuli.anchorwatch.domain.model.Confidence.HIGH)
+    }
+
+    @Test fun gpsJitterNeverBecomesObservable(){
+        val samples=(0..1_000).map{second->val north=3.0*kotlin.math.sin(second*.71);val east=3.0*kotlin.math.cos(second*.93);BackdownCenterEstimator.Sample(north/110_540.0,east/111_320.0,second*1_000L,hdop=1.0)}
+        val estimate=BackdownCenterEstimator().estimateSamples(samples,40.0)!!
+        assertTrue(!estimate.radialObservable)
+        assertTrue(estimate.confidence!=com.yokuli.anchorwatch.domain.model.Confidence.HIGH)
     }
 }

@@ -16,6 +16,8 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
+const val DATABASE_SCHEMA_VERSION = 16
+
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -86,6 +88,12 @@ data class AnchorSessionEntity(
     val maxObservedWindSource:String?=null,
     @ColumnInfo(defaultValue = "0") val depthAlarmCount:Int=0,
     @ColumnInfo(defaultValue = "0") val windAlarmCount:Int=0,
+    @ColumnInfo(defaultValue = "0") val candidateTrackDiameterMeters:Double=0.0,
+    val candidateFittedRadiusMeters:Double?=null,
+    @ColumnInfo(defaultValue = "0") val candidateMaximumRodeMeters:Double=0.0,
+    @ColumnInfo(defaultValue = "0") val candidateGpsMarginMeters:Double=0.0,
+    @ColumnInfo(defaultValue = "0") val candidateRadialObservable:Boolean=false,
+    @ColumnInfo(defaultValue = "'NO_USABLE_CIRCLE_FIT'") val candidateObservabilityReason:String="NO_USABLE_CIRCLE_FIT",
 )
 
 @Entity(tableName="saved_anchorages",indices=[Index("updatedAt"),Index("lastVisitedAt")])
@@ -160,6 +168,43 @@ data class AlarmEventEntity(
     val detail: String = "",
 )
 
+@Entity(tableName="trip_sessions",indices=[Index("startedAt"),Index("endedAt")])
+data class TripSessionEntity(
+ @PrimaryKey(autoGenerate=true)val id:Long=0,val name:String,val startedAt:Long,val endedAt:Long?=null,
+ val active:Boolean=true,val paused:Boolean=false,val accumulatedPausedMillis:Long=0,val pausedAt:Long?=null,
+ val boatLengthMeters:Double?,val draftMeters:Double?,val positionPreference:String,val headingPreference:String,
+ val phoneMotionEnabled:Boolean,val mountCalibrationVersion:Int?,val motionAlgorithmVersion:String="MOTION_SCORE_V1",
+ val sampleCount:Long=0,val eventCount:Int=0,val waypointCount:Int=0,val droppedSampleCount:Long=0,
+ val distanceMeters:Double=0.0,val movingDurationMillis:Long=0,val maxSogKnots:Double?=null,val maxAbsHeelDegrees:Double?=null,
+ val minDepthMeters:Double?=null,val minUkcMeters:Double?=null,val nmeaWasActiveAtStart:Boolean=false,val restoredAfterProcessDeath:Boolean=false,
+)
+
+@Entity(tableName="trip_samples",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])
+data class TripSampleEntity(
+ @PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,
+ val latitude:Double?,val longitude:Double?,val positionSource:String,val positionQuality:String,val positionAgeMillis:Long?,
+ val sogKnots:Double?,val cogTrueDegrees:Double?,val headingTrueDegrees:Double?,val headingSource:String,val headingAgeMillis:Long?,
+ val depthMeters:Double?,val depthSource:String,val depthAgeMillis:Long?,val speedThroughWaterKnots:Double?,val stwSource:String?,val stwAgeMillis:Long?,
+ val trueWindSpeedKnots:Double?,val trueWindDirectionDegrees:Double?,val trueWindAngleDegrees:Double?,val apparentWindSpeedKnots:Double?,val apparentWindAngleDegrees:Double?,val windSource:String?,val windAgeMillis:Long?,
+ val heelDegrees:Double?,val pitchDegrees:Double?,val rollRateDegPerSec:Double?,val pitchRateDegPerSec:Double?,val yawRateDegPerSec:Double?,val motionScore:Double?,val rollPeriodSeconds:Double?,val rollPeriodConfidence:String?,val attitudeAgeMillis:Long?,
+ val pressureHpa:Double?,val pressureAgeMillis:Long?,val ukcMeters:Double?,val sourceFlags:Int=0,
+)
+
+@Entity(tableName="trip_events",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])
+data class TripEventEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val type:String,val severity:String,val latitude:Double?=null,val longitude:Double?=null,val detailJson:String="{}")
+
+@Entity(tableName="trip_waypoints",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])
+data class TripWaypointEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val latitude:Double,val longitude:Double,val name:String,val note:String="",val type:String="GENERAL",val positionSource:String?=null,val sogKnots:Double?=null,val cogTrueDegrees:Double?=null,val headingTrueDegrees:Double?=null,val speedThroughWaterKnots:Double?=null,val depthMeters:Double?=null,val trueWindSpeedKnots:Double?=null,val trueWindAngleDegrees:Double?=null,val apparentWindSpeedKnots:Double?=null,val apparentWindAngleDegrees:Double?=null,val heelDegrees:Double?=null,val pitchDegrees:Double?=null,val pressureHpa:Double?=null)
+
+@Entity(tableName="trip_custom_metric_samples",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"]),Index(value=["tripId","fieldId","timestamp"])])
+data class TripCustomMetricSampleEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val fieldId:String,val displayName:String,val numericValue:Double?=null,val textValue:String?=null,val unit:String?=null,val sentenceType:String,val fieldAgeMillis:Long)
+
+@Entity(tableName="trip_dashboards",indices=[Index("preset")])
+data class TripDashboardEntity(@PrimaryKey val id:String,val preset:String,val title:String,val layoutJson:String,val updatedAt:Long)
+
+@Entity(tableName="anchor_telemetry_samples",foreignKeys=[ForeignKey(entity=AnchorSessionEntity::class,parentColumns=["id"],childColumns=["sessionId"],onDelete=ForeignKey.CASCADE)],indices=[Index("sessionId"),Index(value=["sessionId","timestamp"])])
+data class AnchorTelemetrySampleEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val depthMeters:Double?,val depthAgeMillis:Long?,val trueWindSpeedKnots:Double?,val trueWindDirectionDegrees:Double?,val windAgeMillis:Long?,val heelDegrees:Double?,val pitchDegrees:Double?,val rollRateDegPerSec:Double?,val pitchRateDegPerSec:Double?,val yawRateDegPerSec:Double?,val motionScore:Double?,val rollPeriodSeconds:Double?,val rollPeriodConfidence:String?,val pressureHpa:Double?)
+
 @Entity(tableName = "sonar_surveys")
 data class SonarSurveyEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -227,6 +272,9 @@ data class DepthSampleEntity(
     val tideSource: String? = null,
     val tideSourceUpdatedAt: Long? = null,
     @ColumnInfo(defaultValue = "'NOT_REQUESTED'") val tideCorrectionStatus: String = "NOT_REQUESTED",
+    @ColumnInfo(defaultValue = "0") val depthHeld: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val depthAgeMillis: Long = 0L,
+    val depthSourceElapsedRealtime: Long? = null,
 )
 
 @Entity(tableName="tide_prediction_cache",primaryKeys=["stationId","year"])
@@ -303,10 +351,12 @@ interface AnchorDao {
     @Transaction suspend fun deleteCompletedSession(id:Long):Int{deleteCompletedEvents(id);deleteCompletedPoints(id);return deleteCompletedSessionRow(id)}
     @Insert suspend fun insertPoint(value: TrackPointEntity)
     @Query("SELECT * FROM track_points WHERE sessionId=:id ORDER BY timestamp") fun points(id: Long): Flow<List<TrackPointEntity>>
+    @Query("SELECT * FROM track_points WHERE sessionId=:sessionId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun pointsPage(sessionId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<TrackPointEntity>
     @Query("SELECT * FROM (SELECT * FROM track_points WHERE sessionId=:id ORDER BY timestamp DESC,id DESC LIMIT :limit) ORDER BY timestamp,id") fun recentPoints(id:Long,limit:Int):Flow<List<TrackPointEntity>>
     @Insert suspend fun insertEvent(value: AlarmEventEntity)
     @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp") fun events(id: Long): Flow<List<AlarmEventEntity>>
     @Query("SELECT * FROM alarm_events WHERE sessionId=:id ORDER BY timestamp DESC,id DESC LIMIT :limit") suspend fun recentEvents(id:Long,limit:Int):List<AlarmEventEntity>
+    @Query("SELECT * FROM alarm_events WHERE sessionId=:sessionId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun eventsPage(sessionId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<AlarmEventEntity>
     @Query("SELECT * FROM anchor_sessions ORDER BY id") suspend fun allSessionsNow():List<AnchorSessionEntity>
     @Query("SELECT * FROM track_points WHERE id>:afterId ORDER BY id LIMIT :limit") suspend fun allPointsPage(afterId:Long,limit:Int):List<TrackPointEntity>
     @Query("SELECT * FROM track_points WHERE id>:afterId AND id<=:throughId ORDER BY id LIMIT :limit") suspend fun allPointsPageThrough(afterId:Long,throughId:Long,limit:Int):List<TrackPointEntity>
@@ -413,9 +463,73 @@ interface IncidentLogDao {
     @Query("DELETE FROM incident_log") suspend fun clear(): Int
 }
 
+@Dao
+interface TripDao{
+ @Insert suspend fun insertSession(value:TripSessionEntity):Long
+ @Update suspend fun updateSession(value:TripSessionEntity)
+ @Transaction suspend fun insertSessionAndEvent(value:TripSessionEntity,event:TripEventEntity):Long{val id=insertSession(value);insertEvent(event.copy(tripId=id));return id}
+ @Transaction suspend fun updateSessionAndInsertEvent(value:TripSessionEntity,event:TripEventEntity){updateSession(value);insertEvent(event)}
+ @Transaction suspend fun updateSessionAndInsertEventAndWaypoint(value:TripSessionEntity,event:TripEventEntity,waypoint:TripWaypointEntity){updateSession(value);insertEvent(event);insertWaypoint(waypoint)}
+ @Query("SELECT * FROM trip_sessions WHERE active=1 ORDER BY startedAt DESC LIMIT 1") suspend fun active():TripSessionEntity?
+ @Query("SELECT * FROM trip_sessions WHERE active=1 ORDER BY startedAt DESC LIMIT 1") fun activeFlow():Flow<TripSessionEntity?>
+ @Query("SELECT * FROM trip_sessions ORDER BY startedAt DESC") fun sessions():Flow<List<TripSessionEntity>>
+ @Query("SELECT * FROM trip_sessions ORDER BY id") suspend fun allSessionsNow():List<TripSessionEntity>
+ @Query("SELECT * FROM trip_sessions WHERE id=:id LIMIT 1") suspend fun session(id:Long):TripSessionEntity?
+ @Insert suspend fun insertSamples(values:List<TripSampleEntity>)
+ @Insert suspend fun insertEvent(value:TripEventEntity):Long
+ @Insert suspend fun insertWaypoint(value:TripWaypointEntity):Long
+ @Update suspend fun updateWaypoint(value:TripWaypointEntity)
+ @Query("SELECT * FROM trip_waypoints WHERE tripId=:tripId ORDER BY timestamp DESC,id DESC LIMIT 1") suspend fun latestWaypoint(tripId:Long):TripWaypointEntity?
+ @Insert suspend fun insertAnchorTelemetry(values:List<AnchorTelemetrySampleEntity>)
+ @Insert suspend fun insertCustomMetrics(values:List<TripCustomMetricSampleEntity>)
+ @Upsert suspend fun upsertDashboard(value:TripDashboardEntity)
+ @Query("SELECT * FROM trip_dashboards ORDER BY preset,updatedAt,id") fun dashboards():Flow<List<TripDashboardEntity>>
+ @Query("SELECT * FROM trip_dashboards ORDER BY preset,updatedAt,id") suspend fun allDashboardsNow():List<TripDashboardEntity>
+ @Query("SELECT * FROM trip_dashboards WHERE id=:id LIMIT 1") suspend fun dashboard(id:String):TripDashboardEntity?
+ @Query("DELETE FROM trip_dashboards WHERE id=:id") suspend fun deleteDashboard(id:String):Int
+ @Query("UPDATE trip_dashboards SET updatedAt=:sortValue WHERE id=:id") suspend fun updateDashboardSort(id:String,sortValue:Long)
+ @Query("SELECT * FROM trip_samples WHERE tripId=:tripId ORDER BY timestamp,id") suspend fun samples(tripId:Long):List<TripSampleEntity>
+ @Query("SELECT * FROM trip_samples WHERE tripId=:tripId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun samplesPage(tripId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<TripSampleEntity>
+ @Query("SELECT EXISTS(SELECT 1 FROM trip_samples WHERE tripId=:tripId AND (positionSource='BOAT_NMEA' OR headingSource='BOAT_NMEA' OR depthSource='BOAT_NMEA' OR windSource='BOAT_NMEA' OR stwSource='BOAT_NMEA') LIMIT 1)") suspend fun hasNmeaSamples(tripId:Long):Boolean
+ @Query("SELECT EXISTS(SELECT 1 FROM trip_samples WHERE tripId=:tripId AND depthMeters IS NOT NULL LIMIT 1)") suspend fun hasDepthSamples(tripId:Long):Boolean
+ @Query("SELECT EXISTS(SELECT 1 FROM trip_samples WHERE tripId=:tripId AND (trueWindSpeedKnots IS NOT NULL OR apparentWindSpeedKnots IS NOT NULL) LIMIT 1)") suspend fun hasWindSamples(tripId:Long):Boolean
+ @Query("SELECT * FROM trip_events WHERE tripId=:tripId ORDER BY timestamp,id") suspend fun events(tripId:Long):List<TripEventEntity>
+ @Query("SELECT * FROM trip_events WHERE tripId=:tripId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun eventsPage(tripId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<TripEventEntity>
+ @Query("SELECT * FROM trip_waypoints WHERE tripId=:tripId ORDER BY timestamp,id") suspend fun waypoints(tripId:Long):List<TripWaypointEntity>
+ @Query("SELECT * FROM trip_custom_metric_samples WHERE tripId=:tripId ORDER BY timestamp,id") suspend fun customMetrics(tripId:Long):List<TripCustomMetricSampleEntity>
+ @Query("SELECT * FROM trip_waypoints WHERE tripId=:tripId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun waypointsPage(tripId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<TripWaypointEntity>
+ @Query("SELECT * FROM anchor_telemetry_samples WHERE sessionId=:sessionId ORDER BY timestamp,id") suspend fun anchorTelemetry(sessionId:Long):List<AnchorTelemetrySampleEntity>
+ @Query("SELECT * FROM anchor_telemetry_samples WHERE sessionId=:sessionId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun anchorTelemetryPage(sessionId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<AnchorTelemetrySampleEntity>
+ @Query("SELECT COALESCE(MAX(id),0) FROM trip_samples") suspend fun maxSampleId():Long
+ @Query("SELECT COALESCE(MAX(id),0) FROM trip_events") suspend fun maxEventId():Long
+ @Query("SELECT COALESCE(MAX(id),0) FROM trip_waypoints") suspend fun maxWaypointId():Long
+ @Query("SELECT COALESCE(MAX(id),0) FROM trip_custom_metric_samples") suspend fun maxCustomMetricId():Long
+ @Query("SELECT COALESCE(MAX(id),0) FROM anchor_telemetry_samples") suspend fun maxAnchorTelemetryId():Long
+ @Query("SELECT * FROM trip_samples WHERE id>:after AND id<=:through ORDER BY id LIMIT :limit") suspend fun allSamplesPageThrough(after:Long,through:Long,limit:Int):List<TripSampleEntity>
+ @Query("SELECT * FROM trip_events WHERE id>:after AND id<=:through ORDER BY id LIMIT :limit") suspend fun allEventsPageThrough(after:Long,through:Long,limit:Int):List<TripEventEntity>
+ @Query("SELECT * FROM trip_waypoints WHERE id>:after AND id<=:through ORDER BY id LIMIT :limit") suspend fun allWaypointsPageThrough(after:Long,through:Long,limit:Int):List<TripWaypointEntity>
+ @Query("SELECT * FROM trip_custom_metric_samples WHERE id>:after AND id<=:through ORDER BY id LIMIT :limit") suspend fun allCustomMetricsPageThrough(after:Long,through:Long,limit:Int):List<TripCustomMetricSampleEntity>
+ @Query("SELECT * FROM anchor_telemetry_samples WHERE id>:after AND id<=:through ORDER BY id LIMIT :limit") suspend fun allAnchorTelemetryPageThrough(after:Long,through:Long,limit:Int):List<AnchorTelemetrySampleEntity>
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importSessions(values:List<TripSessionEntity>)
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importSamples(values:List<TripSampleEntity>)
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importEvents(values:List<TripEventEntity>)
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importWaypoints(values:List<TripWaypointEntity>)
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importCustomMetrics(values:List<TripCustomMetricSampleEntity>)
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importDashboards(values:List<TripDashboardEntity>)
+ @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun importAnchorTelemetry(values:List<AnchorTelemetrySampleEntity>)
+ @Query("DELETE FROM trip_samples") suspend fun clearSamples()
+ @Query("DELETE FROM trip_events") suspend fun clearEvents()
+ @Query("DELETE FROM trip_waypoints") suspend fun clearWaypoints()
+ @Query("DELETE FROM trip_custom_metric_samples") suspend fun clearCustomMetrics()
+ @Query("DELETE FROM trip_dashboards") suspend fun clearDashboards()
+ @Query("DELETE FROM anchor_telemetry_samples") suspend fun clearAnchorTelemetry()
+ @Query("DELETE FROM trip_sessions") suspend fun clearSessions()
+ @Query("DELETE FROM trip_sessions WHERE id=:tripId AND active=0") suspend fun deleteCompleted(tripId:Long):Int
+}
+
 @Database(
-    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class],
-    version = 13,
+    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class,TripSessionEntity::class,TripSampleEntity::class,TripEventEntity::class,TripWaypointEntity::class,TripCustomMetricSampleEntity::class,TripDashboardEntity::class,AnchorTelemetrySampleEntity::class],
+    version = DATABASE_SCHEMA_VERSION,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -425,4 +539,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun linzDepthCacheDao():LinzDepthCacheDao
     abstract fun tidePredictionCacheDao():TidePredictionCacheDao
     abstract fun incidentLogDao():IncidentLogDao
+    abstract fun tripDao():TripDao
 }

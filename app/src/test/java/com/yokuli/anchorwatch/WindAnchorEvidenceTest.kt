@@ -1,12 +1,14 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.domain.anchor.WindAnchorEvidence
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.model.HeadingSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WindAnchorEvidenceTest {
-    private fun sample(second:Int,heading:Double?=null,twd:Double=192.0,twa:Double?=12.0,awa:Double?=12.5,tws:Double?=12.0,aws:Double?=12.3,sequence:Long?=null)=WindAnchorEvidence.Sample(second*1_000L,25.0/110_540.0,0.0,.1,null,heading,twd,twa,awa,tws,aws,null,sequence)
+    private fun sample(second:Int,heading:Double?=null,twd:Double=192.0,twa:Double?=12.0,awa:Double?=12.5,tws:Double?=12.0,aws:Double?=12.3,sequence:Long?=null)=WindAnchorEvidence.Sample(second*1_000L,25.0/110_540.0,0.0,.1,null,heading,twd,twa,awa,tws,aws,null,sequence,if(heading==null)HeadingSource.NONE else HeadingSource.NMEA_PHYSICAL,if(heading==null)HeadingQuality.UNAVAILABLE else HeadingQuality.STABLE)
 
     @Test fun circularWindowsTreatThreeHundredFiftyNineAndOneDegreeAsNeighbours(){
         val samples=(0..100).map{second->sample(second,heading=if(second%2==0)359.0 else 1.0,twa=null,awa=null,tws=null,aws=null)}
@@ -34,5 +36,13 @@ class WindAnchorEvidenceTest {
         assertTrue(match.consistent)
         val wrong=WindAnchorEvidence.centreMatch(summary,50.0/110_540.0,0.0)
         assertTrue(!wrong.consistent)
+    }
+
+    @Test fun stablePhoneHeadingIsLowerWeightAndNeverPhysicalEvidence(){
+        val samples=(0..100).map{second->WindAnchorEvidence.Sample(second*1_000L,25.0/110_540.0,0.0,.1,null,180.0,null,null,null,null,null,second.toLong(),null,HeadingSource.PHONE,HeadingQuality.STABLE)}
+        val summary=WindAnchorEvidence.summarize(samples)
+        assertTrue(summary.phoneCount>=3)
+        assertTrue(!summary.hasPhysicalEvidence)
+        assertEquals(0,summary.physicalCount)
     }
 }

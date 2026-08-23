@@ -30,4 +30,24 @@ object NmeaSourceSelectionPolicy {
             NmeaSourceAvailability.STALE_FIX
         }
     }
+
+    /**
+     * The single product-level gate for using NMEA as a position source.
+     * A socket that merely says CONNECTED is not enough: the position must
+     * belong to the current connection, still be fresh, and not carry an
+     * explicitly failed fix-quality/HDOP value.
+     */
+    fun isUsablePosition(
+        connectionState: NmeaConnectionState,
+        fix: NavigationFix?,
+        connectionStartedElapsedRealtime: Long?,
+        nowElapsedRealtime: Long,
+        maximumAgeMillis: Long,
+    ): Boolean = availability(
+        connectionState,
+        fix,
+        connectionStartedElapsedRealtime,
+        nowElapsedRealtime,
+        maximumAgeMillis,
+    ) == NmeaSourceAvailability.AVAILABLE && NmeaFixQualityPolicy.allowsContinuation(fix)
 }

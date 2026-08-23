@@ -33,8 +33,9 @@ class NmeaCourseTrustGate {
         }
         val degrees = fix.cogTrueDegrees?.takeIf { it.isFinite() && it in 0.0..360.0 }
         val speed = fix.sogKnots?.takeIf { it.isFinite() && it >= 0.0 }
-        val received = fix.cogReceivedElapsedRealtime ?: fix.receivedElapsedRealtime
-        if (degrees == null || speed == null || nowElapsed - received !in 0L..FRESH_MILLIS) {
+        val cogReceived = fix.cogReceivedElapsedRealtime ?: fix.receivedElapsedRealtime
+        val sogReceived = fix.sogReceivedElapsedRealtime ?: fix.receivedElapsedRealtime
+        if (degrees == null || speed == null || nowElapsed - cogReceived !in 0L..FRESH_MILLIS || nowElapsed - sogReceived !in 0L..FRESH_MILLIS) {
             resetTrustState()
             return null
         }
@@ -58,7 +59,7 @@ class NmeaCourseTrustGate {
 
         // TODO(v1.0.x): Calibrate these thresholds and add a Raymarine RMC/VTG
         // source-switch story using real Lotus 10.6 logs before changing alarm logic.
-        return if (trusted) TrustedNmeaCourse(degrees % 360.0, speed, received) else null
+        return if (trusted) TrustedNmeaCourse(degrees % 360.0, speed, minOf(cogReceived,sogReceived)) else null
     }
 
     fun reset() {

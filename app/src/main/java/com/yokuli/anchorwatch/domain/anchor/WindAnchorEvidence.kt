@@ -1,5 +1,7 @@
 package com.yokuli.anchorwatch.domain.anchor
 
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.model.HeadingSource
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -13,7 +15,7 @@ import kotlin.math.sin
  * represents a stable circular-mean window, and several windows must repeat.
  */
 object WindAnchorEvidence {
-    enum class Source { PHYSICAL_HEADING, TRUE_WIND_ANGLE, APPARENT_TRUE_MATCH, STATIONARY_APPARENT, BACKDOWN_COG }
+    enum class Source { NMEA_PHYSICAL_HEADING, PHONE_HEADING, TRUE_WIND_ANGLE, APPARENT_TRUE_MATCH, STATIONARY_APPARENT, BACKDOWN_COG }
 
     data class Sample(
         val timestamp: Long,
@@ -29,6 +31,8 @@ object WindAnchorEvidence {
         val apparentWindSpeedKnots: Double?,
         val headingSampleSequence: Long? = null,
         val windSampleSequence: Long? = null,
+        val headingSource: HeadingSource = HeadingSource.NONE,
+        val headingQuality: HeadingQuality = HeadingQuality.UNAVAILABLE,
     )
 
     data class Observation(
@@ -42,7 +46,8 @@ object WindAnchorEvidence {
     )
 
     data class Summary(val observations: List<Observation>) {
-        val physicalCount get() = observations.count { it.source == Source.PHYSICAL_HEADING }
+        val physicalCount get() = observations.count { it.source == Source.NMEA_PHYSICAL_HEADING }
+        val phoneCount get() = observations.count { it.source == Source.PHONE_HEADING }
         val windCount get() = observations.count { it.source == Source.TRUE_WIND_ANGLE || it.source == Source.APPARENT_TRUE_MATCH || it.source == Source.STATIONARY_APPARENT }
         val independentWindCount get() = observations.count { it.source == Source.APPARENT_TRUE_MATCH || it.source == Source.STATIONARY_APPARENT }
         val hasPhysicalEvidence get() = physicalCount >= 3
@@ -59,10 +64,11 @@ object WindAnchorEvidence {
     fun summarize(samples: List<Sample>): Summary {
         if (samples.isEmpty()) return Summary(emptyList())
         val raw = samples.flatMap(::rawEvidence)
-        val physical = stableWindows(raw.filter { it.source == Source.PHYSICAL_HEADING }, minimumWindows = 3, minimumSpanMillis = 30_000L)
-        val wind = stableWindows(raw.filter { it.source != Source.PHYSICAL_HEADING && it.source != Source.BACKDOWN_COG }, minimumWindows = 4, minimumSpanMillis = 45_000L)
+        val physical = stableWindows(raw.filter { it.source == Source.NMEA_PHYSICAL_HEADING }, minimumWindows = 3, minimumSpanMillis = 30_000L)
+        val phone = stableWindows(raw.filter { it.source == Source.PHONE_HEADING }, minimumWindows = 4, minimumSpanMillis = 45_000L)
+        val wind = stableWindows(raw.filter { it.source !in setOf(Source.NMEA_PHYSICAL_HEADING, Source.PHONE_HEADING, Source.BACKDOWN_COG) }, minimumWindows = 4, minimumSpanMillis = 45_000L)
         val backdownCog = stableWindows(raw.filter { it.source == Source.BACKDOWN_COG }, minimumWindows = 2, minimumSpanMillis = 15_000L)
-        return Summary((physical + wind + backdownCog).sortedBy { it.timestamp })
+        return Summary((physical + phone + wind + backdownCog).sortedBy { it.timestamp })
     }
 
     fun centreMatch(summary: Summary, centreLatitude: Double, centreLongitude: Double): CentreMatch {
@@ -88,7 +94,13 @@ object WindAnchorEvidence {
     }
 
     private fun rawEvidence(sample: Sample): List<Raw> = buildList {
-        sample.headingTrueDegrees?.takeIf { it.isFinite() }?.let { add(Raw(sample, normalize(it), 1.0, Source.PHYSICAL_HEADING,sample.headingSampleSequence)) }
+        sample.headingTrueDegrees?.takeIf { it.isFinite() && sample.headingQuality == HeadingQuality.STABLE }?.let { heading ->
+            when (sample.headingSource) {
+                HeadingSource.NMEA_PHYSICAL -> add(Raw(sample, normalize(heading), 1.0, Source.NMEA_PHYSICAL_HEADING, sample.headingSampleSequence))
+                HeadingSource.PHONE -> add(Raw(sample, normalize(heading), .35, Source.PHONE_HEADING, sample.headingSampleSequence))
+                HeadingSource.NONE -> Unit
+            }
+        }
         if(sample.cogTrueDegrees!=null&&(sample.sogKnots?:0.0)>=.8)add(Raw(sample,normalize(sample.cogTrueDegrees+180.0),.42,Source.BACKDOWN_COG,null))
         val direction = sample.trueWindDirectionDegrees ?: return@buildList
         val trueAngle = sample.trueWindAngleDegrees

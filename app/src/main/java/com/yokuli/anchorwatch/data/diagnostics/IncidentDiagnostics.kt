@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.SystemClock
 import com.google.gson.Gson
 import com.yokuli.anchorwatch.BuildConfig
+import com.yokuli.anchorwatch.data.database.DATABASE_SCHEMA_VERSION
 import com.yokuli.anchorwatch.data.database.AnchorDao
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.IncidentLogDao
@@ -163,6 +164,7 @@ class StorageHealthRepository @Inject constructor(
     }
 
     suspend fun clearRebuildableCaches() = withContext(Dispatchers.IO) {
+        require(sonarDao.active()==null){"Stop the active sonar survey before clearing derived caches."}
         database.runInTransaction {
             database.openHelper.writableDatabase.execSQL("DELETE FROM sonar_grid_cells")
             database.openHelper.writableDatabase.execSQL("DELETE FROM linz_depth_cache")
@@ -211,7 +213,7 @@ class SupportBundleManager @Inject constructor(
                 "createdAtUtc" to Instant.ofEpochMilli(now).toString(),
                 "appVersionName" to BuildConfig.VERSION_NAME,
                 "appVersionCode" to BuildConfig.VERSION_CODE,
-                "roomSchemaVersion" to 11,
+                "roomSchemaVersion" to DATABASE_SCHEMA_VERSION,
                 "privacy" to "No raw NMEA, API credentials, or exact positions",
                 "incidentCount" to recent.size,
             )))

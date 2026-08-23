@@ -14,6 +14,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 AndroidX, Jetpack Compose, Google Maps SDK, Google Play services, Kotlin, Kotlin Coroutines, Hilt and Room retain their respective licenses and copyrights.
 
+## ZXing
+
+Local QR generation and decoding use ZXing Core, distributed under the Apache License 2.0. Camera preview and lifecycle binding use AndroidX CameraX. QR frames are decoded on-device and are not uploaded by Anchor Watch.
+
+ZXing project and licence: https://github.com/zxing/zxing
+
 ## LINZ Data Service
 
 When a build is configured to display the optional hydrographic chart-image overlay, the tiles are requested from a user-configured LINZ Data Service layer and are not bundled in this repository.

@@ -67,7 +67,6 @@ import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
-import com.yokuli.anchorwatch.location.NmeaSourceAvailability
 import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.localization.usesChinese
@@ -81,7 +80,7 @@ import java.text.DateFormat
 @Composable @OptIn(ExperimentalMaterial3Api::class)
 internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:AnchorageSetupReference?=null,start:(Double,Double,AnchorWatchInput)->Unit){
  val now=android.os.SystemClock.elapsedRealtime();val proxyActive=GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state)
- val nmeaReady=NmeaSourceSelectionPolicy.availability(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1000L)==NmeaSourceAvailability.AVAILABLE
+ val nmeaReady=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1000L)
  val systemReady=state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&now-it.receivedElapsedRealtime<state.settings.gpsLossSeconds*1000L&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}==true&&!proxyActive
  var source by remember{mutableStateOf(if(state.settings.demoMode)GpsDataSource.DEMO else state.settings.gpsDataSource)}
  var estimate by remember{mutableStateOf(false)};var knownMethod by remember{mutableStateOf(AnchorCenterSource.CURRENT_POSITION)}
@@ -106,12 +105,12 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
  val finalRadius=if(effectiveRangeMode==AnchorRangeMode.ADVANCED)suggestion?.radiusMeters else enteredRadius
  val notificationsReady=android.os.Build.VERSION.SDK_INT<33||ContextCompat.checkSelfPermission(androidx.compose.ui.platform.LocalContext.current,Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED
  val shallowValue=shallowDepth.toDoubleOrNull();val deepValue=deepDepth.toDoubleOrNull();val windWarningValue=windWarning.toDoubleOrNull();val windAlarmValue=windAlarm.toDoubleOrNull();val shiftValue=windShiftDegrees.toDoubleOrNull()
- val conditionNmeaReady=source==GpsDataSource.DEMO||state.connection==NmeaConnectionState.CONNECTED
+ val conditionNmeaReady=source==GpsDataSource.DEMO||com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.hasInstrumentTraffic(state.connection)
  val depthReady=!depthGuard||(conditionNmeaReady&&shallowValue!=null&&shallowValue>0&&(!deepGuard||(deepValue!=null&&deepValue>=shallowValue+1))&&(source==GpsDataSource.DEMO||state.liveDepth.isFresh(now)))
  val liveSpeed=state.liveWind.speed(now,state.settings.allowApparentWindFallback);val liveDirection=state.liveWind.direction(now)
  val windReady=!windGuard||(conditionNmeaReady&&windWarningValue!=null&&windAlarmValue!=null&&windAlarmValue>=windWarningValue+3.0&&(source==GpsDataSource.DEMO||liveSpeed!=null))
  val shiftReady=!windShift||(conditionNmeaReady&&shiftValue!=null&&shiftValue in 15.0..180.0&&(source==GpsDataSource.DEMO||liveDirection!=null))
- val valid=sourceReady&&selectedCoordinate!=null&&geometryValid&&finalRadius!=null&&finalRadius>0&&(effectiveRangeMode!=AnchorRangeMode.ADVANCED||suggestion!=null)&&depthReady&&windReady&&shiftReady
+ val valid=sourceReady&&notificationsReady&&selectedCoordinate!=null&&geometryValid&&finalRadius!=null&&finalRadius>0&&(effectiveRangeMode!=AnchorRangeMode.ADVANCED||suggestion!=null)&&depthReady&&windReady&&shiftReady
  val coordinateError=validationRequested&&selectedCoordinate==null;val radiusError=validationRequested&&(finalRadius==null||finalRadius<=0)
  val depthError=validationRequested&&geometryNeeded&&(depthValue==null||depthValue<0);val rodeError=validationRequested&&geometryNeeded&&(rodeValue==null||rodeValue<=0||depthValue!=null&&bowValue!=null&&rodeValue<=depthValue+bowValue);val bowError=validationRequested&&geometryNeeded&&(bowValue==null||bowValue<=0);val boatError=validationRequested&&effectiveRangeMode==AnchorRangeMode.ADVANCED&&(boatValue==null||boatValue<=0)
  ModalBottomSheet(onDismissRequest=dismiss,dragHandle={BottomSheetDefaults.DragHandle()}){Column(Modifier.fillMaxWidth().fillMaxHeight(.94f).verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
@@ -132,11 +131,11 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
   HorizontalDivider();Row(Modifier.fillMaxWidth().clickable{conditionsExpanded=!conditionsExpanded},verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Condition alerts","环境警戒"),style=MaterialTheme.typography.titleMedium);Text(tr("Optional · depth, wind speed and wind shift","可选 · 水深、风速和风向变化"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(if(conditionsExpanded)Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)}
   if(conditionsExpanded){
    Text(tr("Depth alerts use live onboard NMEA sounder data and the configured offset. Wind alerts use onboard NMEA wind; TRUE is preferred and APPARENT is labelled when used. Verify instrument references before relying on either.","水深警报使用船载 NMEA 测深数据和已设置的 offset；风警报使用船载 NMEA 风数据，优先 TRUE，回退 APPARENT 时会明确标注。依赖这些警报前请核对仪表基准。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   SettingSwitch(tr("Depth guard","水深警戒"),state.liveDepth.depthMeters?.let{tr("Live ${"%.1f".format(it)} m · ${state.liveDepth.sentenceType} · Fresh","实时 ${"%.1f".format(it)} 米 · ${state.liveDepth.sentenceType} · 新鲜") }?:tr("Waiting for fresh NMEA depth","等待新鲜 NMEA 水深"),depthGuard,enabled=conditionNmeaReady||depthGuard){depthGuard=it}
+   SettingSwitch(tr("Depth guard","水深警戒"),state.liveDepth.depthMeters?.let{tr("Live ${"%.1f".format(it)} m · ${state.liveDepth.sentenceType} · Fresh","实时 ${"%.1f".format(it)} 米 · ${state.liveDepth.sentenceType} · 新鲜") }?:tr("Waiting for fresh NMEA depth","等待新鲜 NMEA 水深"),depthGuard,enabled=source==GpsDataSource.DEMO||state.liveDepth.isFresh(now)||depthGuard){depthGuard=it}
    if(depthGuard){OutlinedTextField(shallowDepth,{shallowDepth=numeric(it)},label={Text(tr("Shallow alarm *","浅水警报 *"))},isError=validationRequested&&!depthReady,suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth());SettingSwitch(tr("Deep alarm","深水警报"),tr("Optional high-depth boundary","可选的深水边界"),deepGuard){deepGuard=it};if(deepGuard)OutlinedTextField(deepDepth,{deepDepth=numeric(it)},label={Text(tr("Deep alarm *","深水警报 *"))},isError=validationRequested&&!depthReady,suffix={Text(tr("m","米"))},modifier=Modifier.fillMaxWidth())}
-   SettingSwitch(tr("Wind guard","风速警戒"),liveSpeed?.let{tr("Live ${"%.1f".format(it.first.value)} kn · ${it.second}","实时 ${"%.1f".format(it.first.value)} 节 · ${it.second}")}?:tr("Waiting for supported NMEA wind","等待支持的 NMEA 风速"),windGuard,enabled=conditionNmeaReady||windGuard){windGuard=it}
+   SettingSwitch(tr("Wind guard","风速警戒"),liveSpeed?.let{tr("Live ${"%.1f".format(it.first.value)} kn · ${it.second}","实时 ${"%.1f".format(it.first.value)} 节 · ${it.second}")}?:tr("Waiting for supported NMEA wind","等待支持的 NMEA 风速"),windGuard,enabled=source==GpsDataSource.DEMO||liveSpeed!=null||windGuard){windGuard=it}
    if(windGuard){OutlinedTextField(windWarning,{windWarning=numeric(it)},label={Text(tr("Wind warning *","风速提醒 *"))},isError=validationRequested&&!windReady,suffix={Text("kn")},modifier=Modifier.fillMaxWidth());OutlinedTextField(windAlarm,{windAlarm=numeric(it)},label={Text(tr("Wind alarm *","风速警报 *"))},isError=validationRequested&&!windReady,suffix={Text("kn")},modifier=Modifier.fillMaxWidth())}
-   SettingSwitch(tr("Wind shift","风向突变"),liveDirection?.let{tr("True direction ${it.first.value.toInt()}° · ${it.second}","真风向 ${it.first.value.toInt()}° · ${it.second}")}?:tr("Requires MWD or coherent MWV-T + HDT","需要 MWD 或同步的 MWV-T + HDT"),windShift,enabled=conditionNmeaReady||windShift){windShift=it}
+   SettingSwitch(tr("Wind shift","风向突变"),liveDirection?.let{tr("True direction ${it.first.value.toInt()}° · ${it.second}","真风向 ${it.first.value.toInt()}° · ${it.second}")}?:tr("Requires MWD or coherent MWV-T + HDT","需要 MWD 或同步的 MWV-T + HDT"),windShift,enabled=source==GpsDataSource.DEMO||liveDirection!=null||windShift){windShift=it}
    if(windShift)OutlinedTextField(windShiftDegrees,{windShiftDegrees=numeric(it)},label={Text(tr("Shift alarm *","风向变化警报 *"))},isError=validationRequested&&!shiftReady,suffix={Text("°")},modifier=Modifier.fillMaxWidth())
   }
   HorizontalDivider();Text(tr("Safety check","安全检查"),style=MaterialTheme.typography.titleMedium);PreflightRow(tr("Selected position source","所选定位源"),sourceReady,if(sourceReady)tr("Ready","就绪")else tr("Not ready","未就绪"));PreflightRow(tr("Notifications","通知"),notificationsReady,if(notificationsReady)tr("Ready","就绪")else tr("Permission required","需要权限"));PreflightRow(tr("Anchor coordinate","锚点坐标"),selectedCoordinate!=null,selectedCoordinate?.let{"%.5f, %.5f".format(it.latitude,it.longitude)}?:tr("Missing","缺失"))

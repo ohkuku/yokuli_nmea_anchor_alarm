@@ -57,4 +57,40 @@ class NmeaSourceSelectionPolicyTest {
             NmeaSourceSelectionPolicy.availability(NmeaConnectionState.CONNECTED, validFix, now, now, 15_000),
         )
     }
+
+    @Test fun aConnectedFreshFixWithExplicitlyBadQualityIsNotUsableForSafetyFeatures() {
+        assertEquals(
+            false,
+            NmeaSourceSelectionPolicy.isUsablePosition(
+                NmeaConnectionState.CONNECTED,
+                validFix.copy(hdop = 7.0),
+                now - 5_000,
+                now,
+                15_000,
+            ),
+        )
+        assertEquals(
+            false,
+            NmeaSourceSelectionPolicy.isUsablePosition(
+                NmeaConnectionState.CONNECTED,
+                validFix.copy(fixQuality = 0),
+                now - 5_000,
+                now,
+                15_000,
+            ),
+        )
+    }
+
+    @Test fun unknownQualityMayContinueButOnlyOnTheCurrentFreshConnection() {
+        assertEquals(
+            true,
+            NmeaSourceSelectionPolicy.isUsablePosition(
+                NmeaConnectionState.CONNECTED,
+                validFix,
+                now - 5_000,
+                now,
+                15_000,
+            ),
+        )
+    }
 }

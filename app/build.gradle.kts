@@ -98,6 +98,9 @@ android {
         }
     }
     buildFeatures { compose = true; buildConfig = true }
+    // Languages are switched inside the app; keep every packaged translation
+    // available even when distributing an Android App Bundle.
+    bundle { language { enableSplit = false } }
     testOptions { execution = "ANDROIDX_TEST_ORCHESTRATOR" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
@@ -111,6 +114,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -133,6 +137,9 @@ dependencies {
     implementation(libs.coroutines.play.services)
     implementation(libs.gson)
     implementation(libs.zxing.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)

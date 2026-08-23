@@ -54,4 +54,6 @@ class WindSnapshotAccumulator(
             sampleSequence = sequence.takeIf { fresh.isNotEmpty() },
         )
     }
+
+    fun clear(){trueDirection=null;trueSpeed=null;apparentSpeed=null;apparentAngle=null;trueAngle=null;sequence=0}
 }

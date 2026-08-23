@@ -41,4 +41,20 @@ class WindSnapshotAccumulatorTest {
         assertNull(snapshot.trueSpeedKnots)
         assertNull(snapshot.sampleSequence)
     }
+
+    @Test fun omittedFieldsDoNotEraseLastObservationOrRefreshItsClock() {
+        val accumulator = WindSnapshotAccumulator(maximumAgeMillis = 10_000, maximumSkewMillis = 2_500)
+        accumulator.update(NmeaUpdate(trueWindDirection = 135.0, trueWindSpeedKnots = 9.5, type = "MWD"), 1_000)
+
+        // A valid but unrelated/partial sentence means "no update". It must
+        // neither clear the previous measurement nor make that value younger.
+        accumulator.update(NmeaUpdate(type = "MWD"), 8_000)
+        val held = accumulator.snapshot(8_100)
+        assertEquals(135.0, held.trueDirectionDegrees!!, 0.0)
+        assertEquals(9.5, held.trueSpeedKnots!!, 0.0)
+
+        val stale = accumulator.snapshot(11_001)
+        assertNull(stale.trueDirectionDegrees)
+        assertNull(stale.trueSpeedKnots)
+    }
 }

@@ -5,6 +5,8 @@ import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
+import com.yokuli.anchorwatch.domain.vessel.VesselAttitude
+import com.yokuli.anchorwatch.domain.vessel.VesselMotion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -70,5 +72,27 @@ class NmeaOutputMuxTest {
         assertTrue(mux.acceptedPosition(fix(),5_000).isEmpty())
         assertTrue(mux.acceptedPosition(fix(PositionProvider.ANDROID_NETWORK),1_100).isEmpty())
         assertTrue(mux.acceptedPosition(fix(mock=true),1_100).isEmpty())
+    }
+
+    @Test fun phoneOutputAddsZdaAndEverySentenceHasAValidChecksum(){
+        val fix=NavigationFix(-36.8485,174.7633,1_720_000_000_000,10_000,sogKnots=2.4,cogTrueDegrees=123.4,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
+        val output=mux.phonePosition(fix,10_100)
+        assertEquals(listOf("RMC","GGA","VTG","ZDA"),output.mapNotNull(mux::sentenceType))
+        assertTrue(output.all{it.endsWith("\r\n")&&NmeaChecksum.validate(it,true)})
+        assertTrue(output.last().startsWith("\$GNZDA,094640.00,03,07,2024,00,00"))
+    }
+
+    @Test fun phoneOutputNeverReplaysAStaleFix(){
+        val fix=NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=1_000,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
+        assertTrue(mux.phonePosition(fix,4_001).isEmpty())
+    }
+
+    @Test fun phoneSensorOutputUsesStandardSentencesAndChecksums(){
+        val attitude=VesselAttitude(12.3,-2.4,1.0,2.0,3.0)
+        val output=listOfNotNull(mux.phoneHeading(123.4),mux.phoneRateOfTurn(180.0),mux.phoneXdr(attitude,1013.2),mux.phoneProprietary(attitude,VesselMotion(score=42.5),123.4,1013.2))
+        assertEquals(listOf("HDT","ROT","XDR","YOK"),output.mapNotNull(mux::sentenceType))
+        assertTrue(output.all{NmeaChecksum.validate(it,true)})
+        assertTrue(output[2].contains("PHONE_HEEL")&&output[2].contains("PHONE_BARO"))
+        assertTrue(output[3].contains(",42.5,"))
     }
 }

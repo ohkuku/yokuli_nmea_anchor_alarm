@@ -45,6 +45,7 @@ import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.Protocol
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
+import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchor.AnchorRangeCalculator
 import com.yokuli.anchorwatch.domain.anchor.CoordinateParser
@@ -66,6 +67,8 @@ import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartDecision
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartPolicy
+import com.yokuli.anchorwatch.domain.sonar.SonarSurveyContinuityPolicy
+import com.yokuli.anchorwatch.domain.sonar.SonarSurveyContinuityState
 import com.yokuli.anchorwatch.data.tide.TideStationCatalog
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
@@ -73,6 +76,7 @@ import com.yokuli.anchorwatch.location.NmeaSourceAvailability
 import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.localization.usesChinese
+import com.yokuli.anchorwatch.runtime.RuntimeOwner
 import com.yokuli.anchorwatch.map.FollowCameraMove
 import com.yokuli.anchorwatch.map.MapCameraPolicy
 import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
@@ -97,16 +101,19 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
 @Composable
 private fun SonarSurveyPage(state:MainUiState,vm:MainViewModel){
     var showStart by remember{mutableStateOf(false)};var showDisclaimer by remember{mutableStateOf(false)};var rename by remember{mutableStateOf<com.yokuli.anchorwatch.data.database.SonarSurveyEntity?>(null)};var delete by remember{mutableStateOf<com.yokuli.anchorwatch.data.database.SonarSurveyEntity?>(null)}
-    val freshDepth=state.sonarRecorder.hasFreshRealDepth(android.os.SystemClock.elapsedRealtime())
     val freshNmeaPosition=state.sonarRecorder.hasFreshNmeaPosition(android.os.SystemClock.elapsedRealtime())
-    val startDecision=SonarSurveyStartPolicy.evaluate(state.settings.demoMode,state.connection,freshDepth,freshNmeaPosition)
+    val demoWatchRunning=state.active?.paused==false&&state.active.positionSource==GpsDataSource.DEMO.name
+    val continuity=SonarSurveyContinuityPolicy.evaluate(state.activeSonarSurvey!=null,state.settings.demoMode,demoWatchRunning,state.connection,freshNmeaPosition)
+    val demoSurveyWaiting=continuity==SonarSurveyContinuityState.DEMO_WAITING
+    val realSurveyInterrupted=continuity==SonarSurveyContinuityState.REAL_INTERRUPTED
+    val startDecision=SonarSurveyStartPolicy.evaluate(state.settings.demoMode,demoWatchRunning,state.connection,state.sonarRecorder.realDepthHoldState(),freshNmeaPosition)
     val canStart=startDecision==SonarSurveyStartDecision.ALLOWED
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{PageHeader(tr("Personal sonar mapping","个人声呐测绘"),tr("Pair DPT/DBT depth only with GPS from the same NMEA server, then build a robust 5 m local grid.","DPT/DBT 水深只与同一 NMEA 服务器的 GPS 配对，并生成稳健的 5 米本地网格。"))}
         item{Surface(color=MaterialTheme.colorScheme.errorContainer,shape=MaterialTheme.shapes.medium){Text(tr("Observation aid only — not a certified chart or a substitute for safe navigation, tide planning or depth instruments.","仅供观测辅助——不是认证海图，也不能替代安全航行、潮汐计划或测深仪判断。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onErrorContainer)}}
         if(state.activeSonarSurvey==null)item{Card{Row(Modifier.fillMaxWidth().padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Waves,null);Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(if(state.settings.demoMode)tr("Live demo sonar","实时演示声呐")else tr("Live NMEA depth","实时 NMEA 水深"),fontWeight=FontWeight.SemiBold);Text(localizeKnownMessage(state.sonarRecorder.message),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);SonarDepthProvenance(state.sonarRecorder)};Text(state.sonarRecorder.lastMeasuredDepthMeters?.let{"%.2f m".format(it)}?:"—",style=MaterialTheme.typography.titleMedium)}}}
-        state.activeSonarSurvey?.let{survey->item{Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Sensors,null);Spacer(Modifier.width(8.dp));Text(tr("Recording","正在记录"),style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f));AssistChip({},label={Text("${survey.sampleCount}")})};Text(survey.name,fontWeight=FontWeight.SemiBold);Text(localizeKnownMessage(state.sonarRecorder.message),style=MaterialTheme.typography.bodySmall);SonarDepthProvenance(state.sonarRecorder);state.sonarRecorder.lastDepthMeters?.let{depth->Text(tr("Grid depth ${"%.2f".format(depth)} m${if(state.sonarRecorder.lastDepthIsChartDatum)" · chart datum" else ""}","网格水深 ${"%.2f".format(depth)} 米${if(state.sonarRecorder.lastDepthIsChartDatum)" · 海图基准" else ""}"))};Text(tr("${state.sonarGrid.cells.size} grid cells · incremental updates","${state.sonarGrid.cells.size} 个网格 · 增量更新"),style=MaterialTheme.typography.bodySmall);OutlinedButton(vm::stopSonarSurvey,Modifier.fillMaxWidth()){Icon(Icons.Default.StopCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Stop and save survey","停止并保存调查"))}}}}}
-        if(state.activeSonarSurvey==null)item{Column(verticalArrangement=Arrangement.spacedBy(6.dp)){Button({if(state.settings.sonarDisclaimerAccepted)showStart=true else showDisclaimer=true},Modifier.fillMaxWidth(),enabled=canStart){Icon(Icons.Default.PlayCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Start sonar survey","开始声呐调查"))};when{state.settings.demoMode->Text(tr("Demo survey uses continuous simulated sonar tied to the current Demo GPS track. The map is drawn only while the Personal sonar layer is enabled.","演示调查会生成与当前演示 GPS 轨迹连续对应的模拟声呐；只有开启“个人声呐”图层时才会绘制在地图上。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);startDecision==SonarSurveyStartDecision.NMEA_NOT_CONNECTED->Text(tr("Connect the NMEA server before starting a real sonar survey.","开始真实声呐调查前必须先连接 NMEA 服务器。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error);startDecision==SonarSurveyStartDecision.DEPTH_NOT_FRESH->Text(tr("Connected, but waiting for fresh DPT/DBT depth data.","服务器已连接，正在等待新的 DPT/DBT 水深数据。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error);startDecision==SonarSurveyStartDecision.NMEA_POSITION_NOT_FRESH->Text(tr("Depth is live, but the same NMEA server has not supplied a fresh valid GPS position.","水深数据正常，但同一 NMEA 服务器尚未提供新鲜有效的 GPS 船位。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}}}
+        state.activeSonarSurvey?.let{survey->item{Card(colors=CardDefaults.cardColors(containerColor=if(demoSurveyWaiting||realSurveyInterrupted||state.sonarRecorder.depthHoldState==com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.WARNING)MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(if(demoSurveyWaiting||realSurveyInterrupted)Icons.Default.PauseCircle else Icons.Default.Sensors,null);Spacer(Modifier.width(8.dp));Text(when{demoSurveyWaiting->tr("Survey waiting for Demo watch","调查正在等待演示锚警");realSurveyInterrupted->tr("Survey waiting for NMEA","调查正在等待 NMEA");else->tr("Recording","正在记录")},style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f));AssistChip({},label={Text("${survey.sampleCount}")})};Text(survey.name,fontWeight=FontWeight.SemiBold);when{demoSurveyWaiting->Text(tr("The survey is preserved but cannot create soundings while its Demo anchor session is paused. Resume that same anchor session, or stop and save this survey.","调查已保留，但演示锚泊会话暂停时不会生成测深点。请继续同一个锚泊会话，或停止并保存本次调查。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onTertiaryContainer);realSurveyInterrupted->{Text(tr("The survey is preserved, but no new sounding is being written without a live position from its original NMEA stream. Reconnect that server or stop and save the survey.","调查已保留，但原 NMEA 数据流没有实时船位时不会写入新的测深点。请重连该服务器，或停止并保存调查。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onTertiaryContainer);OutlinedButton(vm::reconnectNmea,Modifier.fillMaxWidth(),enabled=state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect NMEA","重连 NMEA"))}};else->Text(sonarHoldMessage(state.sonarRecorder),style=MaterialTheme.typography.bodySmall)};SonarDepthProvenance(state.sonarRecorder);state.sonarRecorder.lastDepthMeters?.let{depth->Text(tr("Grid depth ${"%.2f".format(depth)} m${if(state.sonarRecorder.lastDepthIsChartDatum)" · chart datum" else ""}","网格水深 ${"%.2f".format(depth)} 米${if(state.sonarRecorder.lastDepthIsChartDatum)" · 海图基准" else ""}"))};Text(tr("${state.sonarGrid.cells.size} grid cells · incremental updates","${state.sonarGrid.cells.size} 个网格 · 增量更新"),style=MaterialTheme.typography.bodySmall);OutlinedButton(vm::stopSonarSurvey,Modifier.fillMaxWidth()){Icon(Icons.Default.StopCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Stop and save survey","停止并保存调查"))}}}}}
+        if(state.activeSonarSurvey==null)item{Column(verticalArrangement=Arrangement.spacedBy(6.dp)){Button({if(state.settings.sonarDisclaimerAccepted)showStart=true else showDisclaimer=true},Modifier.fillMaxWidth(),enabled=canStart){Icon(Icons.Default.PlayCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Start sonar survey","开始声呐调查"))};when{startDecision==SonarSurveyStartDecision.DEMO_WATCH_REQUIRED->Text(tr("Start or resume a Demo anchor watch first. Its continuous Demo GPS track is the only valid position source for a Demo sonar survey.","请先启动或继续一个演示锚泊监控；它的连续演示 GPS 轨迹是演示声呐调查唯一有效的定位源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error);state.settings.demoMode->Text(tr("Demo survey uses continuous simulated sonar tied to the running Demo anchor track. Lift anchor stops and saves the survey. The map is drawn only while the Personal sonar layer is enabled.","演示调查会生成与当前运行中的演示锚泊轨迹连续对应的模拟声呐；起锚会停止并保存调查。只有开启“个人声呐”图层时才会绘制在地图上。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);startDecision==SonarSurveyStartDecision.NMEA_NOT_CONNECTED->Text(tr("Connect the NMEA server before starting a real sonar survey.","开始真实声呐调查前必须先连接 NMEA 服务器。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error);startDecision==SonarSurveyStartDecision.DEPTH_NOT_SEEN->Text(tr("Waiting for the first valid DPT/DBT depth from this NMEA connection.","正在等待本次 NMEA 连接的首个有效 DPT/DBT 水深。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error);startDecision==SonarSurveyStartDecision.DEPTH_HOLD_EXPIRED->Text(tr("The last real depth has expired. Wait for a new DPT/DBT sentence.","上一次真实水深已经失效，请等待新的 DPT/DBT 句子。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error);startDecision==SonarSurveyStartDecision.NMEA_POSITION_NOT_FRESH->Text(tr("Depth is available, but the same NMEA server has not supplied a fresh valid GPS position.","水深数据可用，但同一 NMEA 服务器尚未提供新鲜有效的 GPS 船位。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}}}
         item{Text(tr("Saved surveys","已保存调查"),style=MaterialTheme.typography.titleMedium)}
         if(state.sonarSurveys.any{it.tideMode!=TideMode.OFF.name})item{Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.secondaryContainer)){Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Chart-datum corrected history","海图基准修正历史"),fontWeight=FontWeight.SemiBold);Text(tr("Combines only usable samples with a non-null manual or LINZ-predicted tide normalization.","只合并已通过质量检查且存在手动或 LINZ 预测潮汐归一化值的样本。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSecondaryContainer)};if(state.selectedSonarSurveyId==CORRECTED_SONAR_HISTORY_ID)AssistChip({},label={Text(tr("ON MAP","地图中"))})else TextButton({vm.selectCorrectedSonarHistory();vm.page(0)}){Icon(Icons.Default.Map,null);Text(tr("Map","地图"))}}}}
         if(state.sonarSurveys.isEmpty())item{Text(tr("No sonar surveys yet.","还没有声呐调查。"),color=MaterialTheme.colorScheme.onSurfaceVariant)}
@@ -134,6 +141,19 @@ private fun SonarDepthProvenance(status:SonarRecorderStatus){
 }
 
 @Composable
+private fun sonarHoldMessage(status:SonarRecorderStatus):String{
+    val seconds=status.depthAgeMillis/1_000
+    return when(status.depthHoldState){
+        com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.NO_DEPTH->tr("Waiting for the first valid DPT/DBT depth","正在等待首个有效 DPT/DBT 水深")
+        com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.LIVE->tr("Live real depth","实时真实水深")
+        com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.HELD->tr("Held · last real update ${seconds}s ago","保留值 · 上次真实更新在 ${seconds} 秒前")
+        com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.WARNING->tr("Held warning · ${seconds}s · ${status.depthTravelledMeters.toInt()}m since last real depth","保留值警告 · ${seconds} 秒 · 距上次真实水深已移动 ${status.depthTravelledMeters.toInt()} 米")
+        com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.EXPIRED_TIME->tr("Expired · no real depth for 5 minutes","已失效 · 5 分钟未收到真实水深")
+        com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState.EXPIRED_DISTANCE->tr("Expired · 500m travelled without real depth","已失效 · 未收到真实水深已移动 500 米")
+    }
+}
+
+@Composable
 private fun SonarStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,TideMode,Double,String?)->Unit){
     var name by remember{mutableStateOf("")}
     var tideMode by remember{mutableStateOf(TideMode.OFF)};var manualText by remember{mutableStateOf("0.0")}
@@ -146,7 +166,7 @@ private fun SonarStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Ti
     AlertDialog(onDismissRequest=dismiss,title={Text(tr("Start sonar survey","开始声呐调查"))},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
         OutlinedTextField(name,{name=it},label={Text(tr("Survey name (optional)","调查名称（可选）"))},singleLine=true)
         Text(tr("Sounder depth + ${signed(state.settings.sounderOffsetMeters)} m offset will be stored.","将记录测深仪水深 + ${signed(state.settings.sounderOffsetMeters)} 米 offset。"),fontWeight=FontWeight.SemiBold)
-        Text(if(state.settings.demoMode)tr("Demo sonar follows a smooth simulated seabed along the Demo GPS track.","演示声呐会沿演示 GPS 轨迹生成连续、平滑变化的模拟海床。")else tr("Recording requires fresh DPT/DBT and fresh GPS from the same connected NMEA server. The anchor-watch GPS selection does not affect sonar coordinates.","记录要求同一台已连接的 NMEA 服务器同时提供新的 DPT/DBT 与 GPS；锚警的数据源选择不会影响声呐坐标。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if(state.settings.demoMode)tr("Demo sonar follows a smooth simulated seabed along the Demo GPS track.","演示声呐会沿演示 GPS 轨迹生成连续、平滑变化的模拟海床。")else tr("After the first real DPT/DBT, accepted GPS from the same NMEA stream keeps drawing with the held depth. Age and distance are recorded; the survey stops automatically if that evidence expires.","收到首个真实 DPT/DBT 后，同一 NMEA 数据流的可信 GPS 会使用保留水深继续绘制。每个点都会记录水深年龄和距离；证据失效时调查会自动停止。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         HorizontalDivider();Text(tr("Tide correction","潮汐修正"),style=MaterialTheme.typography.labelLarge)
         listOf(TideMode.OFF to tr("Off","关闭"),TideMode.MANUAL to tr("Manual","手动"),TideMode.AUTO_PREDICTED to tr("Automatic · LINZ predicted","自动 · LINZ 预测")).forEach{(mode,label)->Row(Modifier.fillMaxWidth().heightIn(min=48.dp).clickable{tideMode=mode},verticalAlignment=Alignment.CenterVertically){RadioButton(tideMode==mode,{tideMode=mode});Text(label)}}
         if(tideMode==TideMode.MANUAL)OutlinedTextField(manualText,{manualText=it.filter{character->character.isDigit()||character=='.'||character=='-'}},label={Text(tr("Tide height above chart datum","高于海图基准的潮高"))},suffix={Text("m")},isError=manual==null,singleLine=true)
@@ -185,36 +205,62 @@ private fun SonarStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Ti
 internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
     var profile by remember(state.settings.profile) { mutableStateOf(state.settings.profile) }
     var showWatchDisconnect by remember { mutableStateOf(false) }
+    var showDependencyDisconnect by remember { mutableStateOf(false) }
     val connectionRunning = state.connection != NmeaConnectionState.DISCONNECTED
     val testing=state.connectionAttempt.state==ConnectionAttemptState.TESTING
     val controlsEnabled=state.settingsReady&&!connectionRunning&&!testing
     val activeWatchUsesNmea=state.active?.paused==false&&state.active.positionSource==GpsDataSource.NMEA.name
+    val activeWatchNmeaFault=activeWatchUsesNmea&&!NmeaSourceSelectionPolicy.isUsablePosition(
+        state.connection,
+        state.nmeaFix,
+        state.nmeaConnectionStartedElapsed,
+        android.os.SystemClock.elapsedRealtime(),
+        state.settings.gpsLossSeconds*1_000L,
+    )
+    val nmeaDependencies=state.runtimeResources.nmeaOwners.mapNotNull{owner->when(owner){
+        RuntimeOwner.ANCHOR_WATCH->null // handled by the dedicated safe-pause dialog
+        RuntimeOwner.CONDITION_MONITOR->localized(state.settings.appLanguage,"Active depth / wind alerts","运行中的水深 / 风警戒")
+        RuntimeOwner.SONAR_MAPPING->localized(state.settings.appLanguage,"Active sonar survey (will stop and save)","进行中的声呐调查（将停止并保存）")
+        RuntimeOwner.TRIP_WATCH->localized(state.settings.appLanguage,"Trip Watch using NMEA (will pause, not end)","正在使用 NMEA 的航程监控（将暂停，不会结束）")
+        RuntimeOwner.GPS_PROXY->localized(state.settings.appLanguage,"Global GPS proxy","全局 GPS 代理")
+        RuntimeOwner.PHONE_NMEA_OUTPUT->localized(state.settings.appLanguage,"Phone-to-boat NMEA output","手机到船网的 NMEA 输出")
+        RuntimeOwner.NMEA_SHARING->localized(state.settings.appLanguage,"NMEA Sharing using the upstream stream","使用上游数据的 NMEA 共享")
+        else->null
+    }}
     val validationError=vm.validateProfile(profile)
     fun edit(next:ConnectionProfile){profile=next;vm.clearConnectionAttempt()}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("nmea_runtime_list"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { PageHeader(tr("NMEA connection","NMEA 连接"), tr("Configure and verify live traffic. A successful connection becomes the next default unless a session is open.","配置并验证实时数据。连接成功后会成为下次默认来源，但不会改变已开启会话。")) }
-        if(activeWatchUsesNmea&&state.connection!=NmeaConnectionState.CONNECTED)item { Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Anchor watch needs NMEA","锚警需要 NMEA 数据"),style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer);Text(tr("The session remains locked to NMEA with no silent failover. Restore this connection, or pause the watch before disconnecting.","本次会话仍锁定 NMEA，不会静默切源。请恢复连接，或先暂停锚警再断开。"),color=MaterialTheme.colorScheme.onErrorContainer);OutlinedButton({showWatchDisconnect=true}){Text(tr("Pause safely","安全暂停"))}}} }
+        if(activeWatchNmeaFault)item { Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Anchor watch needs a usable NMEA position","锚警需要可用的 NMEA 船位"),style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer);Text(tr("The transport may be disconnected, stale, without a current fix, or reporting unacceptable quality. The session remains locked to NMEA with no silent failover. Reconnect, or pause safely before changing the source.","连接可能已断开、过期、没有当前定位，或正在报告不合格的定位质量。本次会话仍锁定 NMEA，不会静默切源。请重连，或先安全暂停再更换数据源。"),color=MaterialTheme.colorScheme.onErrorContainer);OutlinedButton({showWatchDisconnect=true}){Text(tr("Pause safely","安全暂停"))}}} }
         item { Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if(connectionRunning) AssistChip({}, { Text(tr("Configuration locked while connected","连接期间配置已锁定")) }, leadingIcon={Icon(Icons.Default.Lock,null,Modifier.size(18.dp))}, enabled=false)
             OutlinedTextField(profile.name, { edit(profile.copy(name = it)) }, label = { Text(tr("Profile name","配置名称")) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled=controlsEnabled)
             Text(tr("Protocol","协议"), style = MaterialTheme.typography.labelLarge); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilterChip(profile.protocol == Protocol.TCP, { edit(profile.copy(protocol = Protocol.TCP)) }, label = { Text(tr("TCP client","TCP 客户端")) },enabled=controlsEnabled); FilterChip(profile.protocol == Protocol.UDP, { edit(profile.copy(protocol = Protocol.UDP)) }, label = { Text(tr("UDP listener","UDP 监听")) },enabled=controlsEnabled) }
             if (profile.protocol == Protocol.TCP) OutlinedTextField(profile.host, { edit(profile.copy(host = it)) }, label = { Text(tr("Host or IP address","主机名或 IP 地址")) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled=controlsEnabled,isError=validationError!=null,supportingText={if(validationError!=null)Text(localizeKnownMessage(validationError))})
             OutlinedTextField(profile.port.toString(), { v -> edit(profile.copy(port=v.filter(Char::isDigit).toIntOrNull()?:0)) }, label = { Text(if (profile.protocol == Protocol.TCP) tr("Server port","服务器端口") else tr("Listen port","监听端口")) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled=controlsEnabled, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),isError=profile.port !in 1..65535)
-            OutlinedTextField(profile.noDataTimeoutSeconds.toString(),{v->edit(profile.copy(noDataTimeoutSeconds=v.filter(Char::isDigit).toIntOrNull()?:0))},label={Text(tr("No-data timeout","无数据超时"))},suffix={Text(tr("s","秒"))},supportingText={Text(tr("3–120 seconds; drives No data / Stale states and reconnect.","3–120 秒；用于无数据/过期状态与重连。"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled,isError=profile.noDataTimeoutSeconds !in 3..120,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
+            OutlinedTextField(profile.noDataTimeoutSeconds.toString(),{v->edit(profile.copy(noDataTimeoutSeconds=v.filter(Char::isDigit).toIntOrNull()?:0))},label={Text(tr("No-data timeout","无数据超时"))},suffix={Text(tr("s","秒"))},supportingText={Text(tr("3–120 seconds; reports a quiet stream without closing the TCP connection.","3–120 秒；用于报告数据流静默，但不会因此关闭 TCP 连接。"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled,isError=profile.noDataTimeoutSeconds !in 3..120,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
             SettingSwitch(tr("Require checksum","要求校验和"), tr("Reject sentences without a checksum","拒绝没有校验和的语句"), profile.requireChecksum,enabled=controlsEnabled) { edit(profile.copy(requireChecksum = it)) }; SettingSwitch(tr("Auto reconnect","自动重连"), tr("Reconnect after network loss","网络中断后自动重新连接"), profile.autoReconnect,enabled=controlsEnabled) { edit(profile.copy(autoReconnect = it)) }
-            if(connectionRunning) Button({if(activeWatchUsesNmea)showWatchDisconnect=true else vm.disconnect()},Modifier.fillMaxWidth(),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Disconnect","断开连接"))}
+            if(connectionRunning){
+                OutlinedButton(vm::reconnectNmea,Modifier.fillMaxWidth(),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect now","立即重新连接"))}
+                Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.fillMaxWidth(),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Disconnect","断开连接"))}
+            }
             else Button({vm.saveAndConnect(profile)},Modifier.fillMaxWidth(),enabled=state.settingsReady&&!testing&&validationError==null){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Testing NMEA…","正在测试 NMEA…") else tr("Test, save & connect","测试、保存并连接"))}
             if(!state.settingsReady)Text(tr("Loading saved connection settings…","正在加载已保存的连接设置…"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
             if(testing)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(testing&&!connectionRunning)Text(tr("The app must receive at least one valid NMEA sentence before it will connect.","应用必须收到至少一条有效 NMEA 语句后才会正式连接。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(state.settings.nmeaSharingEnabled)Text(tr("NMEA Sharing does not own or auto-connect this endpoint. If disconnected, the server stays up and waits for accepted input.","NMEA 共享不会占用或自动连接此端点；断开后共享服务器会继续运行并等待可信输入。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(state.settings.nmeaSharingEnabled)Text(tr("NMEA Sharing never auto-opens a saved endpoint. When its selected output uses NMEA, it keeps an already-connected upstream in use; otherwise the server stays up and waits for accepted input.","NMEA 共享不会自动打开已保存端点；当共享输出使用 NMEA 时，它会继续占用已经连接的上游，否则共享服务器会保持运行并等待可信输入。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
         item { ConnectionResultCard(state, vm) }
         item { GpsProxyCard(state,vm) }
         item { NmeaSharingCard(state,vm) }
     }
     if(showWatchDisconnect)ActiveWatchDisconnectDialog(pauseWatch={showWatchDisconnect=false;vm.stopActiveWatchAndDisconnect()},dismiss={showWatchDisconnect=false})
+    if(showDependencyDisconnect)NmeaDependencyDisconnectDialog(
+        dependencies=nmeaDependencies,
+        stopAndDisconnect={showDependencyDisconnect=false;vm.stopNmeaDependenciesAndDisconnect()},
+        dismiss={showDependencyDisconnect=false},
+    )
 }
 
 @Composable private fun NmeaSharingCard(state:MainUiState,vm:MainViewModel){
@@ -233,10 +279,26 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
 }
 
 @Composable private fun ActiveWatchDisconnectDialog(pauseWatch:()->Unit,dismiss:()->Unit){
- AlertDialog(onDismissRequest=dismiss,title={Text(tr("Anchor watch is locked to NMEA","锚警已锁定 NMEA"))},text={Text(tr("The GPS source cannot change during an open session, even while paused. Pause and disconnect now, or cancel and restore NMEA. Lift anchor before choosing another source.","会话未结束时不能更换 GPS 来源，暂停期间也一样。你可以暂停并断开，或取消后恢复 NMEA；要更换来源请先起锚。"))},confirmButton={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
-  OutlinedButton(pauseWatch,Modifier.fillMaxWidth()){Icon(Icons.Default.PauseCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Pause watch & disconnect","暂停锚警并断开"))}
+ AlertDialog(onDismissRequest=dismiss,title={Text(tr("Anchor watch is using NMEA","锚警正在使用 NMEA"))},text={Text(tr("Disconnecting a running position source would leave the watch unable to evaluate movement. Pause first; the centre, range and track stay intact. NMEA closes only if no sonar, proxy, sharing, output, Trip or condition feature still owns it. Then reconnect/configure a server or switch this same paused session to Phone GPS before resuming.","直接断开运行中的定位源会让锚警无法判断船位。请先暂停；中心、范围和轨迹都会保留。只有当声呐、代理、共享、输出、航程或环境警戒均不再占用时，NMEA 才会真正断开。之后可重连/配置服务器，或让同一个暂停会话改用手机 GPS，再继续监控。"))},confirmButton={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+  OutlinedButton(pauseWatch,Modifier.fillMaxWidth()){Icon(Icons.Default.PauseCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Pause safely & release watch source","安全暂停并释放锚警数据源"))}
   TextButton(dismiss,Modifier.align(Alignment.End)){Text(tr("Cancel","取消"))}
  }})
+}
+
+@Composable private fun NmeaDependencyDisconnectDialog(dependencies:List<String>,stopAndDisconnect:()->Unit,dismiss:()->Unit){
+ AlertDialog(
+  onDismissRequest=dismiss,
+  title={Text(tr("NMEA is still in use","仍有功能正在使用 NMEA"))},
+  text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+   Text(tr("Disconnect is not a cosmetic switch: the following running features own this stream.","“断开”不是装饰性开关：以下运行中功能仍占用这条数据流。"))
+   dependencies.forEach{Text("• $it",style=MaterialTheme.typography.bodySmall)}
+   Text(tr("Continuing will disable condition alerts, stop and save sonar, pause Trip Watch, stop GPS proxy/sharing/output, then close NMEA. Anchor sessions that use System GPS remain open.","继续后会关闭环境警戒、停止并保存声呐、暂停航程监控、关闭 GPS 代理/共享/输出，再断开 NMEA。使用系统 GPS 的锚泊会话仍会保留。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  }},
+  confirmButton={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+   Button(stopAndDisconnect,Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Stop listed features & disconnect","停止上述功能并断开"))}
+   TextButton(dismiss,Modifier.align(Alignment.End)){Text(tr("Cancel","取消"))}
+  }},
+ )
 }
 
 @Composable private fun ConnectionResultCard(state: MainUiState, vm: MainViewModel) { Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -247,17 +309,28 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
 @Composable
 internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
     var paused by remember { mutableStateOf(false) };var healthExpanded by remember{mutableStateOf(false)};var displayed by remember { mutableStateOf(state.diagnostics.raw) }; val context=LocalContext.current;val tileDiagnostics by SonarTileDiagnostics.state.collectAsState()
+    val ageClock by produceState(android.os.SystemClock.elapsedRealtime()){
+        while(true){kotlinx.coroutines.delay(1_000);value=android.os.SystemClock.elapsedRealtime()}
+    }
     LaunchedEffect(state.diagnostics.raw, paused) { if (!paused) displayed = state.diagnostics.raw }
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{PageHeader(tr("Live NMEA data","实时 NMEA 数据"), tr("Parsed values, readable health checks and the latest 200 raw sentences.","查看解析值、清晰的健康检查和最近 200 条原始语句。"))}
         item{Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { CompactStat(tr("VALID","有效"), state.diagnostics.validSentences.toString(), Modifier.weight(1f)); CompactStat(tr("INVALID","无效"), state.diagnostics.invalidSentences.toString(), Modifier.weight(1f)); CompactStat(tr("CHECKSUM","校验错误"), state.diagnostics.checksumErrors.toString(), Modifier.weight(1f)) }}
-        state.nmeaFix?.let{fix->item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+        item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
             Text(tr("Latest NMEA values","最新 NMEA 数值"),fontWeight=FontWeight.SemiBold)
-            DiagnosticsRow(tr("Position","船位"),"%.6f, %.6f".format(fix.latitude,fix.longitude))
-            DiagnosticsRow(tr("Speed / heading","航速 / 航向"),"${fix.sogKnots?.let{"%.1f kn".format(it)}?:"—"}  ·  ${fix.headingTrueDegrees?.let{"${it.toInt()}°"}?:"—"}")
-            DiagnosticsRow(tr("HDOP / provider","HDOP / 提供者"),"${fix.hdop?.let{"%.1f".format(it)}?:"—"}  ·  ${diagnosticState(fix.positionProvider.name)}")
-            DiagnosticsRow(tr("Wind / depth","风 / 水深"),"${fix.windSpeedKnots?.let{"%.1f kn".format(it)}?:"—"}  ·  ${fix.depthMeters?.let{"%.1f m".format(it)}?:"—"}")
-        }}}}
+            val now=ageClock
+            val instruments=state.nmeaInstruments
+            val depth=state.liveDepth.takeUnless{it.isDemo}
+            val trueWind=state.liveWind.trueSpeed
+            val apparentWind=state.liveWind.apparentSpeed
+            DiagnosticsRow(tr("Position","船位"),state.nmeaFix?.let{"%.6f, %.6f".format(it.latitude,it.longitude)}?:"—")
+            DiagnosticsRow(tr("SOG / COG","对地航速 / 对地航向"),"${heldNmeaValue(instruments.speedOverGroundKnots?.first,instruments.speedOverGroundKnots?.second,"kn",now)}  ·  ${heldNmeaValue(instruments.courseOverGroundTrue?.first,instruments.courseOverGroundTrue?.second,"°",now)}")
+            DiagnosticsRow(tr("True heading / STW","真船首向 / 对水航速"),"${heldNmeaValue(instruments.headingTrue?.first,instruments.headingTrue?.second,"°",now)}  ·  ${heldNmeaValue(instruments.speedThroughWaterKnots?.first,instruments.speedThroughWaterKnots?.second,"kn",now)}")
+            DiagnosticsRow(tr("True / apparent wind","真风 / 视风"),"${heldNmeaValue(trueWind?.value,trueWind?.receivedElapsedRealtime,"kn",now)}  ·  ${heldNmeaValue(apparentWind?.value,apparentWind?.receivedElapsedRealtime,"kn",now)}")
+            DiagnosticsRow(tr("Depth","水深"),heldNmeaValue(depth?.depthMeters,depth?.receivedElapsedRealtime,"m",now,3_000L))
+            DiagnosticsRow(tr("HDOP / provider","HDOP / 提供者"),"${heldNmeaValue(state.nmeaFix?.hdop,state.nmeaFix?.hdopReceivedElapsedRealtime,"",now)}  ·  ${state.nmeaFix?.positionProvider?.name?.let{diagnosticState(it)}?:"—"}")
+            Text(tr("A missing field means this sentence did not update that instrument. The last valid value is retained with its original age until the NMEA connection generation changes.","字段为空只表示本条语句没有更新该仪表。最后一次有效值会连同原始更新时间保留，直到 NMEA 连接代次改变。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }}}
         item{RuntimeHealthCard(state,tileDiagnostics,healthExpanded){healthExpanded=!healthExpanded}}
         item{Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Raw sentences","原始语句"),style=MaterialTheme.typography.titleMedium);Text(if(paused)tr("Display paused; incoming data is not discarded.","显示已暂停；新到数据不会被丢弃。")else tr("Live display","实时显示"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton({paused=!paused}){Icon(if(paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(4.dp));Text(if(paused)tr("Resume","继续")else tr("Pause","暂停"))}}
@@ -269,11 +342,34 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
         }}}}
     }
 }
+
+@Composable
+private fun heldNmeaValue(value:Double?,received:Long?,unit:String,now:Long,freshMillis:Long=5_000L):String{
+    if(value==null)return "—"
+    val age=received?.let{(now-it).coerceAtLeast(0L)}
+    val status=when{
+        age==null->""
+        age<=freshMillis->tr("live","实时")
+        age<=60_000L->tr("held ${age/1_000}s","保留值 ${age/1_000} 秒")
+        else->tr("stale ${age/1_000}s","已过期 ${age/1_000} 秒")
+    }
+    return "%.1f%s%s".format(value,if(unit.isBlank())"" else " $unit",if(status.isBlank())"" else " · $status")
+}
 @Composable private fun CompactStat(label: String, value: String, modifier: Modifier = Modifier) { Card(modifier) { Column(Modifier.padding(10.dp)) { Text(label, style = MaterialTheme.typography.labelSmall); Text(value, style = MaterialTheme.typography.titleLarge) } } }
 
 @Composable private fun RuntimeHealthCard(state:MainUiState,tile:com.yokuli.anchorwatch.map.SonarTileDiagnosticsSnapshot,expanded:Boolean,toggle:()->Unit){
     val runtime=state.runtimeDiagnostics;val grid=state.sonarRecorder.gridDiagnostics
-    val ownerLabels=mapOf("ANCHOR_WATCH" to tr("Anchor watch","锚警监控"),"NMEA_SHARING" to tr("NMEA sharing","NMEA 共享"),"GPS_PROXY" to tr("GPS proxy","GPS 代理"),"SONAR_MAPPING" to tr("Sonar mapping","声呐测绘"))
+    val ownerLabels=mapOf(
+        "ANCHOR_WATCH" to tr("Anchor watch","锚警监控"),
+        "ANCHOR_TELEMETRY" to tr("Anchor report sensors","锚泊报告传感器"),
+        "CONDITION_MONITOR" to tr("Depth / wind alerts","水深 / 风警戒"),
+        "NMEA_SHARING" to tr("NMEA sharing","NMEA 共享"),
+        "GPS_PROXY" to tr("GPS proxy","GPS 代理"),
+        "SONAR_MAPPING" to tr("Sonar mapping","声呐测绘"),
+        "PHONE_NMEA_OUTPUT" to tr("Phone GPS output","手机 GPS 输出"),
+        "VESSEL_HUB_UI" to tr("Live vessel instruments","实时船舶仪表"),
+        "TRIP_WATCH" to tr("Trip recording","航程记录"),
+    )
     Card{
         Column(Modifier.fillMaxWidth()){
             Row(Modifier.fillMaxWidth().clickable(onClick=toggle).padding(14.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
@@ -314,6 +410,7 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
                 DiagnosticsRow(tr("Active services","活动服务"),runtime.activeOwners.map{ownerLabels[it.name]?:it.name}.joinToString().ifBlank{"—"})
                 DiagnosticsRow(tr("CPU wake lock","CPU 唤醒锁"),if(runtime.wakeLockHeld)tr("Held","已持有")else tr("Off","关闭"))
                 DiagnosticsRow(tr("Wi-Fi lock","Wi-Fi 锁"),if(runtime.wifiLockHeld)tr("Held","已持有")else tr("Off","关闭"))
+                DiagnosticsRow(tr("Phone motion / heading / pressure","手机运动 / 方位 / 气压"),"${if(runtime.phoneMotionActive)tr("ON","开")else tr("OFF","关")} / ${if(runtime.phoneHeadingActive)tr("ON","开")else tr("OFF","关")} / ${if(runtime.phonePressureActive)tr("ON","开")else tr("OFF","关")}")
                 DiagnosticsRow(tr("Sharing clients / dropped","共享客户端 / 已断开"),"${runtime.sharingClients} / ${runtime.sharingSlowClientsDropped}")
             }}
         }
@@ -327,7 +424,7 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
     "ACCEPTED"->tr("Accepted","可信");"QUARANTINED"->tr("Quarantined","隔离");"REJECTED"->tr("Rejected","拒绝");"PENDING"->tr("Pending","等待中")
     "TRUSTED"->tr("Trusted","可信");"DEGRADED"->tr("Degraded","质量下降");"UNTRUSTED"->tr("Untrusted","不可信")
     "IDLE"->tr("Idle","待命");"LOADING"->tr("Loading","正在加载");"AVAILABLE"->tr("Available","可用");"NO_DATA"->tr("No data","无数据");"OFFLINE"->tr("Offline","离线");"NOT_CONFIGURED"->tr("Not configured","未配置");"ERROR"->tr("Error","错误")
-    "ANCHOR_WATCH"->tr("Anchor watch","锚警监控");"NMEA_SHARING"->tr("NMEA sharing","NMEA 共享");"GPS_PROXY"->tr("GPS proxy","GPS 代理");"SONAR_MAPPING"->tr("Sonar mapping","声呐测绘")
+    "ANCHOR_WATCH"->tr("Anchor watch","锚警监控");"ANCHOR_TELEMETRY"->tr("Anchor report sensors","锚泊报告传感器");"CONDITION_MONITOR"->tr("Depth / wind alerts","水深 / 风警戒");"NMEA_SHARING"->tr("NMEA sharing","NMEA 共享");"GPS_PROXY"->tr("GPS proxy","GPS 代理");"SONAR_MAPPING"->tr("Sonar mapping","声呐测绘");"PHONE_NMEA_OUTPUT"->tr("Phone GPS output","手机 GPS 输出");"VESSEL_HUB_UI"->tr("Live vessel instruments","实时船舶仪表");"TRIP_WATCH"->tr("Trip recording","航程记录")
     "ANDROID_GNSS"->tr("Android GNSS","安卓 GNSS");"ANDROID_NETWORK"->tr("Android network","安卓网络定位");"NMEA_GNSS"->tr("NMEA GNSS","NMEA GNSS");"DEMO_SIMULATED"->tr("Demo simulation","演示模拟")
     else->value.replace('_',' ').lowercase().replaceFirstChar{it.titlecase()}
 }

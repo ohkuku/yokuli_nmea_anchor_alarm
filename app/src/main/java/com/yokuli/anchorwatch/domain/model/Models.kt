@@ -1,5 +1,7 @@
 package com.yokuli.anchorwatch.domain.model
 
+import com.yokuli.anchorwatch.domain.anchor.AnchorCentreObservabilityReason
+
 data class NavigationFix(
     val latitude: Double,
     val longitude: Double,
@@ -9,13 +11,28 @@ data class NavigationFix(
     val cogTrueDegrees: Double? = null,
     val headingTrueDegrees: Double? = null,
     val headingMagneticDegrees: Double? = null,
+    val sogReceivedElapsedRealtime: Long? = null,
     val cogReceivedElapsedRealtime: Long? = null,
     val headingReceivedElapsedRealtime: Long? = null,
+    val headingMagneticReceivedElapsedRealtime: Long? = null,
     val hdop: Double? = null,
     val fixQuality: Int? = null,
     val satellites: Int? = null,
+    /** Receive times of the last GGA quality components. A later RMC/GLL
+     * sentence may omit them without erasing their diagnostic value. Safety
+     * consumers must still reject them after their own freshness window. */
+    val hdopReceivedElapsedRealtime: Long? = null,
+    val fixQualityReceivedElapsedRealtime: Long? = null,
+    val satellitesReceivedElapsedRealtime: Long? = null,
     val depthMeters: Double? = null,
+    /** Monotonic receive time of the last real depth sentence. A held value is
+     * intentionally kept in [depthMeters]; consumers decide freshness from
+     * this timestamp instead of treating an omitted DBT/DPT field as null. */
+    val depthReceivedElapsedRealtime: Long? = null,
+    val speedThroughWaterKnots:Double? = null,
+    val speedThroughWaterReceivedElapsedRealtime:Long? = null,
     val altitudeMeters: Double? = null,
+    val altitudeReceivedElapsedRealtime: Long? = null,
     val horizontalAccuracyMeters: Double? = null,
     val positionProvider: PositionProvider = PositionProvider.UNKNOWN,
     val isMockLocation: Boolean = false,
@@ -91,8 +108,18 @@ data class BackdownAnchorEstimate(
     val temporalFitConsistent: Boolean = false,
     val effectiveDurationMillis: Long = 0L,
     val directionEvidenceConsistent: Boolean = false,
+    val radialObservable: Boolean = false,
+    val trackDiameterMeters: Double = 0.0,
+    val fittedRadiusMeters: Double? = null,
+    val maximumRodeMeters: Double = 0.0,
+    val gpsMarginMeters: Double = 0.0,
+    val fittedRadiusRatio: Double? = null,
+    val trackSpanRatio: Double = 0.0,
+    val observabilityReason: AnchorCentreObservabilityReason = AnchorCentreObservabilityReason.NO_USABLE_CIRCLE_FIT,
+    val nmeaPhysicalHeadingEvidenceCount: Int = 0,
+    val phoneHeadingEvidenceCount: Int = 0,
 ){
-    fun debugSummary():String="confidence=$confidence, centre=$latitude/$longitude, distance=$distanceMeters, uncertainty=$uncertaintyRadiusMeters, sampleCount=$sampleCount, effectiveDuration=$effectiveDurationMillis, angularCoverage=$angularCoverageDegrees, sectorCount=$angularSectorCount, reversalCount=$swingReversalCount, rmsError=$rmsErrorMeters, temporalConsensus=$temporalFitConsistent, directionEvidenceConsistent=$directionEvidenceConsistent"
+    fun debugSummary():String="confidence=$confidence, centre=$latitude/$longitude, distance=$distanceMeters, uncertainty=$uncertaintyRadiusMeters, sampleCount=$sampleCount, effectiveDuration=$effectiveDurationMillis, angularCoverage=$angularCoverageDegrees, sectorCount=$angularSectorCount, reversalCount=$swingReversalCount, rmsError=$rmsErrorMeters, temporalConsensus=$temporalFitConsistent, directionEvidenceConsistent=$directionEvidenceConsistent, radialObservable=$radialObservable, observabilityReason=$observabilityReason, trackDiameter=$trackDiameterMeters, fittedRadius=$fittedRadiusMeters, maximumRode=$maximumRodeMeters, gpsMargin=$gpsMarginMeters, fittedRadiusRatio=$fittedRadiusRatio, trackSpanRatio=$trackSpanRatio, nmeaHeadingEvidence=$nmeaPhysicalHeadingEvidenceCount, phoneHeadingEvidence=$phoneHeadingEvidenceCount"
 }
 
 data class AnchorConfig(

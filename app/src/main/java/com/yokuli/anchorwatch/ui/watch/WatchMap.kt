@@ -85,10 +85,11 @@ import java.text.DateFormat
 
 @Composable internal fun MapNotConfigured() { Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Card { Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Default.Map, null, Modifier.size(40.dp)); Text(tr("Google Maps is not configured","Google 地图尚未配置"), style = MaterialTheme.typography.titleMedium); Text(tr("Add a Maps SDK key at build time, then rebuild the app.","请在编译阶段加入 Maps SDK 密钥后重新构建应用。")) } } } }
 
-internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFix,session:AnchorSessionEntity?,points:List<com.yokuli.anchorwatch.data.database.TrackPointEntity>,livePhoneHeading:com.yokuli.anchorwatch.location.PhoneHeadingSample?=null,nmeaHeadingFix:com.yokuli.anchorwatch.domain.model.NavigationFix?=null,nowElapsed:Long=android.os.SystemClock.elapsedRealtime(),trustedNmeaCourse:TrustedNmeaCourse?=null):Double?{
+internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFix,session:AnchorSessionEntity?,points:List<com.yokuli.anchorwatch.data.database.TrackPointEntity>,livePhoneHeading:com.yokuli.anchorwatch.location.PhoneHeadingSample?=null,nmeaHeadingFix:com.yokuli.anchorwatch.domain.model.NavigationFix?=null,nmeaPhysicalHeading:Pair<Double,Long>?=null,nowElapsed:Long=android.os.SystemClock.elapsedRealtime(),trustedNmeaCourse:TrustedNmeaCourse?=null):Double?{
     // Presentation heading is intentionally independent from estimator evidence.
     // A fresh physical NMEA heading is authoritative. A speed-gated NMEA COG is
     // next; the live phone rotation vector remains the responsive fallback.
+    nmeaPhysicalHeading?.takeIf{(_,received)->nowElapsed-received in 0L..3_000L}?.let{return it.first}
     val physicalNmea=listOfNotNull(nmeaHeadingFix,fix).firstOrNull{candidate->
         candidate.headingSource==com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL&&
             candidate.headingTrueDegrees!=null&&
@@ -105,7 +106,7 @@ internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFi
         nowElapsed-candidate.receivedElapsedRealtime in 0L..5_000L&&
             listOf(candidate.windDirectionTrueDegrees,candidate.apparentWindAngleDegrees,candidate.trueWindAngleDegrees,candidate.trueWindSpeedKnots,candidate.apparentWindSpeedKnots).any{it!=null}
     }==true
-    val windHeading=if(freshNmeaWind)WindAnchorEvidence.summarize(points.takeLast(300).map{point->WindAnchorEvidence.Sample(point.timestamp,point.latitude,point.longitude,point.sog,point.cog,point.heading.takeIf{point.headingMeasured},point.windDirectionTrue,point.trueWindAngle,point.apparentWindAngle,point.trueWindSpeedKnots,point.apparentWindSpeedKnots,point.headingSampleSequence,point.windSampleSequence)}).observations.lastOrNull{it.source!=WindAnchorEvidence.Source.PHYSICAL_HEADING&&it.source!=WindAnchorEvidence.Source.BACKDOWN_COG}?.headingToAnchorDegrees else null
+    val windHeading=if(freshNmeaWind)WindAnchorEvidence.summarize(points.takeLast(300).map{point->WindAnchorEvidence.Sample(point.timestamp,point.latitude,point.longitude,point.sog,point.cog,point.heading.takeIf{point.headingMeasured},point.windDirectionTrue,point.trueWindAngle,point.apparentWindAngle,point.trueWindSpeedKnots,point.apparentWindSpeedKnots,point.headingSampleSequence,point.windSampleSequence)}).observations.lastOrNull{it.source !in setOf(WindAnchorEvidence.Source.NMEA_PHYSICAL_HEADING,WindAnchorEvidence.Source.PHONE_HEADING,WindAnchorEvidence.Source.BACKDOWN_COG)}?.headingToAnchorDegrees else null
     if(windHeading!=null)return windHeading
     // Boat/bow presentation is intentionally separate from the handheld phone
     // direction used by anchorage approach guidance. Only integrity-gated phone

@@ -6,6 +6,7 @@ data class DepthUiState(
     val liveDepthMeters:Double?=null,
     val liveDepthReference:DepthReference?=null,
     val liveDepthAgeMillis:Long?=null,
+    val liveDepthHoldState:SonarDepthHoldState=SonarDepthHoldState.NO_DEPTH,
     val correctedDepthMeters:Double?=null,
     val linz:LinzDepthReference=LinzDepthReference(),
     val personalMapDepthMeters:Double?=null,

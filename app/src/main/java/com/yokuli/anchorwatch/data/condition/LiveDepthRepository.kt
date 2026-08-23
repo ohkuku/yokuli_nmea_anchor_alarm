@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch.data.condition
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
 import com.yokuli.anchorwatch.domain.sonar.DepthProvenance
+import com.yokuli.anchorwatch.domain.sonar.DepthReference
 import com.yokuli.anchorwatch.domain.sonar.DepthSentenceType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ data class LiveDepthState(
     val rawDepthMeters:Double?=null,
     val nmeaOffsetMeters:Double?=null,
     val userOffsetMeters:Double=0.0,
+    val reference:DepthReference?=null,
     val sentenceType:DepthSentenceType?=null,
     val receivedElapsedRealtime:Long?=null,
     val isDemo:Boolean=false,
@@ -27,12 +29,39 @@ data class LiveDepthState(
 @Singleton
 class LiveDepthRepository @Inject constructor(settings:SettingsRepository){
     private val _state=MutableStateFlow(LiveDepthState());val state=_state.asStateFlow()
+    private val lock=Any()
     @Volatile private var userOffset=0.0
-    init{CoroutineScope(SupervisorJob()+Dispatchers.Default).launch{settings.settings.collect{userOffset=it.sounderOffsetMeters}}}
+    @Volatile private var settingsReady=false
+    private var lastObservation:DepthObservation?=null
+    private var lastObservationIsDemo=false
+    init{CoroutineScope(SupervisorJob()+Dispatchers.Default).launch{settings.settings.collect{value->
+        synchronized(lock){
+            userOffset=value.sounderOffsetMeters
+            settingsReady=true
+            lastObservation?.let{publishLocked(it,lastObservationIsDemo)}
+        }
+    }}}
     fun accept(observation:DepthObservation,isDemo:Boolean=false){
-        val provenance=DepthProvenance.from(observation,userOffset)
-        _state.value=LiveDepthState(provenance.finalDepthMeters,provenance.rawDepthMeters,provenance.nmeaOffsetMeters,provenance.userOffsetMeters,observation.sentenceType,observation.receivedElapsedRealtime,isDemo)
+        synchronized(lock){
+            lastObservation=observation
+            lastObservationIsDemo=isDemo
+            // DataStore is asynchronous. Publishing with a made-up zero offset
+            // creates a brief but real safety-depth error during cold start.
+            if(settingsReady)publishLocked(observation,isDemo)
+        }
     }
-    fun clear(){_state.value=LiveDepthState()}
+    fun clear(){synchronized(lock){lastObservation=null;lastObservationIsDemo=false;_state.value=LiveDepthState(userOffsetMeters=userOffset)}}
+    private fun publishLocked(observation:DepthObservation,isDemo:Boolean){
+        val provenance=DepthProvenance.from(observation,userOffset)
+        _state.value=LiveDepthState(
+            depthMeters=provenance.finalDepthMeters,
+            rawDepthMeters=provenance.rawDepthMeters,
+            nmeaOffsetMeters=provenance.nmeaOffsetMeters,
+            userOffsetMeters=provenance.userOffsetMeters,
+            reference=observation.reference,
+            sentenceType=observation.sentenceType,
+            receivedElapsedRealtime=observation.receivedElapsedRealtime,
+            isDemo=isDemo,
+        )
+    }
 }
-

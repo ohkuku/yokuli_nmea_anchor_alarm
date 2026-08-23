@@ -74,6 +74,17 @@ jobs:
             stable) is_on_branch main ;;
             *) exit 1 ;;
           esac
+      - name: Collect validation failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh release-validation
+      - name: Upload downloadable validation failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-release-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/release-validation
+          if-no-files-found: error
+          retention-days: 30
 
   signing-preflight:
     name: Release signing preflight
@@ -113,6 +124,17 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: bash .github/scripts/validate_release_signing.sh "$RUNNER_TEMP/anchor-watch-release.jks"
+      - name: Collect signing-preflight failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh signing-preflight
+      - name: Upload downloadable signing-preflight failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-signing-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/signing-preflight
+          if-no-files-found: error
+          retention-days: 30
 
   api36-smoke:
     name: Release API 36 launch smoke
@@ -152,6 +174,17 @@ jobs:
       - name: Expose release API 36 failures
         if: failure()
         run: python3 .github/scripts/report_android_test_failures.py
+      - name: Collect release API 36 failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh release-api36-smoke
+      - name: Upload downloadable release API 36 failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-release-api36-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/release-api36-smoke
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload release API 36 reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -271,3 +304,14 @@ jobs:
               --generate-notes \
               $prerelease_flag
           fi
+      - name: Collect release-publish failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh release-publish
+      - name: Upload downloadable release-publish failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-release-publish-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/release-publish
+          if-no-files-found: error
+          retention-days: 30

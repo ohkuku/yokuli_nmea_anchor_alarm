@@ -81,6 +81,17 @@ jobs:
             app/build/reports/lint-results-*.xml
           if-no-files-found: warn
           retention-days: 14
+      - name: Collect build failure diagnostics
+        if: always() && (failure() || steps.unit_tests.outcome != 'success' || steps.lint.outcome != 'success' || steps.assemble.outcome != 'success')
+        run: bash .github/scripts/collect_failure_bundle.sh build
+      - name: Upload downloadable build failure bundle
+        if: always() && (failure() || steps.unit_tests.outcome != 'success' || steps.lint.outcome != 'success' || steps.assemble.outcome != 'success')
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/build
+          if-no-files-found: error
+          retention-days: 30
       - name: Enforce build quality gate
         if: always()
         env:
@@ -170,6 +181,17 @@ jobs:
       - name: Expose instrumented test failures
         if: failure()
         run: python3 .github/scripts/report_android_test_failures.py
+      - name: Collect integration failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh integration-shard-${{ matrix.shard }}
+      - name: Upload downloadable integration failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-integration-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/integration-shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload integration reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -229,6 +251,17 @@ jobs:
       - name: Expose API 36 smoke failures
         if: failure()
         run: python3 .github/scripts/report_android_test_failures.py
+      - name: Collect API 36 failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh api36-smoke
+      - name: Upload downloadable API 36 failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-api36-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/api36-smoke
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload API 36 smoke reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -249,6 +282,7 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v6
       - name: Download candidate built by the quality gate
         uses: actions/download-artifact@v6
         with:
@@ -279,3 +313,14 @@ jobs:
               echo "Development channel: **anchor-watch-development-debug-${{ github.run_number }}-${{ github.sha }}**"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect verified-Debug publication failure diagnostics
+        if: failure()
+        run: bash .github/scripts/collect_failure_bundle.sh verified-debug
+      - name: Upload downloadable verified-Debug failure bundle
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: FAILURE-verified-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github-failure-bundle/verified-debug
+          if-no-files-found: error
+          retention-days: 30

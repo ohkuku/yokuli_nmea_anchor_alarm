@@ -60,6 +60,10 @@ class AnchorForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Every startForegroundService request gets a synchronous foreground
+        // acknowledgement, including commands racing an idle self-stop. The
+        // coordinator replaces this starter notification with live state.
+        runtime.ensureCommandForeground()
         runtime.submit(RuntimeCommandParser.parse(intent))
         return START_STICKY
     }
@@ -78,12 +82,15 @@ class AnchorForegroundService : Service() {
         const val STOP_WATCH = "com.yokuli.anchorwatch.STOP_WATCH"
         const val PAUSE_WATCH = "com.yokuli.anchorwatch.PAUSE_WATCH"
         const val RESUME_WATCH = "com.yokuli.anchorwatch.RESUME_WATCH"
+        const val SWITCH_WATCH_GPS_SOURCE = "com.yokuli.anchorwatch.SWITCH_WATCH_GPS_SOURCE"
         const val LIFT_ANCHOR = "com.yokuli.anchorwatch.LIFT_ANCHOR"
         const val UPDATE_RADIUS = "com.yokuli.anchorwatch.UPDATE_RADIUS"
         const val STOP_WATCH_AND_DISCONNECT = "com.yokuli.anchorwatch.STOP_WATCH_AND_DISCONNECT"
+        const val STOP_NMEA_DEPENDENCIES_AND_DISCONNECT = "com.yokuli.anchorwatch.STOP_NMEA_DEPENDENCIES_AND_DISCONNECT"
         const val ACCEPT_ESTIMATED_CENTER = "com.yokuli.anchorwatch.ACCEPT_ESTIMATED_CENTER"
         const val KEEP_CURRENT_CENTER = "com.yokuli.anchorwatch.KEEP_CURRENT_CENTER"
         const val CONTINUE_ESTIMATING_CENTER = "com.yokuli.anchorwatch.CONTINUE_ESTIMATING_CENTER"
+        const val APPLY_RECALCULATED_CENTRE = "com.yokuli.anchorwatch.APPLY_RECALCULATED_CENTRE"
         const val UPDATE_PHONE_HEADING = "com.yokuli.anchorwatch.UPDATE_PHONE_HEADING"
         const val UPDATE_CONDITION_GUARDS = "com.yokuli.anchorwatch.UPDATE_CONDITION_GUARDS"
         const val RESET_WIND_BASELINE = "com.yokuli.anchorwatch.RESET_WIND_BASELINE"
@@ -92,6 +99,13 @@ class AnchorForegroundService : Service() {
         const val TEST_ALARM = "com.yokuli.anchorwatch.TEST_ALARM"
         const val STOP_ALARM_TEST = "com.yokuli.anchorwatch.STOP_ALARM_TEST"
         const val SET_NMEA_SHARING = "com.yokuli.anchorwatch.SET_NMEA_SHARING"
+        const val SET_PHONE_POSITION_OUTPUT = "com.yokuli.anchorwatch.SET_PHONE_POSITION_OUTPUT"
+        const val REFRESH_PHONE_SENSOR_OUTPUT = "com.yokuli.anchorwatch.REFRESH_PHONE_SENSOR_OUTPUT"
+        const val START_TRIP = "com.yokuli.anchorwatch.START_TRIP"
+        const val PAUSE_TRIP = "com.yokuli.anchorwatch.PAUSE_TRIP"
+        const val RESUME_TRIP = "com.yokuli.anchorwatch.RESUME_TRIP"
+        const val END_TRIP = "com.yokuli.anchorwatch.END_TRIP"
+        const val MARK_TRIP_WAYPOINT = "com.yokuli.anchorwatch.MARK_TRIP_WAYPOINT"
         const val START_SONAR_SURVEY = "com.yokuli.anchorwatch.START_SONAR_SURVEY"
         const val STOP_SONAR_SURVEY = "com.yokuli.anchorwatch.STOP_SONAR_SURVEY"
         const val STATUS_CH = "anchor_status"

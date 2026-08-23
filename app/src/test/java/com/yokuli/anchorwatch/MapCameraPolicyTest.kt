@@ -82,6 +82,11 @@ class MapCameraPolicyTest {
         assertEquals(96.0,displayHeading(system,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=1200),nmeaHeadingFix=nmea,nowElapsed=1200)!!,0.001)
     }
 
+    @Test fun directHdtInstrumentTurnsBoatWithoutWaitingForAnotherGpsSentence(){
+        val system=NavigationFix(-36.8,175.1,receivedElapsedRealtime=1000,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0)
+        assertEquals(104.0,displayHeading(system,null,emptyList(),nmeaPhysicalHeading=104.0 to 1_180L,nowElapsed=1_200)!!,0.001)
+    }
+
     @Test fun stalePhoneHeadingNeverOverridesCurrentCourse(){
         val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=4_000,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0,sogKnots=1.2)
         assertEquals(42.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=1_000),nowElapsed=4_000)!!,0.001)

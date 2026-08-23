@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -78,6 +79,7 @@ import com.yokuli.anchorwatch.map.LinzHydroConfiguration
 import com.yokuli.anchorwatch.map.LinzHydroTileProvider
 import com.yokuli.anchorwatch.map.LinzHydroDiagnostics
 import com.yokuli.anchorwatch.map.MapOverlayZ
+import com.yokuli.anchorwatch.map.MapDistanceTools
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
 import com.yokuli.anchorwatch.map.SonarTileProvider
 import com.yokuli.anchorwatch.map.localdepth.GeoPoint
@@ -87,6 +89,8 @@ import com.yokuli.anchorwatch.map.localdepth.MapChartUiState
 import com.yokuli.anchorwatch.map.nautical.OpenSeaMapConfiguration
 import com.yokuli.anchorwatch.map.nautical.OpenSeaMapDiagnostics
 import com.yokuli.anchorwatch.map.nautical.OpenSeaMapTileProvider
+import com.yokuli.anchorwatch.map.nautical.NauticalPrimarySource
+import com.yokuli.anchorwatch.map.nautical.NauticalSourceResolver
 import com.yokuli.anchorwatch.map.style.BaseMapStyle
 import com.yokuli.anchorwatch.map.style.GoogleBaseMapKind
 import com.yokuli.anchorwatch.map.style.MapStylePolicy
@@ -107,7 +111,7 @@ internal object ApproachSheetPolicy{
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
-internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
+internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
     var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
@@ -117,6 +121,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         approach={saved->anchorageListDetails=null;vm.approachSavedAnchorage(saved.id)},
         openGoogleMaps=vm::openAnchorageInGoogleMaps,
         shareQr=vm::shareAnchorageQr,
+        approachEnabled=state.active==null,
     )
     val openAnchorageDetails:(List<com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster>)->Unit={clusters->
         when(val target=com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy.resolve(clusters)){
@@ -128,7 +133,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     val fix = state.fix; val active = state.active
-    val boatHeading=fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix,trustedNmeaCourse=state.trustedNmeaCourse)}
+    val boatHeading=fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix,nmeaPhysicalHeading=state.nmeaInstruments.headingTrue,trustedNmeaCourse=state.trustedNmeaCourse)}
     DisposableEffect(Unit){vm.setMapHeadingDisplayActive(true);onDispose{vm.setMapHeadingDisplayActive(false)}}
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -136,10 +141,13 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     val context=androidx.compose.ui.platform.LocalContext.current
     val baseMapStyle=BaseMapStyle.fromPersisted(state.settings.mapType)
     val baseMapPolicy=MapStylePolicy.forStyle(baseMapStyle)
+    val nauticalSource=remember(baseMapStyle,state.offlineMap.installed,state.offlineMap.name,state.settings.offlineMapEnabled){
+        NauticalSourceResolver.resolve(baseMapStyle,state.offlineMap.installed,state.settings.offlineMapEnabled,state.offlineMap.name)
+    }
     val nauticalMapStyle=remember(context){runCatching{MapStyleOptions.loadRawResourceStyle(context,R.raw.map_style_nautical)}.getOrNull()}
     val nauticalTileProvider=remember(context){OpenSeaMapTileProvider(java.io.File(context.filesDir,"offline_maps/openseamap_recent"),BuildConfig.VERSION_NAME)}
     val linzTileProviders=remember{val templates=BuildConfig.LINZ_HYDRO_TILE_TEMPLATES.split('|').filter(LinzHydroConfiguration::isUsable);val perChartCache=LinzHydroTileProvider.MAX_DISK_BYTES/templates.size.coerceAtLeast(1);templates.mapIndexed{index,template->LinzHydroTileProvider(template,java.io.File(context.filesDir,"offline_maps/linz_recent/$index"),perChartCache)}}
-    val offlineTileProvider=remember(state.offlineMap.installed,state.offlineMap.revision){vm.createOfflineMapProvider()}
+    val offlineTileProvider=remember(nauticalSource.userChartEnabled,state.offlineMap.revision){if(nauticalSource.userChartEnabled)vm.createOfflineMapProvider()else null}
     DisposableEffect(offlineTileProvider){onDispose{offlineTileProvider?.close()}}
     val sonarGrid=state.sonarGrid
     val sonarTileProvider=remember{SonarTileProvider(SonarGrid.build(emptyList()))};val sonarTileOverlayState=rememberTileOverlayState()
@@ -157,6 +165,10 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     var followedSource by remember { mutableStateOf<GpsDataSource?>(null) }
     var recenterRequest by remember { mutableIntStateOf(0) }
     var mapLocked by rememberSaveable{mutableStateOf(true)}
+    var measuringDistance by rememberSaveable{mutableStateOf(false)}
+    val measurementStartState=remember{MarkerState(camera.position.target)}
+    val measurementEndState=remember{MarkerState(camera.position.target)}
+    var measurementTapStage by remember{mutableIntStateOf(0)}
     var lockedGestureReturnPending by remember{mutableStateOf(false)}
     var returningLockedCamera by remember{mutableStateOf(false)}
     val latestFix by rememberUpdatedState(fix)
@@ -188,7 +200,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     val mapAttribution=buildList{
         if(baseMapStyle==BaseMapStyle.NAUTICAL)add(OpenSeaMapConfiguration.ATTRIBUTION)
         if(mapChartUiState.localDepthVisible)add(LinzHydroConfiguration.ATTRIBUTION)
-        if(state.settings.offlineMapEnabled&&state.offlineMap.installed)add(state.settings.offlineMapAttribution?:tr("User-supplied offline MBTiles","用户导入的离线 MBTiles"))
+        if(nauticalSource.userChartEnabled)add(state.settings.offlineMapAttribution?:tr("User-supplied MBTiles","用户导入的 MBTiles"))
     }.joinToString("\n")
     LaunchedEffect(recenterRequest,mapLocked){if(recenterRequest>0&&!mapLocked){delay(900);vm.follow(false)}}
     LaunchedEffect(mapLoaded, fix?.latitude, fix?.longitude, fix?.valid, state.follow, state.settings.gpsDataSource, recenterRequest, camera.isMoving, lockedGestureReturnPending, returningLockedCamera) {
@@ -214,20 +226,28 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
         sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true}){active?.let(vm::openAnchorInGoogleMaps)}},
+        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.page(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
                     val gesturePolicy=MapCameraPolicy.gestures(mapLocked)
                     GoogleMap(Modifier.fillMaxSize(), cameraPositionState = camera, properties = MapProperties(mapType = if(baseMapPolicy.googleBaseMap==GoogleBaseMapKind.SATELLITE)MapType.SATELLITE else MapType.NORMAL,mapStyleOptions=if(baseMapPolicy.applyNauticalStyle)nauticalMapStyle else null), uiSettings = MapUiSettings(compassEnabled = false, indoorLevelPickerEnabled = false, mapToolbarEnabled = false, myLocationButtonEnabled = false, zoomControlsEnabled = false,scrollGesturesEnabled=gesturePolicy.scrollEnabled,zoomGesturesEnabled=gesturePolicy.zoomEnabled,rotationGesturesEnabled=gesturePolicy.rotationEnabled,tiltGesturesEnabled=gesturePolicy.tiltEnabled), onMapLoaded = { mapLoaded = true },onMapClick={point->
-                        val inspection=if(sonarLayerVisible)sonarGrid.inspect(point.latitude,point.longitude)else null
-                        sonarInspection=inspection?.let{SonarMapInspection(it)}
+                        if(measuringDistance){
+                            if(measurementTapStage%2==0)measurementStartState.position=point else measurementEndState.position=point
+                            measurementTapStage++
+                            sonarInspection=null
+                        }else{
+                            val inspection=if(sonarLayerVisible)sonarGrid.inspect(point.latitude,point.longitude)else null
+                            sonarInspection=inspection?.let{SonarMapInspection(it)}
+                        }
                     }) {
                         // BitmapDescriptorFactory is initialized by the GoogleMap instance.
                         // Creating descriptors before entering this content lambda races cold
                         // Maps startup and crashes with "IBitmapDescriptorFactory is not initialized".
                         val boatIcon=remember{boatMarkerIcon()};val anchorIcon=remember{anchorMarkerIcon()};val savedAnchorIcon=remember{savedAnchorageMarkerIcon()}
-                        if(state.settings.offlineMapEnabled&&offlineTileProvider!=null)TileOverlay(tileProvider=offlineTileProvider,fadeIn=false,transparency=(1.0-state.settings.offlineMapOpacity.coerceIn(.30,1.0)).toFloat(),visible=true,zIndex=MapOverlayZ.OFFLINE_CHART)
+                        val measureStartIcon=remember{BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)}
+                        val measureEndIcon=remember{BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE)}
+                        if(nauticalSource.primary==NauticalPrimarySource.USER_MBTILES&&offlineTileProvider!=null)TileOverlay(tileProvider=offlineTileProvider,fadeIn=false,transparency=(1.0-state.settings.offlineMapOpacity.coerceIn(.30,1.0)).toFloat(),visible=true,zIndex=MapOverlayZ.OFFLINE_CHART)
                         if(mapChartUiState.localDepthVisible)linzTileProviders.forEach{provider->TileOverlay(tileProvider=provider,fadeIn=true,transparency=LinzHydroConfiguration.transparency(mapChartUiState.localDepthOpacity),visible=true,zIndex=MapOverlayZ.LINZ_CHART)}
                         if(sonarOverlayMounted)TileOverlay(tileProvider=sonarTileProvider,state=sonarTileOverlayState,fadeIn=false,transparency=.25f,visible=true,zIndex=MapOverlayZ.SONAR)
                         if(baseMapPolicy.showSeamarks)TileOverlay(tileProvider=nauticalTileProvider,fadeIn=true,transparency=0f,visible=true,zIndex=MapOverlayZ.NAUTICAL_SEAMARKS)
@@ -241,13 +261,15 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                                 fillColor=Color(0xFF087F8C).copy(alpha=if(selected).10f else .045f),
                                 strokeWidth=if(selected)4f else 2f,
                                 zIndex=MapOverlayZ.HISTORICAL_AREA,
+                                visible=selected||camera.position.zoom>=13f,
+                                strokePattern=if(cluster.radiusEstimated)listOf(Dash(16f),Gap(10f))else emptyList(),
                             )
                             Marker(
                                 state=remember(cluster.id,cluster.centerLatitude,cluster.centerLongitude){MarkerState(centre)},
                                 title=if(cluster.savedPointCount==1)cluster.displayName else "${cluster.displayName} · ⚓ ×${cluster.savedPointCount}",
-                                snippet=tr("Saved anchorage reference","收藏锚地参考"),
+                                snippet=if(cluster.coordinateEstimated)tr("Approximate saved anchorage reference","估算的收藏锚地参考")else tr("Saved anchorage reference","收藏锚地参考"),
                                 icon=savedAnchorIcon,
-                                alpha=if(selected)1f else .78f,
+                                alpha=if(selected)1f else if(cluster.coordinateEstimated).62f else .78f,
                                 anchor=Offset(.5f,.5f),
                                 zIndex=MapOverlayZ.HISTORICAL_ANCHOR,
                                 onClick={openAnchorageDetails(listOf(cluster));true},
@@ -263,6 +285,11 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                                     zIndex=.9f,
                                 )
                             }
+                        }
+                        if(measuringDistance){
+                            Marker(state=measurementStartState,title=tr("Measurement start","测距起点"),icon=measureStartIcon,zIndex=MapOverlayZ.MEASUREMENT,draggable=true)
+                            Marker(state=measurementEndState,title=tr("Measurement end","测距终点"),icon=measureEndIcon,zIndex=MapOverlayZ.MEASUREMENT,draggable=true)
+                            Polyline(points=listOf(measurementStartState.position,measurementEndState.position),color=Color(0xFF00ACC1),width=5f,zIndex=MapOverlayZ.MEASUREMENT)
                         }
                         fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(boatHeading?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
                         active?.let { session ->
@@ -295,7 +322,25 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalIconButton(onClick={mapLocked=!mapLocked;if(mapLocked){hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)}else vm.follow(false)},modifier=Modifier.testTag("map_lock_toggle")){Icon(if(mapLocked)Icons.Default.Lock else Icons.Default.LockOpen,if(mapLocked)tr("Auto-return to boat · pan and zoom remain available","自动回到船位 · 仍可拖动缩放")else tr("Free map browsing","地图自由浏览"))}
                 FilledTonalIconButton(onClick={hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)},modifier=Modifier.testTag("map_recenter")) { Icon(Icons.Default.MyLocation, tr("Recenter on boat","回到船位")) }
+                FilledTonalIconButton(onClick={
+                    if(measuringDistance){measuringDistance=false}
+                    else{
+                        measuringDistance=true
+                        val centre=camera.position.target
+                        val halfDistance=(MapDistanceTools.metersPerPixel(centre.latitude,camera.position.zoom)*70.0).coerceIn(10.0,1_000.0)
+                        val first=AnchorGeometry.project(centre.latitude,centre.longitude,270.0,halfDistance)
+                        val second=AnchorGeometry.project(centre.latitude,centre.longitude,90.0,halfDistance)
+                        measurementStartState.position=LatLng(first.first,first.second);measurementEndState.position=LatLng(second.first,second.second);measurementTapStage=0
+                    }
+                    sonarInspection=null
+                },modifier=Modifier.testTag("map_measure_toggle"),colors=if(measuringDistance)IconButtonDefaults.filledTonalIconButtonColors(containerColor=MaterialTheme.colorScheme.primaryContainer)else IconButtonDefaults.filledTonalIconButtonColors()) { Icon(Icons.Default.Straighten, if(measuringDistance)tr("Stop measuring and clear pins","停止测距并清除图钉")else tr("Measure distance","测量距离")) }
                 FilledTonalIconButton({showLayers=true},modifier=Modifier.testTag("map_layers")){Icon(Icons.Default.Layers,tr("Map layers","地图图层"))}
+            }
+            if(renderGoogleMap)MapScaleIndicator(camera.position.target.latitude,camera.position.zoom,Modifier.align(Alignment.BottomStart).padding(start=12.dp,bottom=112.dp))
+            if(measuringDistance){
+                val start=measurementStartState.position;val end=measurementEndState.position
+                val label=MapDistanceTools.measurementLabel(MapDistanceTools.distanceMeters(start.latitude,start.longitude,end.latitude,end.longitude))+" · "+tr("drag pins or tap map","拖动图钉或点击地图")
+                Surface(Modifier.align(Alignment.BottomCenter).padding(horizontal=12.dp).padding(bottom=146.dp).testTag("map_measure_result"),color=MaterialTheme.colorScheme.surface.copy(alpha=.94f),shape=MaterialTheme.shapes.medium,shadowElevation=4.dp){Text(label,Modifier.padding(horizontal=12.dp,vertical=8.dp),style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)}
             }
             if(mapAttribution.isNotBlank())Surface(Modifier.align(Alignment.BottomCenter).padding(horizontal=12.dp).padding(bottom=112.dp),color=MaterialTheme.colorScheme.surface.copy(alpha=.88f),shape=MaterialTheme.shapes.small){Text(mapAttribution,Modifier.padding(horizontal=8.dp,vertical=4.dp),style=MaterialTheme.typography.labelSmall)}
             sonarInspection?.let{inspection->
@@ -310,7 +355,7 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
                 setHeadingMode=vm::setApproachHeadingMode,
                 details={openAnchorageDetails(listOf(it))},
                 cancel=vm::cancelAnchorageApproach,
-                setAnchorWatch={reference->setupReference=reference;vm.cancelAnchorageApproach();showPreflight=true},
+                setAnchorWatch={reference->if(state.activeTrip==null){setupReference=reference;vm.cancelAnchorageApproach();showPreflight=true}},
             )
         }
     }
@@ -320,16 +365,35 @@ internal fun WatchPage(state: MainUiState, vm: MainViewModel) {
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
     if (confirmLift) AlertDialog({ confirmLift = false }, confirmButton = { Button({ vm.liftAnchor(); confirmLift = false },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text(tr("Lift anchor","起锚")) } }, dismissButton = { TextButton({ confirmLift = false }) { Text(tr("Cancel","取消")) } }, title = { Text(tr("End this anchoring session?","结束本次锚泊？")) }, text = { Text(tr("Lift anchor permanently closes this session. Its track remains in History, but it cannot be resumed.","起锚会永久结束本次锚泊。轨迹仍保留在历史记录中，但不能再恢复。")) })
-    anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{anchorageDetails=null;vm.approachSavedAnchorage(saved.id)})}
+    anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{anchorageDetails=null;vm.approachSavedAnchorage(saved.id)},approachEnabled=state.active==null)}
     anchorageListDetails?.let{ids->AnchorageListDialog(
         members=ids.mapNotNull{id->state.savedAnchorages.firstOrNull{it.id==id}},
         dismiss={anchorageListDetails=null},
         actions=nearbyActions,
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
+    AnchorCentreRecalculationDialog(state.centreRecalculation,vm)
     if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})
     if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is a navigation aid only. It may be unavailable or outdated and does not replace official charts, Notices to Mariners, depth instruments or a proper passage plan.","该海图影像层仅供辅助参考，可能不可用或已过期，不能替代官方海图、航海通告、测深仪或正规的航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})
+}
+
+@Composable
+private fun MapScaleIndicator(latitude:Double,zoom:Float,modifier:Modifier=Modifier){
+    val density=LocalDensity.current
+    val targetPixels=with(density){104.dp.toPx()}
+    val scale=remember(latitude,zoom,targetPixels){MapDistanceTools.scaleBar(latitude,zoom,targetPixels)}
+    val width=with(density){scale.widthPixels.toDp()}
+    Surface(modifier.testTag("map_distance_scale"),color=MaterialTheme.colorScheme.surface.copy(alpha=.90f),shape=MaterialTheme.shapes.small){
+        Column(Modifier.padding(horizontal=8.dp,vertical=5.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){
+            Text(scale.label,style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold)
+            Row(Modifier.width(width).height(5.dp),verticalAlignment=Alignment.Bottom){
+                Box(Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onSurface))
+                Box(Modifier.weight(1f).height(2.dp).background(MaterialTheme.colorScheme.onSurface))
+                Box(Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onSurface))
+            }
+        }
+    }
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
@@ -359,7 +423,8 @@ private fun WatchPreflightSheet(state:MainUiState,dismiss:()->Unit,continueSetup
   value.startsWith("Fresh · ")->value.replace("Fresh · ","新鲜 · ").replace(" s"," 秒");value=="Unavailable"->"不可用";value=="Position quality is unknown."->"定位质量未知。"
   value=="Accuracy is wider than a useful anchor boundary."->"定位误差已经大于实用的锚警范围。";value=="Use a wider alarm radius or wait for better accuracy."->"请扩大报警半径，或等待更好的定位精度。";value=="Satellite geometry is weak; allow more margin."->"卫星几何条件较弱，请预留更大余量。"
   value=="Not reported"->"未报告";value=="The source did not report accuracy; choose a conservative range."->"数据源没有报告精度，请使用更保守的范围。";value=="Not required for selected GPS"->"所选 GPS 不需要网络";value.startsWith("Not required for ")->"当前 GPS 数据源不需要 NMEA"
-  value=="Connected and delivering data"->"已连接并持续提供数据";value in setOf("CONNECTING","RECONNECTING")->if(value=="CONNECTING")"正在连接" else "正在重连";value in setOf("DISCONNECTED","CONNECTED_NO_DATA","STALE","ERROR")->when(value){"DISCONNECTED"->"未连接";"CONNECTED_NO_DATA"->"已连接但无数据";"STALE"->"数据过期";else->"错误"}
+  value in setOf("Connected and delivering data","Connected with a fresh acceptable position")->if(value.startsWith("Connected with"))"已连接，且船位新鲜、质量合格" else "已连接并持续提供数据";value in setOf("CONNECTING","RECONNECTING")->if(value=="CONNECTING")"正在连接" else "正在重连";value in setOf("DISCONNECTED","CONNECTED_NO_DATA","STALE","ERROR")->when(value){"DISCONNECTED"->"未连接";"CONNECTED_NO_DATA"->"已连接但无数据";"STALE"->"数据过期";else->"错误"}
+  value=="Position unavailable, stale or poor quality"->"船位不可用、已过期或质量不合格";value=="Wait for a fresh position from the current connection with acceptable fix quality and HDOP."->"请等待当前连接提供新鲜、定位质量与 HDOP 合格的船位。"
   value=="Wait for a stable live NMEA position before arming."->"请等待稳定的实时 NMEA 船位后再布防。";value=="The selected GPS source is unavailable."->"所选 GPS 数据源不可用。"
   value=="Allowed"->"已允许";value=="Permission denied"->"权限被拒绝";value=="Android may hide critical anchor alarm notifications."->"Android 可能会隐藏关键锚警通知。"
   value=="Needs action"->"需要处理";value=="Android may show only a lock-screen heads-up alert instead of opening the alarm screen."->"Android 可能只显示锁屏横幅，而不会自动打开全屏警报界面。"
@@ -370,6 +435,7 @@ private fun WatchPreflightSheet(state:MainUiState,dismiss:()->Unit,continueSetup
   value=="No active network"->"没有活动网络";value=="The NMEA endpoint cannot be kept reachable."->"无法持续访问 NMEA 端点。";value=="Wi-Fi connected"->"Wi-Fi 已连接";value=="Connected without Wi-Fi"->"已联网但不是 Wi-Fi";value=="Confirm the NMEA server is reachable over this transport."->"请确认可通过当前网络访问 NMEA 服务器。"
   value=="Less than 10 MB free"->"可用空间不足 10 MB";value.endsWith(" MB free")->value.replace(" MB free"," MB 可用");value=="Safety events and track points may not be saved."->"安全事件与轨迹点可能无法保存。";value=="Free storage before a long watch or sonar survey."->"长时间监控或声呐调查前请释放存储空间。"
   value=="Not required for anchor watch"->"锚警不要求声呐";value=="Live depth and matching position"->"实时水深与配对船位正常";value=="Survey active but data is stale"->"调查进行中，但数据已过期";value=="Anchor watch can continue; sonar mapping will wait for same-stream data."->"锚警可以继续；声呐测绘会等待同一数据流恢复。"
+  value=="Held real depth with live same-stream position"->"正在使用保留的真实水深，同源船位仍为实时";value=="Held depth is approaching its safety limit"->"保留水深正在接近安全上限";value=="A new real DPT/DBT is required before 5 minutes or 500 m of travel."->"必须在 5 分钟或移动 500 米前收到新的真实 DPT/DBT。"
   else->value
  }
 }
@@ -386,10 +452,10 @@ private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:
   SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
    SegmentedButton(state.settings.mapType==1,{setMapType(1)},shape=SegmentedButtonDefaults.itemShape(0,3),modifier=Modifier.testTag("map_style_map")){Text(tr("Map","地图"))}
    SegmentedButton(state.settings.mapType==2,{setMapType(2)},shape=SegmentedButtonDefaults.itemShape(1,3),modifier=Modifier.testTag("map_style_satellite")){Text(tr("Satellite","卫星"))}
-   SegmentedButton(state.settings.mapType==3,{setMapType(3)},shape=SegmentedButtonDefaults.itemShape(2,3),modifier=Modifier.testTag("map_style_nautical")){Text(tr("Nautical","航海"))}
+   SegmentedButton(state.settings.mapType==3,{setMapType(3)},shape=SegmentedButtonDefaults.itemShape(2,3),modifier=Modifier.testTag("map_style_nautical")){Column(horizontalAlignment=Alignment.CenterHorizontally){Text(tr("Nautical","航海"));Text(if(state.offlineMap.installed&&state.settings.offlineMapEnabled)tr("User chart","用户海图")else tr("Online","在线"),style=MaterialTheme.typography.labelSmall)}}
   }
   if(state.settings.mapType==3){
-   Text(tr("Quiet base map with OpenSeaMap seamarks. No opacity setting is applied to the base style or seamarks.","清淡底图叠加 OpenSeaMap 航标；底图与航标不提供透明度设置。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(if(state.offlineMap.installed&&state.settings.offlineMapEnabled)tr("Using ${state.offlineMap.name?:"user MBTiles"}. Missing tiles fall through to the standard nautical map.","正在使用 ${state.offlineMap.name?:"用户 MBTiles"}；缺少的瓦片会自动显示标准航海图。") else tr("Quiet base map with OpenSeaMap seamarks.","清淡底图叠加 OpenSeaMap 航标。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    TextButton({uriHandler.openUri(OpenSeaMapConfiguration.LICENSE_URL)}){Icon(Icons.AutoMirrored.Filled.OpenInNew,null);Spacer(Modifier.width(6.dp));Text(tr("OpenSeaMap attribution & licence","OpenSeaMap 署名与许可"))}
    if(nauticalDiagnostics.failures>0&&nauticalDiagnostics.successes==0L)TileFailureCard(tr("Nautical tile status","航海瓦片状态"),nauticalDiagnostics.requests,nauticalDiagnostics.successes,nauticalDiagnostics.failures,nauticalDiagnostics.lastHttpCode,nauticalDiagnostics.message)
   }

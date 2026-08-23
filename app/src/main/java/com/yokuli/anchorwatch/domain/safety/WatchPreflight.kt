@@ -17,6 +17,8 @@ import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState
+import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -60,6 +62,7 @@ data class WatchSafetyInput(
     val nmeaConnection: NmeaConnectionState,
     val device: DeviceSafetySnapshot,
     val sonar: SonarRecorderStatus,
+    val nmeaConnectionStartedElapsedRealtime:Long?=null,
 )
 
 object WatchPreflightEvaluator {
@@ -89,10 +92,11 @@ object WatchPreflightEvaluator {
         }
         checks += if (input.settings.gpsDataSource != GpsDataSource.NMEA) {
             ok("nmea", "NMEA source", "Not required for ${input.settings.gpsDataSource.name} GPS")
-        } else when (input.nmeaConnection) {
-            NmeaConnectionState.CONNECTED -> ok("nmea", "NMEA source", "Connected and delivering data")
-            NmeaConnectionState.RECONNECTING, NmeaConnectionState.CONNECTING -> blocker("nmea", "NMEA source", input.nmeaConnection.name, "Wait for a stable live NMEA position before arming.")
-            else -> blocker("nmea", "NMEA source", input.nmeaConnection.name, "The selected GPS source is unavailable.")
+        } else when {
+            NmeaSourceSelectionPolicy.isUsablePosition(input.nmeaConnection,fix,input.nmeaConnectionStartedElapsedRealtime,input.nowElapsed,FRESH_FIX_MILLIS)->ok("nmea", "NMEA source", "Connected with a fresh acceptable position")
+            input.nmeaConnection in setOf(NmeaConnectionState.RECONNECTING,NmeaConnectionState.CONNECTING)->blocker("nmea", "NMEA source", input.nmeaConnection.name, "Wait for a stable live NMEA position before arming.")
+            input.nmeaConnection==NmeaConnectionState.CONNECTED->blocker("nmea", "NMEA source", "Position unavailable, stale or poor quality", "Wait for a fresh position from the current connection with acceptable fix quality and HDOP.")
+            else->blocker("nmea", "NMEA source", input.nmeaConnection.name, "The selected GPS source is unavailable.")
         }
         checks += if (input.device.notificationPermission) ok("notifications", "Alarm notifications", "Allowed")
         else blocker("notifications", "Alarm notifications", "Permission denied", "Android may hide critical anchor alarm notifications.")
@@ -127,7 +131,9 @@ object WatchPreflightEvaluator {
         }
         checks += if (input.sonar.activeSurvey == null) ok("sonar", "Sonar", "Not required for anchor watch")
         else when {
-            input.sonar.hasFreshDepth(input.nowElapsed) && (input.sonar.lastDepthIsDemo || input.sonar.hasFreshNmeaPosition(input.nowElapsed)) -> ok("sonar", "Sonar", "Live depth and matching position")
+            input.sonar.lastDepthIsDemo && input.sonar.hasFreshDepth(input.nowElapsed) -> ok("sonar", "Sonar", "Live depth and matching position")
+            input.sonar.depthHoldState in setOf(SonarDepthHoldState.LIVE,SonarDepthHoldState.HELD) && input.sonar.hasFreshNmeaPosition(input.nowElapsed) -> ok("sonar", "Sonar", if(input.sonar.depthHoldState==SonarDepthHoldState.LIVE)"Live depth and matching position" else "Held real depth with live same-stream position")
+            input.sonar.depthHoldState==SonarDepthHoldState.WARNING && input.sonar.hasFreshNmeaPosition(input.nowElapsed) -> warning("sonar", "Sonar", "Held depth is approaching its safety limit", "A new real DPT/DBT is required before 5 minutes or 500 m of travel.")
             else -> warning("sonar", "Sonar", "Survey active but data is stale", "Anchor watch can continue; sonar mapping will wait for same-stream data.")
         }
         return WatchSafetyReport(checks, input.nowWall)

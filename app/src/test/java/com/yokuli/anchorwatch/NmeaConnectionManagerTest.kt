@@ -13,6 +13,35 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class NmeaConnectionManagerTest {
+    @Test fun quietTcpStreamReportsNoDataWithoutOpeningAnotherSocket() = runBlocking {
+        val server=ServerSocket(0);val accepted=AtomicInteger();val clients=CopyOnWriteArrayList<Socket>()
+        val serverJob=launch(Dispatchers.IO){runCatching{while(isActive)server.accept().also{clients+=it;accepted.incrementAndGet()}}}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort,noDataTimeoutSeconds=3)))
+            withTimeout(5_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
+            delay(3_500)
+            assertEquals(NmeaConnectionState.CONNECTED_NO_DATA,manager.state.value)
+            assertEquals(1,accepted.get())
+        }finally{manager.disconnect();managerScope.cancel();clients.forEach{runCatching{it.close()}};runCatching{server.close()};serverJob.cancelAndJoin()}
+    }
+
+    @Test fun explicitReconnectReplacesSameProfileOnceAndRapidTapsAreDebounced() = runBlocking {
+        val server=ServerSocket(0);val accepted=AtomicInteger();val clients=CopyOnWriteArrayList<Socket>()
+        val serverJob=launch(Dispatchers.IO){runCatching{while(isActive)server.accept().also{clients+=it;accepted.incrementAndGet()}}}
+        val generationBoundaries=AtomicInteger()
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope){generationBoundaries.incrementAndGet()}
+        val profile=ConnectionProfile(host="127.0.0.1",port=server.localPort)
+        try{
+            assertTrue(manager.connect(profile));withTimeout(5_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
+            assertTrue(manager.reconnect(profile))
+            repeat(4){assertFalse(manager.reconnect(profile))}
+            withTimeout(5_000){while(accepted.get()<2)delay(20)}
+            delay(200);assertEquals(2,accepted.get())
+            assertEquals("Only accepted connect/reconnect operations clear held NMEA fields",2,generationBoundaries.get())
+        }finally{manager.disconnect();managerScope.cancel();clients.forEach{runCatching{it.close()}};runCatching{server.close()};serverJob.cancelAndJoin()}
+    }
+
     @Test fun sameProfileIsReusedAndDisconnectClosesTheSession() = runBlocking {
         val server = ServerSocket(0)
         val accepted = AtomicInteger()
@@ -77,5 +106,17 @@ class NmeaConnectionManagerTest {
             firstJob.cancelAndJoin()
             secondJob.cancelAndJoin()
         }
+    }
+
+    @Test fun automaticReconnectCreatesANewTransportGeneration() = runBlocking {
+        val server=ServerSocket(0);val accepted=AtomicInteger();val clients=CopyOnWriteArrayList<Socket>()
+        val serverJob=launch(Dispatchers.IO){runCatching{while(isActive){val socket=server.accept();clients+=socket;val count=accepted.incrementAndGet();if(count==1)socket.close()}}}
+        val boundaries=AtomicInteger();val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope){boundaries.incrementAndGet()}
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort,autoReconnect=true)))
+            withTimeout(6_000){while(accepted.get()<2)delay(20)}
+            assertTrue(manager.diagnostics.value.connectionGeneration>=2)
+            assertTrue("Every real socket attempt must clear connection-scoped held data",boundaries.get()>=2)
+        }finally{manager.disconnect();managerScope.cancel();clients.forEach{runCatching{it.close()}};runCatching{server.close()};serverJob.cancelAndJoin()}
     }
 }

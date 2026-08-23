@@ -2,6 +2,8 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.Confidence
+import com.yokuli.anchorwatch.domain.model.HeadingSource
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.anchor.BackdownCenterEstimator
 import com.yokuli.anchorwatch.location.DemoTrajectory
@@ -57,7 +59,7 @@ class DemoTrajectoryTest {
     @Test fun demoCannotResolveBeforeFastPathMinimumDuration() {
         val points=(0..299).map{second->DemoTrajectory.point(second*1_000L,AnchorPlacementMode.BACKDOWN,DemoScenario.WIND_SHIFT,70.0,1,77)}
         val samples=points.mapIndexed{second,point->
-            BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8,point.headingToAnchorDegrees,point.headingDegrees,point.speedMetersPerSecond*1.943844,point.trueWindDirectionDegrees,point.windSpeedKnots,point.apparentWindAngleDegrees,point.trueWindAngleDegrees,point.windSpeedKnots,point.windSpeedKnots,point.evidenceSequence,point.evidenceSequence)
+            BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8,point.headingToAnchorDegrees,point.headingDegrees,point.speedMetersPerSecond*1.943844,point.trueWindDirectionDegrees,point.windSpeedKnots,point.apparentWindAngleDegrees,point.trueWindAngleDegrees,point.windSpeedKnots,point.windSpeedKnots,point.evidenceSequence,point.evidenceSequence,headingSource=HeadingSource.NMEA_PHYSICAL,headingQuality=HeadingQuality.STABLE)
         }
         val estimate=BackdownCenterEstimator().estimateSamples(samples,45.0)!!
         assertTrue(estimate.debugSummary(),estimate.confidence!=Confidence.HIGH)
@@ -65,7 +67,7 @@ class DemoTrajectoryTest {
 
     @Test fun repeatedDemoSwingAndWindEvidenceCanProduceACandidateAfterFiveMinutes(){
         val points=(0..360).map{second->DemoTrajectory.point(second*1_000L,AnchorPlacementMode.BACKDOWN,DemoScenario.WIND_SHIFT,80.0,5,991)}
-        val samples=points.mapIndexed{second,point->BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8,point.headingToAnchorDegrees,point.headingDegrees,point.speedMetersPerSecond*1.943844,point.trueWindDirectionDegrees,point.windSpeedKnots,point.apparentWindAngleDegrees,point.trueWindAngleDegrees,point.windSpeedKnots,point.windSpeedKnots,point.evidenceSequence,point.evidenceSequence)}
+        val samples=points.mapIndexed{second,point->BackdownCenterEstimator.Sample(point.northMeters/110_540.0,point.eastMeters/111_320.0,second*1_000L,.8,point.headingToAnchorDegrees,point.headingDegrees,point.speedMetersPerSecond*1.943844,point.trueWindDirectionDegrees,point.windSpeedKnots,point.apparentWindAngleDegrees,point.trueWindAngleDegrees,point.windSpeedKnots,point.windSpeedKnots,point.evidenceSequence,point.evidenceSequence,headingSource=HeadingSource.NMEA_PHYSICAL,headingQuality=HeadingQuality.STABLE)}
         val estimate=BackdownCenterEstimator().estimateSamples(samples,60.0)!!
         assertTrue(estimate.angularCoverageDegrees>=200.0);assertTrue(estimate.angularSectorCount>=8);assertTrue(estimate.confidence==Confidence.HIGH)
     }

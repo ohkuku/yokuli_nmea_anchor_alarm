@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 data class OfflineMapInfo(
     val installed: Boolean = false,
@@ -24,6 +26,9 @@ data class OfflineMapInfo(
     val scheme: String = "tms",
     val minZoom: Int? = null,
     val maxZoom: Int? = null,
+    val bounds: String? = null,
+    val center: String? = null,
+    val description: String? = null,
     val tileCount: Long = 0,
     val sizeBytes: Long = 0,
     val revision: Long = 0,
@@ -55,6 +60,7 @@ class OfflineMapRepository @Inject constructor(@ApplicationContext private val c
             FileOutputStream(temp).buffered().use { output ->
                 val buffer = ByteArray(1024 * 1024)
                 while (true) {
+                    currentCoroutineContext().ensureActive()
                     val read = input.read(buffer)
                     if (read < 0) break
                     written += read
@@ -123,6 +129,8 @@ class OfflineMapRepository @Inject constructor(@ApplicationContext private val c
                 cursor.getBlob(0)
             }
             require(isRasterImage(sample)) { "The MBTiles archive does not contain supported raster image tiles." }
+            metadata["bounds"]?.let{require(parseBounds(it)!=null){"The MBTiles bounds metadata is invalid."}}
+            metadata["center"]?.let{require(parseCenter(it)!=null){"The MBTiles center metadata is invalid."}}
             OfflineMapInfo(
                 installed = file == target,
                 name = metadata["name"]?.take(120) ?: file.nameWithoutExtension,
@@ -131,6 +139,9 @@ class OfflineMapRepository @Inject constructor(@ApplicationContext private val c
                 scheme = metadata["scheme"]?.lowercase()?.takeIf { it == "xyz" } ?: "tms",
                 minZoom = stats.first,
                 maxZoom = stats.second,
+                bounds = metadata["bounds"]?.take(160),
+                center = metadata["center"]?.take(120),
+                description = metadata["description"]?.take(1_000),
                 tileCount = stats.third,
                 sizeBytes = file.length(),
                 revision = file.lastModified(),
@@ -139,6 +150,8 @@ class OfflineMapRepository @Inject constructor(@ApplicationContext private val c
     }
 
     private fun isRasterImage(data: ByteArray) = detectedFormat(data) != null
+    private fun parseBounds(value:String):List<Double>?=value.split(',').map{it.trim().toDoubleOrNull()?:return null}.takeIf{it.size==4&&it[0] in -180.0..180.0&&it[2] in -180.0..180.0&&it[1] in -85.0..85.0&&it[3] in -85.0..85.0&&it[0]<it[2]&&it[1]<it[3]}
+    private fun parseCenter(value:String):List<Double>?=value.split(',').map{it.trim().toDoubleOrNull()?:return null}.takeIf{it.size in 2..3&&it[0] in -180.0..180.0&&it[1] in -85.0..85.0&&(it.size==2||it[2] in 0.0..24.0)}
     private fun detectedFormat(data: ByteArray): String? = when {
         data.size >= 8 && data.copyOfRange(0, 8).contentEquals(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)) -> "png"
         data.size >= 3 && data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte() && data[2] == 0xFF.toByte() -> "jpg"

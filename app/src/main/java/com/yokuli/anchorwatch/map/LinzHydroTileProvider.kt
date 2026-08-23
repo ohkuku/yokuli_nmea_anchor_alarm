@@ -12,12 +12,13 @@ import java.io.File
 import java.net.URL
 
 object MapOverlayZ {
-    const val OFFLINE_CHART = .1f
+    const val NAUTICAL_SEAMARKS = .1f
     const val LINZ_CHART = .2f
+    const val OFFLINE_CHART = .4f
     const val SONAR = .6f
-    const val NAUTICAL_SEAMARKS = .8f
     const val HISTORICAL_AREA = .45f
     const val HISTORICAL_ANCHOR = .75f
+    const val MEASUREMENT = .85f
     const val TRAIL = 1f
     const val ALARM_GEOMETRY = 1.5f
     const val ANCHOR = 2f

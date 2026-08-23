@@ -90,17 +90,17 @@ internal fun NearbyAnchorageCard(
         if(members.size==1){
             val saved=members.single()
             ElevatedCard(Modifier.fillMaxWidth().testTag("saved_anchorage_card_${saved.id}")){
-                Box(Modifier.fillMaxWidth()){
-                    SavedAnchorageDetailsContent(
-                        saved=saved,
-                        actions=actions,
-                        modifier=Modifier.fillMaxWidth().padding(14.dp).padding(end=if(dismiss!=null)36.dp else 0.dp),
-                        distanceText=distanceById[saved.id]?.let(ApproachDistanceFormatter::format),
-                    )
-                    dismiss?.let{close->IconButton(close,Modifier.align(Alignment.TopEnd).testTag("anchorage_nearby_dismiss")){
+                SavedAnchorageDetailsContent(
+                    saved=saved,
+                    actions=actions,
+                    modifier=Modifier.fillMaxWidth().padding(14.dp),
+                    distanceText=distanceById[saved.id]?.let(ApproachDistanceFormatter::format),
+                    trailingHeaderAction=dismiss?.let{close->{
+                        IconButton(close,Modifier.testTag("anchorage_nearby_dismiss")){
                         Icon(Icons.Default.Close,tr("Dismiss","忽略"))
-                    }}
-                }
+                        }
+                    }},
+                )
             }
         }else{
             ElevatedCard(Modifier.fillMaxWidth()){
@@ -172,8 +172,8 @@ internal fun AnchorageApproachOverlay(
                         HistoricalReferenceSummary(target)
                         Text(
                             tr(
-                                "Previous use only. Check current depth, traffic, weather and surroundings before anchoring.",
-                                "这里只代表历史使用记录。下锚前请重新确认当前水深、周围船只、天气和环境。",
+                                "Saved reference only. Check current depth, traffic, weather and surroundings before anchoring.",
+                                "仅为收藏参考。下锚前请重新确认当前水深、周围船只、天气和环境。",
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -262,8 +262,8 @@ internal fun AnchorageApproachDisclaimerDialog(confirm: () -> Unit, dismiss: () 
         text = {
             Text(
                 tr(
-                    "Approach shows only direct bearing and distance to a previously used anchoring area.\n\nIt does not check depth, hazards, traffic or safe passage.",
-                    "接近指引只显示前往历史下锚范围的直线方位和距离。\n\n它不会检查水深、障碍物、船只交通或航路是否安全。",
+                    "Approach shows only direct bearing and distance to a saved anchorage reference area.\n\nIt does not check depth, hazards, traffic or safe passage.",
+                    "接近指引只显示前往收藏锚地参考范围的直线方位和距离。\n\n它不会检查水深、障碍物、船只交通或航路是否安全。",
                 ),
             )
         },

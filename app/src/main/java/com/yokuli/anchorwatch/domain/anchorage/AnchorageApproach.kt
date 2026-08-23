@@ -1,6 +1,7 @@
 package com.yokuli.anchorwatch.domain.anchorage
 
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
+import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -21,6 +22,8 @@ data class SavedAnchorageReference(
     val sourceSessionId: Long?,
     val updatedAt: Long,
     val lastVisitedAt: Long?,
+    val coordinateSource:String="CONFIRMED_ANCHOR",
+    val coordinateUncertaintyMeters:Double?=null,
 )
 
 data class AnchorageCluster(
@@ -39,6 +42,7 @@ data class AnchorageCluster(
     val maxAlarmRadiusMeters: Double?,
     val lastVisitedAt: Long?,
     val radiusEstimated: Boolean,
+    val coordinateEstimated:Boolean=false,
 )
 
 object AnchorageClusterer {
@@ -65,7 +69,8 @@ object AnchorageClusterer {
         val savedRadii = points.mapNotNull { it.preferredAlarmRadiusMeters?.takeIf { value -> value.isFinite() && value > 0.0 } }
         val radius = points.maxOf { point ->
             AnchorGeometry.distanceMeters(latitude, longitude, point.latitude, point.longitude) +
-                (point.preferredAlarmRadiusMeters?.takeIf { it.isFinite() && it > 0.0 } ?: FALLBACK_RADIUS_METERS)
+                (point.preferredAlarmRadiusMeters?.takeIf { it.isFinite() && it > 0.0 } ?: FALLBACK_RADIUS_METERS) +
+                (point.coordinateUncertaintyMeters?.takeIf { it.isFinite() && it > 0.0 } ?: 0.0)
         }
         val recent = points.filter { it.name.isNotBlank() }
             .maxByOrNull { it.lastVisitedAt ?: it.updatedAt }
@@ -85,7 +90,13 @@ object AnchorageClusterer {
             minAlarmRadiusMeters = savedRadii.minOrNull(),
             maxAlarmRadiusMeters = savedRadii.maxOrNull(),
             lastVisitedAt = points.mapNotNull { it.lastVisitedAt }.maxOrNull(),
-            radiusEstimated = savedRadii.isEmpty(),
+            // A cluster is only fully measured when every member supplied a
+            // valid radius. One fallback member makes the aggregate boundary
+            // partially estimated even if another member has a saved radius.
+            radiusEstimated = points.any { point ->
+                point.preferredAlarmRadiusMeters?.let { it.isFinite() && it > 0.0 } != true
+            } || points.any { it.coordinateSource != "CONFIRMED_ANCHOR" },
+            coordinateEstimated = points.any { it.coordinateSource != "CONFIRMED_ANCHOR" },
         )
     }
 
@@ -135,6 +146,23 @@ object AnchorageNearbyPolicy {
         )
         AnchorageClusterDistance(cluster, centre, (centre - cluster.radiusMeters).coerceAtLeast(0.0))
     }.sortedBy { it.distanceToAreaMeters }
+}
+
+/** Keeps an active target attached to its saved records when an edit, merge,
+ * split, or deletion changes the deterministic cluster id. */
+object AnchorageClusterIdentityResolver {
+    fun resolve(
+        previousClusterId:String?,
+        previousMemberIds:Set<Long>,
+        current:List<AnchorageCluster>,
+    ):AnchorageCluster? {
+        current.firstOrNull{it.id==previousClusterId}?.let{return it}
+        if(previousMemberIds.isEmpty())return null
+        return current.map{cluster->cluster to cluster.savedAnchorageIds.count{it in previousMemberIds}}
+            .filter{it.second>0}
+            .maxWithOrNull(compareBy<Pair<AnchorageCluster,Int>>{it.second}.thenBy{it.first.savedPointCount})
+            ?.first
+    }
 }
 
 /** Keeps automatic Nearby prompts to one per cluster per approach episode. */
@@ -192,6 +220,21 @@ data class ApproachDirection(
 object ApproachDirectionPolicy {
     const val FRESH_MILLIS = 5_000L
     const val MIN_COG_SPEED_KNOTS = 1.0
+
+    /**
+     * Vessel direction is an instrument capability, not a GPS-fix
+     * capability. A server can legitimately have fresh HDT/HDG or trusted
+     * COG traffic while reporting CONNECTED_NO_FIX for its position stream.
+     */
+    fun vesselModeAvailable(
+        connection: NmeaConnectionState,
+        physicalHeadingFresh: Boolean,
+        trustedCourseAvailable: Boolean,
+    ): Boolean = connection in setOf(
+        NmeaConnectionState.CONNECTED,
+        NmeaConnectionState.CONNECTED_NO_FIX,
+        NmeaConnectionState.STALE,
+    ) && (physicalHeadingFresh || trustedCourseAvailable)
 
     fun resolve(
         nowElapsed: Long,

@@ -33,6 +33,19 @@ class WatchPreflightEvaluatorTest {
         assertTrue(report.checks.any{it.id=="network"&&it.status==SafetyCheckStatus.BLOCKER})
     }
 
+    @Test fun aConnectedSocketDoesNotMakePoorNmeaPositionReadyToWatch(){
+        val report=WatchPreflightEvaluator.evaluate(
+            input(
+                settings=readySettings().copy(gpsDataSource=GpsDataSource.NMEA),
+                fix=fix().copy(hdop=7.0),
+                connection=NmeaConnectionState.CONNECTED,
+                connectionStarted=90_000,
+            ),
+        )
+        assertFalse(report.canContinue)
+        assertTrue(report.checks.any{it.id=="nmea"&&it.status==SafetyCheckStatus.BLOCKER})
+    }
+
     @Test fun batteryOptimizationAndUnconfirmedAlarmAreExplicitWarnings(){
         val report=WatchPreflightEvaluator.evaluate(input(settings=readySettings().copy(alarmAudibleConfirmedAt=null),device=device().copy(batteryOptimizationExempt=false)))
         assertFalse(report.ready);assertTrue(report.canContinue)
@@ -50,7 +63,8 @@ class WatchPreflightEvaluatorTest {
         fix:NavigationFix=fix(),
         connection:NmeaConnectionState=NmeaConnectionState.DISCONNECTED,
         device:DeviceSafetySnapshot=device(),
-    )=WatchSafetyInput(100_000,1_000_000,settings,fix,connection,device,SonarRecorderStatus())
+        connectionStarted:Long?=null,
+    )=WatchSafetyInput(100_000,1_000_000,settings,fix,connection,device,SonarRecorderStatus(),connectionStarted)
 
     private fun readySettings()=AppSettings(gpsDataSource=GpsDataSource.SYSTEM,alarmAudibleConfirmedAt=999_000)
     private fun device()=DeviceSafetySnapshot(true,true,80,5,10,true,true,true,2L*1024L*1024L*1024L)

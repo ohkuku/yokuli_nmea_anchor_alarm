@@ -3,6 +3,8 @@ package com.yokuli.anchorwatch.domain.anchor
 import com.yokuli.anchorwatch.domain.model.BackdownAnchorEstimate
 import com.yokuli.anchorwatch.domain.model.Confidence
 import com.yokuli.anchorwatch.domain.model.FixTrust
+import com.yokuli.anchorwatch.domain.model.HeadingQuality
+import com.yokuli.anchorwatch.domain.model.HeadingSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import kotlin.math.abs
@@ -39,6 +41,8 @@ class BackdownCenterEstimator {
         val horizontalAccuracyMeters: Double? = null,
         val positionProvider: PositionProvider = PositionProvider.UNKNOWN,
         val fixTrust: FixTrust = FixTrust.TRUSTED,
+        val headingSource: HeadingSource = HeadingSource.NONE,
+        val headingQuality: HeadingQuality = HeadingQuality.UNAVAILABLE,
     )
 
     private data class LocalPoint(val x: Double, val y: Double, val sample: Sample)
@@ -49,7 +53,8 @@ class BackdownCenterEstimator {
             Sample(latitude=it.latitude,longitude=it.longitude,timestamp=it.receivedElapsedRealtime,hdop=it.hdop,headingTrueDegrees=it.headingTrueDegrees,
                 cogTrueDegrees=it.cogTrueDegrees,sogKnots=it.sogKnots,windDirectionTrueDegrees=it.windDirectionTrueDegrees,windSpeedKnots=it.windSpeedKnots,apparentWindAngleDegrees=it.apparentWindAngleDegrees,
                 trueWindAngleDegrees=it.trueWindAngleDegrees,trueWindSpeedKnots=it.trueWindSpeedKnots,apparentWindSpeedKnots=it.apparentWindSpeedKnots,headingSampleSequence=it.headingSampleSequence,windSampleSequence=it.windSampleSequence,
-                horizontalAccuracyMeters=it.horizontalAccuracyMeters,positionProvider=it.positionProvider,fixTrust=FixTrust.TRUSTED)
+                horizontalAccuracyMeters=it.horizontalAccuracyMeters,positionProvider=it.positionProvider,fixTrust=FixTrust.TRUSTED,
+                headingSource=it.headingSource,headingQuality=it.headingQuality)
         },
         maximumHorizontalRodeMeters,
     )
@@ -60,23 +65,27 @@ class BackdownCenterEstimator {
         val originLatitude = median(valid.map { it.latitude })
         val originLongitude = median(valid.map { it.longitude })
         val maximumDistance = trackDiameter(valid)
-        if (maximumDistance < 10.0) return null
-        val maximumRode = maximumHorizontalRodeMeters?.takeIf { it >= 10.0 } ?: max(25.0, maximumDistance * 1.25)
+        val maximumRode = maximumHorizontalRodeMeters?.takeIf { it.isFinite() && it > 0.0 }?.coerceAtLeast(1.0) ?: max(25.0, maximumDistance * 1.25)
+        val gpsMargin = gpsMargin(valid)
         val directionEvidence = directionalEvidence(valid)
         val region = feasibleRegion(valid, originLatitude, originLongitude, maximumRode, directionEvidence)
         val fit = AnchorCenterEstimator(Random(0)).estimate(valid.map { AnchorCenterEstimator.Point(it.latitude, it.longitude) }, null)
         val fitRegionDisagreement = fit?.let { AnchorGeometry.distanceMeters(it.latitude,it.longitude,region.latitude,region.longitude) }
-        val fitUsable = fit != null && fit.radiusMeters <= maximumRode + gpsMargin(valid) && fit.angularCoverageDegrees >= 90.0 &&
+        val fitGeometricallyUsable = fit != null && fit.angularCoverageDegrees >= 90.0 &&
             (fitRegionDisagreement?:Double.POSITIVE_INFINITY)<=max(20.0,maximumRode*.55)
-        val centreLat = if (fitUsable) fit!!.latitude else region.latitude
-        val centreLon = if (fitUsable) fit!!.longitude else region.longitude
-        val bearings = valid.map { AnchorGeometry.bearingDegrees(centreLat, centreLon, it.latitude, it.longitude) }
+        val observability = AnchorCentreObservabilityPolicy.evaluate(maximumDistance,fit?.radiusMeters,maximumRode,gpsMargin,fitGeometricallyUsable)
+        val fitUsable = fitGeometricallyUsable && fit!!.radiusMeters <= maximumRode + gpsMargin
+        val evidenceCentreLat = if (fitUsable) fit!!.latitude else region.latitude
+        val evidenceCentreLon = if (fitUsable) fit!!.longitude else region.longitude
+        val centreLat = if (observability.radialObservable) evidenceCentreLat else region.latitude
+        val centreLon = if (observability.radialObservable) evidenceCentreLon else region.longitude
+        val bearings = valid.map { AnchorGeometry.bearingDegrees(evidenceCentreLat, evidenceCentreLon, it.latitude, it.longitude) }
         val coverage = angularCoverage(bearings)
         val sectors = sectorCount(bearings)
-        val reversals = meaningfulSwingReversals(valid, centreLat, centreLon, maximumRode)
-        val fitUncertainty = fit?.takeIf { fitUsable }?.let {
+        val reversals = meaningfulSwingReversals(valid, evidenceCentreLat, evidenceCentreLon, maximumRode)
+        val fitUncertainty = fit?.takeIf { observability.radialObservable }?.let {
             val missingArc = maximumRode * (1.0 - min(it.angularCoverageDegrees, 240.0) / 240.0) * .50
-            max(gpsMargin(valid), it.rmsErrorMeters * 2.0 + missingArc + (fitRegionDisagreement?:0.0)*.70)
+            max(gpsMargin, it.rmsErrorMeters * 2.0 + missingArc + (fitRegionDisagreement?:0.0)*.70)
         }
         val duration = effectiveDuration(valid)
         val directionMatch = WindAnchorEvidence.centreMatch(directionEvidence, centreLat, centreLon)
@@ -97,13 +106,17 @@ class BackdownCenterEstimator {
             (reversals + 1) / (requiredReversals + 1).toDouble(),
             1.0,
         ).coerceIn(0.0, 1.0)
-        val conservativeFloor = max(gpsMargin(valid)*(1.0+degradedRatio), maximumRode * (1.0 - .90 * evidence)+maximumRode*.15*degradedRatio)
-        val uncertainty = max(min(region.radius, fitUncertainty ?: region.radius), conservativeFloor).coerceAtMost(maximumRode)
-        val temporalConsensus = fitUsable && temporalFitConsensus(valid, maximumRode)
+        val conservativeFloor = max(gpsMargin*(1.0+degradedRatio), maximumRode * (1.0 - .90 * evidence)+maximumRode*.15*degradedRatio)
+        val uncertainty = if (observability.radialObservable) {
+            max(min(region.radius, fitUncertainty ?: region.radius), conservativeFloor).coerceAtMost(maximumRode)
+        } else {
+            max(region.radius, conservativeFloor).coerceAtMost(maximumRode)
+        }
+        val temporalConsensus = observability.radialObservable && temporalFitConsensus(valid, maximumRode)
         // Repeated independent physical+wind agreement may accelerate a broad
         // out-and-back swing after five effective minutes. GPS-only still needs
         // multiple reversals and the full fifteen-minute evidence window.
-        val confidence = if (valid.size >= minimumSamples && duration >= minimumDuration && fit?.confidence == Confidence.HIGH &&
+        val confidence = if (observability.radialObservable && valid.size >= minimumSamples && duration >= minimumDuration && fit?.confidence == Confidence.HIGH &&
             coverage >= 200.0 && sectors >= 8 && reversals >= requiredReversals && temporalConsensus &&
             (minimumDuration >= 900_000L || directionConsistent) &&
             uncertainty <= max(10.0, maximumRode * .22)
@@ -122,6 +135,16 @@ class BackdownCenterEstimator {
             temporalFitConsistent = temporalConsensus,
             effectiveDurationMillis = duration,
             directionEvidenceConsistent = directionConsistent,
+            radialObservable = observability.radialObservable,
+            trackDiameterMeters = observability.trackDiameterMeters,
+            fittedRadiusMeters = observability.fittedRadiusMeters,
+            maximumRodeMeters = observability.maximumRodeMeters,
+            gpsMarginMeters = observability.gpsMarginMeters,
+            fittedRadiusRatio = observability.fittedRadiusRatio,
+            trackSpanRatio = observability.trackSpanRatio,
+            observabilityReason = observability.reason,
+            nmeaPhysicalHeadingEvidenceCount = directionEvidence.physicalCount,
+            phoneHeadingEvidenceCount = directionEvidence.phoneCount,
         )
     }
 
@@ -131,7 +154,7 @@ class BackdownCenterEstimator {
         val originLat = median(valid.map { it.latitude })
         val originLon = median(valid.map { it.longitude })
         val travelled = trackDiameter(valid)
-        val maximumRode = maximumHorizontalRodeMeters?.takeIf { it >= 10.0 } ?: max(25.0, travelled * 1.25)
+        val maximumRode = maximumHorizontalRodeMeters?.takeIf { it.isFinite() && it > 0.0 }?.coerceAtLeast(1.0) ?: max(25.0, travelled * 1.25)
         val region = feasibleRegion(valid, originLat, originLon, maximumRode, directionalEvidence(valid))
         val resolved = estimateSamples(valid, maximumRode)
         val duration = effectiveDuration(valid)
@@ -142,19 +165,29 @@ class BackdownCenterEstimator {
             else -> Confidence.LOW
         }
         return BackdownAnchorEstimate(
-            resolved?.latitude ?: region.latitude,
-            resolved?.longitude ?: region.longitude,
-            resolved?.distanceMeters ?: travelled,
-            resolved?.uncertaintyRadiusMeters ?: region.radius,
-            provisionalConfidence,
-            valid.size,
-            resolved?.angularCoverageDegrees ?: 0.0,
-            resolved?.angularSectorCount ?: 0,
-            resolved?.rmsErrorMeters,
-            resolved?.swingReversalCount ?: 0,
-            resolved?.temporalFitConsistent ?: false,
-            resolved?.effectiveDurationMillis ?: duration,
-            resolved?.directionEvidenceConsistent ?: false,
+            latitude=resolved?.latitude ?: region.latitude,
+            longitude=resolved?.longitude ?: region.longitude,
+            distanceMeters=resolved?.distanceMeters ?: travelled,
+            uncertaintyRadiusMeters=resolved?.uncertaintyRadiusMeters ?: region.radius,
+            confidence=provisionalConfidence,
+            sampleCount=valid.size,
+            angularCoverageDegrees=resolved?.angularCoverageDegrees ?: 0.0,
+            angularSectorCount=resolved?.angularSectorCount ?: 0,
+            rmsErrorMeters=resolved?.rmsErrorMeters,
+            swingReversalCount=resolved?.swingReversalCount ?: 0,
+            temporalFitConsistent=resolved?.temporalFitConsistent ?: false,
+            effectiveDurationMillis=resolved?.effectiveDurationMillis ?: duration,
+            directionEvidenceConsistent=resolved?.directionEvidenceConsistent ?: false,
+            radialObservable=resolved?.radialObservable ?: false,
+            trackDiameterMeters=resolved?.trackDiameterMeters ?: travelled,
+            fittedRadiusMeters=resolved?.fittedRadiusMeters,
+            maximumRodeMeters=resolved?.maximumRodeMeters ?: maximumRode,
+            gpsMarginMeters=resolved?.gpsMarginMeters ?: gpsMargin(valid),
+            fittedRadiusRatio=resolved?.fittedRadiusRatio,
+            trackSpanRatio=resolved?.trackSpanRatio ?: (travelled/maximumRode),
+            observabilityReason=resolved?.observabilityReason ?: AnchorCentreObservabilityReason.NO_USABLE_CIRCLE_FIT,
+            nmeaPhysicalHeadingEvidenceCount=resolved?.nmeaPhysicalHeadingEvidenceCount ?: 0,
+            phoneHeadingEvidenceCount=resolved?.phoneHeadingEvidenceCount ?: 0,
         )
     }
 
@@ -199,7 +232,7 @@ class BackdownCenterEstimator {
         return Region(centreLatitude,centreLongitude,min(regionRadius,geometricNarrowingCap))
     }
 
-    private fun directionalEvidence(samples:List<Sample>)=WindAnchorEvidence.summarize(samples.map{sample->WindAnchorEvidence.Sample(sample.timestamp,sample.latitude,sample.longitude,sample.sogKnots,sample.cogTrueDegrees,sample.headingTrueDegrees,sample.windDirectionTrueDegrees,sample.trueWindAngleDegrees,sample.apparentWindAngleDegrees,sample.trueWindSpeedKnots,sample.apparentWindSpeedKnots,sample.headingSampleSequence,sample.windSampleSequence)})
+    private fun directionalEvidence(samples:List<Sample>)=WindAnchorEvidence.summarize(samples.map{sample->WindAnchorEvidence.Sample(sample.timestamp,sample.latitude,sample.longitude,sample.sogKnots,sample.cogTrueDegrees,sample.headingTrueDegrees,sample.windDirectionTrueDegrees,sample.trueWindAngleDegrees,sample.apparentWindAngleDegrees,sample.trueWindSpeedKnots,sample.apparentWindSpeedKnots,sample.headingSampleSequence,sample.windSampleSequence,sample.headingSource,sample.headingQuality)})
 
     /** A final centre must agree when the history is fitted as two independent time periods. */
     private fun temporalFitConsensus(samples: List<Sample>, maximumRode: Double): Boolean {

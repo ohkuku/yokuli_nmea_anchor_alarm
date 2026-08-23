@@ -45,9 +45,11 @@ class SonarPipelineTest {
         assertEquals(DepthSentenceType.DBT,dbt.sentenceType);assertEquals(DepthReference.BELOW_TRANSDUCER,dbt.reference);assertEquals(14.3,dbt.belowSurfaceMeters(2.0),.001)
         val noOffset=parser.parse(NmeaChecksum.append("SDDPT,7.2"),true,300)!!.depthObservation!!
         assertEquals(7.2,noOffset.rawDepthMeters,.001);assertTrue(noOffset.offsetMeters==null);assertEquals(DepthReference.BELOW_TRANSDUCER,noOffset.reference)
-        assertTrue(parser.parse(NmeaChecksum.append("SDDPT,not-a-depth"),true,400)==null)
+        // Valid known sentences with an empty/invalid value are no-update,
+        // not transport-invalid; the held depth retains its original age.
+        assertTrue(parser.parse(NmeaChecksum.append("SDDPT,not-a-depth"),true,400)!!.depthObservation==null)
         assertTrue(parser.parse("\$SDDPT,7.2*00",true,500)==null)
-        assertTrue(parser.parse(NmeaChecksum.append("SDDBT,40.4,f,,M,6.7,F"),true,600)==null)
+        assertTrue(parser.parse(NmeaChecksum.append("SDDBT,40.4,f,,M,6.7,F"),true,600)!!.depthObservation==null)
     }
 
     @Test fun isolatedSpikeIsQuarantinedButThreePointSlopeIsAccepted(){

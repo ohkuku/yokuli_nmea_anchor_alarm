@@ -39,9 +39,10 @@ class LinzHydroConfigurationTest {
     }
 
     @Test fun chartCannotCoverYokuliSafetyOverlays(){
+        assertTrue(MapOverlayZ.NAUTICAL_SEAMARKS<MapOverlayZ.LINZ_CHART)
         assertTrue(MapOverlayZ.LINZ_CHART<MapOverlayZ.SONAR)
-        assertTrue(MapOverlayZ.SONAR<MapOverlayZ.NAUTICAL_SEAMARKS)
-        assertTrue(MapOverlayZ.NAUTICAL_SEAMARKS<MapOverlayZ.TRAIL)
+        assertTrue(MapOverlayZ.OFFLINE_CHART<MapOverlayZ.SONAR)
+        assertTrue(MapOverlayZ.SONAR<MapOverlayZ.TRAIL)
         assertTrue(MapOverlayZ.TRAIL<MapOverlayZ.ALARM_GEOMETRY)
         assertTrue(MapOverlayZ.ALARM_GEOMETRY<MapOverlayZ.ANCHOR)
         assertTrue(MapOverlayZ.ANCHOR<MapOverlayZ.BOAT)

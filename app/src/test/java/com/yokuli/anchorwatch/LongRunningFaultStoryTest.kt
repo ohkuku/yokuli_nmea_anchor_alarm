@@ -40,7 +40,31 @@ class LongRunningFaultStoryTest{
         assertTrue(registry.snapshot().needsWakeLock);assertTrue(registry.snapshot().needsWifiLock)
         registry.set(RuntimeOwner.ANCHOR_WATCH,null)
         assertTrue(registry.snapshot().needsWakeLock);assertFalse(registry.snapshot().needsWifiLock);assertTrue(registry.snapshot().needsNmeaTransport)
+        assertEquals(setOf(RuntimeOwner.SONAR_MAPPING),registry.snapshot().nmeaOwners)
         registry.set(RuntimeOwner.SONAR_MAPPING,null);assertFalse(registry.snapshot().needsWakeLock)
+    }
+
+    @Test fun aRunningFeatureIsListedAsAnNmeaDependencyOnlyWhenItOwnsThatTransport(){
+        val registry=RuntimeOwnerRegistry()
+        registry.set(RuntimeOwner.TRIP_WATCH,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true))
+        registry.set(RuntimeOwner.NMEA_SHARING,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true))
+        assertTrue(registry.snapshot().nmeaOwners.isEmpty())
+        registry.set(RuntimeOwner.TRIP_WATCH,RuntimeRequirement(needsSystemLocation=true,needsNmeaTransport=true,needsWakeLock=true))
+        assertEquals(setOf(RuntimeOwner.TRIP_WATCH),registry.snapshot().nmeaOwners)
+    }
+
+    @Test fun keepWifiPreferenceAppliesImmediatelyOnlyToCurrentNetworkOwners(){
+        val registry=RuntimeOwnerRegistry()
+        registry.set(RuntimeOwner.ANCHOR_WATCH,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true))
+        registry.set(RuntimeOwner.SONAR_MAPPING,RuntimeRequirement(needsNmeaTransport=true,needsWakeLock=true))
+        registry.set(RuntimeOwner.NMEA_SHARING,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true))
+        registry.updateKeepWifiAwake(true)
+        val enabled=registry.snapshot()
+        assertFalse(enabled.ownerRequirements.getValue(RuntimeOwner.ANCHOR_WATCH).needsWifiLock)
+        assertTrue(enabled.ownerRequirements.getValue(RuntimeOwner.SONAR_MAPPING).needsWifiLock)
+        assertTrue(enabled.ownerRequirements.getValue(RuntimeOwner.NMEA_SHARING).needsWifiLock)
+        registry.updateKeepWifiAwake(false)
+        assertFalse(registry.snapshot().needsWifiLock)
     }
 
     @Test fun restorePolicyBlocksEveryLiveRuntime(){
@@ -48,6 +72,9 @@ class LongRunningFaultStoryTest{
         assertTrue(BackupRestorePolicy.blockingReason(false,true,false,false)!!.contains("sonar"))
         assertTrue(BackupRestorePolicy.blockingReason(false,false,true,false)!!.contains("proxy"))
         assertTrue(BackupRestorePolicy.blockingReason(false,false,false,true)!!.contains("Sharing"))
+        assertTrue(BackupRestorePolicy.blockingReason(false,false,false,false,tripActive=true)!!.contains("Trip"))
+        assertTrue(BackupRestorePolicy.blockingReason(false,false,false,false,phoneOutputActive=true)!!.contains("phone-to-boat"))
+        assertTrue(BackupRestorePolicy.blockingReason(false,false,false,false,nmeaConnected=true)!!.contains("Disconnect"))
         assertNull(BackupRestorePolicy.blockingReason(false,false,false,false))
     }
 

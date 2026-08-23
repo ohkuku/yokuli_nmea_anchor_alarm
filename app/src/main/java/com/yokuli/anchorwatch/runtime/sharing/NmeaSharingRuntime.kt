@@ -7,6 +7,7 @@ import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.location.AcceptedPositionEvent
+import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.runtime.RuntimeOwner
 import com.yokuli.anchorwatch.runtime.RuntimeRequirement
 import com.yokuli.anchorwatch.runtime.RuntimeResourceManager
@@ -26,6 +27,8 @@ data class SharingRuntimeResult(
 class NmeaSharingRuntime @Inject constructor(
     private val server:NmeaSharingServer,
     private val output:NmeaOutputMux,
+    private val positionPublisher:NmeaSharingPositionPublisher,
+    private val acceptedPosition:AcceptedPositionRepository,
     private val navigation:NavigationRepository,
     private val settings:SettingsRepository,
     private val resources:RuntimeResourceManager,
@@ -41,12 +44,17 @@ class NmeaSharingRuntime @Inject constructor(
         this.enabled=enabled
         source=lockedSource?:requestedSource
         if(!enabled){
+            positionPublisher.reset()
             server.stop()
             resources.release(RuntimeOwner.NMEA_SHARING)
             releaseNmeaIfUnowned()
             return SharingRuntimeResult()
         }
         server.start(port)
+        val now=android.os.SystemClock.elapsedRealtime()
+        val accepted=acceptedPosition.state.value
+        positionPublisher.seed(accepted.selectedSource,accepted.acceptedFix,source,now)
+            ?.let{fix->output.acceptedPosition(fix,now).forEach(server::publish)}
         val current=settings.settings.first()
         resources.set(
             RuntimeOwner.NMEA_SHARING,
@@ -68,12 +76,20 @@ class NmeaSharingRuntime @Inject constructor(
     }
 
     fun onAcceptedPosition(event:AcceptedPositionEvent,nowElapsed:Long){
-        if(enabled&&source==event.source)output.acceptedPosition(event.accepted.fix,nowElapsed).forEach(server::publish)
+        if(!enabled)return
+        positionPublisher.accept(event.source,event.accepted.fix,source,nowElapsed)
+            ?.let{fix->output.acceptedPosition(fix,nowElapsed).forEach(server::publish)}
+    }
+
+    fun tick(nowElapsed:Long){
+        if(!enabled)return
+        positionPublisher.tick(source,nowElapsed)
+            ?.let{fix->output.acceptedPosition(fix,nowElapsed).forEach(server::publish)}
     }
 
     fun onBoatSentence(line:String){if(enabled)output.boatSentence(line,source)?.let(server::publish)}
 
-    fun shutdown(){server.stop();resources.release(RuntimeOwner.NMEA_SHARING)}
+    fun shutdown(){positionPublisher.reset();server.stop();resources.release(RuntimeOwner.NMEA_SHARING)}
 
     private fun releaseNmeaIfUnowned()=nmeaRuntime.releaseIfUnowned()
 }

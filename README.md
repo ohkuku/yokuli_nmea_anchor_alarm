@@ -50,12 +50,24 @@ These are existing product captures; the gallery will be refreshed separately.
 - Supported sentences include RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT, DBT, MWD and MWV across common talker IDs.
 - Share accepted positions and boat instruments with trusted LAN/VPN clients through the bounded NMEA Sharing server.
 - Optionally proxy accepted NMEA position into Android's global mock-location provider, with developer-setting guidance and loop prevention.
+- Missing fields in an otherwise valid sentence are treated as “not updated”, not as invalid data. The last depth, wind, heading or speed value keeps its original receive time and visibly changes from **live** to **held** to **stale**; safety guards still require their own fresh evidence.
+
+### Record a trip without weakening Anchor Watch
+
+- **Watch → Trip Watch** provides live NAV, sailing, motion and weather instruments through a separate Vessel Data Hub. Its AUTO source fallback never changes the GPS source locked by an active anchor watch.
+- Start, pause, resume and end a local trip session. Readiness shows which instruments are available, while genuine missing data remains a gap rather than a made-up zero.
+- Phone heel/pitch recording requires a fixed vessel-mount calibration; phone barometer recording remains independent. Source and data age are stored with every observation.
+- Create named instrument dashboards, bind discovered NMEA fields without storing the raw stream, and independently choose which custom fields are recorded at up to 2 Hz. Live, held, stale and source state remain visible on every tile.
+- Completed trips have a bounded-memory report covering route, SOG/BSP, fastest 500 m, conservative point-of-sail/tack/gybe observations, heel, motion, depth/UKC, wind, pressure, source changes, events and waypoints. Replay can colour the route by SOG, BSP, heel, TWS, AWS, motion or depth and jump directly to events.
+- Export CSV, events, waypoints, custom metrics, GPX, KML/KMZ, branded snapshots or a local AI source ZIP. UKC is shown only when the recorded depth reference is compatible with the configured draft. Anchor and Trip sessions cannot both be active.
+- Completed Anchor and Trip sessions can create a local **AI source ZIP** after a precise-location privacy warning. The app never uploads these archives itself.
 
 ### Use maps, saved anchorages and depth
 
 - Switch on the map between **Map**, **Satellite** and **Nautical**. Following the boat still permits temporary pan/zoom before returning automatically; free-browse mode keeps the chosen view.
+- A scale bar follows the current latitude and zoom. The ruler button creates two draggable pins and shows their straight-line distance in metres or in both nautical miles and kilometres; tapping the ruler again clears the measurement.
 - Add the regional LINZ local-depth layer, recently used legal non-Google tile caches, or a licensed raster MBTiles file. Google tiles are never cached by the app.
-- Save an anchorage for later reference, view its notes and setup, open it in Google Maps, or share a branded coordinate QR image.
+- Save an anchorage for later reference, view its notes and setup, or open it in Google Maps. A branded QR card can carry the coordinate plus the saved radius, depth, rode, seabed, rating and notes; another Anchor Watch user can scan it with the camera or choose a QR image from the gallery, review every field and explicitly confirm the import.
 - Near a saved anchorage, use the direct distance/bearing guide. Choose vessel direction when usable NMEA HDT/HDG or trusted moving COG exists, otherwise use phone direction. This is not route planning or safe-passage advice.
 - Record a personal depth chart only when depth and position come from the **same connected NMEA server**. The anchor-watch GPS choice does not move real sonar samples.
 - Apply no, manual, or automatic LINZ tide correction to sonar surveys and keep chart-datum-corrected history available offline.
@@ -83,7 +95,13 @@ Developer Demo mode lets a user learn the UI without a live NMEA server. Every n
 
 The app starts in English. The welcome screen and Settings language list support English, Simplified Chinese, Traditional Chinese, Japanese, French and Spanish.
 
-Sessions and surveys stay on the device. There is no account, analytics, advertising or project-owned cloud backend. Data leaves only through an export or sharing action started by the user.
+Sessions and surveys stay on the device. There is no account, analytics, advertising or project-owned cloud backend. The camera is requested only after opening the anchorage QR scanner, and frames are decoded locally. Data leaves only through an export or sharing action started by the user.
+
+The local V3 backup includes Anchor and Trip sessions, raw source observations, waypoints, saved anchorages, vessel-source/layout preferences and vessel-mount calibration. On restore, active watches return in a safe paused state and Phone GPS Output, NMEA Sharing and GPS proxy stay off until the user deliberately enables them again.
+
+The current V4 backup additionally includes custom Trip metric samples and named dashboards. It still excludes imported MBTiles and custom alarm audio, and every external output remains off after restore.
+
+When explicitly enabled, the phone can act as a vessel sensor node and write fresh GNSS, heading, rate, calibrated attitude and pressure sentences back through the **same existing boat TCP connection**. It never opens a second boat socket, never writes to the local sharing-server port, and Phone Position Output is hard-conflicted with using boat NMEA position as the app GPS source.
 
 ## Build, CI and downloads
 
@@ -93,7 +111,7 @@ JDK 17 and Android SDK 36 are required.
 ./gradlew assembleDebug
 ```
 
-The main Android workflow builds and verifies downloadable Debug artifacts. Long device-story integration is separate from the signed-release path, while Release still requires signing preflight, unit tests, release lint, compilation, checksums and launch smoke. The current workflow publishes GitHub Releases; it does not upload to Google Play.
+The main Android workflow builds and verifies downloadable Debug artifacts. Long device-story integration is separate from the signed-release path, while Release still requires signing preflight, unit tests, release lint, compilation, checksums and launch smoke. If a build, lint, emulator, soak, signing or publishing job fails, its Actions run contains a 30-day `FAILURE-*` diagnostics artifact with the available reports and device logcat, but no signing or API secrets. The current workflow publishes GitHub Releases; it does not upload to Google Play.
 
 API values are never committed. See [CI secrets setup](docs/CI_SECRETS.md) for the exact map, LINZ and signing values and the safe clipboard helper. Branch and release conventions are in [Branching and releases](docs/BRANCHING_AND_RELEASES.md).
 
@@ -109,6 +127,7 @@ We hope first to explore New Zealand's islands and bays and, if wind, time and l
 
 ## More documentation
 
+- [User-story safety audit and state contracts](docs/USER_STORY_SAFETY_AUDIT.md)
 - [Offline maps](docs/OFFLINE_MAPS.md)
 - [Regional data providers](docs/REGIONAL_DATA_PROVIDERS.md)
 - [Privacy and data flow](docs/PRIVACY_DATA_FLOW.md)

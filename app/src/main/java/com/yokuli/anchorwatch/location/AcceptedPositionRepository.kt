@@ -116,18 +116,29 @@ class AcceptedPositionRepository @Inject constructor(
         lastSubmissionKey = key
         phoneHeading.setPosition(rawFix.latitude, rawFix.longitude, rawFix.altitudeMeters, rawFix.timestampUtcMillis)
         val phone = phoneHeading.sample.value
+        val now = rawFix.receivedElapsedRealtime
+        // Held NMEA fields remain visible in diagnostics and VesselDataHub, but
+        // safety/estimator input must not treat an old component as a fresh one
+        // merely because a newer position-only sentence arrived.
+        val safetyFix = if (rawFix.positionProvider == com.yokuli.anchorwatch.domain.model.PositionProvider.NMEA) rawFix.copy(
+            sogKnots=rawFix.sogKnots.takeIf{rawFix.sogReceivedElapsedRealtime.isFreshAt(now)},
+            cogTrueDegrees=rawFix.cogTrueDegrees.takeIf{rawFix.cogReceivedElapsedRealtime.isFreshAt(now)},
+            headingTrueDegrees=rawFix.headingTrueDegrees.takeIf{rawFix.headingReceivedElapsedRealtime.isFreshAt(now)},
+            headingMagneticDegrees=rawFix.headingMagneticDegrees.takeIf{rawFix.headingMagneticReceivedElapsedRealtime.isFreshAt(now)},
+        ) else rawFix
         // Phone orientation is optional estimator evidence for either selected
         // position source. A physical NMEA heading always wins when present.
-        val usePhone = phoneHeadingEvidenceEnabled && rawFix.headingTrueDegrees == null
-        val fix = if (usePhone) rawFix.copy(
+        val usePhone = phoneHeadingEvidenceEnabled && safetyFix.headingTrueDegrees == null
+        val fix = if (usePhone) safetyFix.copy(
             headingTrueDegrees = phone.trueHeadingDegrees,
+            headingReceivedElapsedRealtime = phone.receivedElapsedRealtime,
             headingSource = if (phone.trueHeadingDegrees != null) HeadingSource.PHONE else HeadingSource.NONE,
             headingQuality = phone.quality,
             headingEpoch = phone.epoch,
             headingSampleSequence = phone.sequence,
-        ) else rawFix.copy(
-            headingSource = rawFix.headingSource.takeIf { rawFix.headingTrueDegrees != null } ?: HeadingSource.NONE,
-            headingQuality = rawFix.headingQuality.takeIf { rawFix.headingTrueDegrees != null } ?: HeadingQuality.UNAVAILABLE,
+        ) else safetyFix.copy(
+            headingSource = safetyFix.headingSource.takeIf { safetyFix.headingTrueDegrees != null } ?: HeadingSource.NONE,
+            headingQuality = safetyFix.headingQuality.takeIf { safetyFix.headingTrueDegrees != null } ?: HeadingQuality.UNAVAILABLE,
         )
         val integrityStarted = System.nanoTime()
         val result = filter.evaluate(fix, phoneMotion.state.value.takeIf { source == GpsDataSource.SYSTEM })
@@ -180,4 +191,6 @@ class AcceptedPositionRepository @Inject constructor(
         lastSubmissionKey = null
         _state.value = AcceptedPositionState(selectedSource = source)
     }
+
+    private fun Long?.isFreshAt(now:Long,maxAgeMillis:Long=10_000L)=this?.let{now-it in 0L..maxAgeMillis}==true
 }

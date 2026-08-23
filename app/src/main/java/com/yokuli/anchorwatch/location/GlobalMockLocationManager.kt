@@ -12,6 +12,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +28,7 @@ class GlobalMockLocationManager @Inject constructor(@ApplicationContext private 
   if(_status.value.state==MockGpsState.ACTIVE)return _status.value;_status.value=MockGpsStatus(MockGpsState.STARTING,"Checking Android mock-location access…")
   return try{fused.setMockMode(true).await();val direct=enhancedCompatibility&&enableDirectProvider();MockGpsStatus(MockGpsState.ACTIVE,if(direct)"NMEA is feeding Fused Location and GPS_PROVIDER." else "NMEA is feeding Fused Location. Direct GPS compatibility is unavailable.",true,direct).also{_status.value=it}}
   catch(_:SecurityException){resetSystemLocation();MockGpsStatus(MockGpsState.NOT_CONFIGURED,"GPS proxy was not enabled. Turn on Developer Options and select Anchor Watch as the location override app.").also{_status.value=it}}
+  catch(cancelled:CancellationException){resetSystemLocation();throw cancelled}
   catch(e:Exception){resetSystemLocation();MockGpsStatus(MockGpsState.FAILED,"GPS proxy was not enabled: ${e.message?:e.javaClass.simpleName}. Android GPS remains on its normal source.").also{_status.value=it}}
  }
  private fun enableDirectProvider():Boolean=try{
@@ -40,6 +43,6 @@ class GlobalMockLocationManager @Inject constructor(@ApplicationContext private 
  }.onFailure{error->if(error is SecurityException)_status.value=MockGpsStatus(MockGpsState.NOT_CONFIGURED,"Mock-location access was revoked. Android GPS restored.")else _status.value=_status.value.copy(state=MockGpsState.FAILED,message="Could not publish NMEA position: ${error.message}")}
  override suspend fun stale(){stop("NMEA GPS became stale — Android GPS restored.");_status.value=MockGpsStatus(MockGpsState.STALE,"NMEA GPS became stale — Android GPS restored.")}
  override suspend fun stop(message:String){resetSystemLocation();_status.value=MockGpsStatus(MockGpsState.INACTIVE,message)}
- private suspend fun resetSystemLocation(){runCatching{fused.setMockMode(false).await()};cleanupProviders()}
+ private suspend fun resetSystemLocation(){withTimeoutOrNull(5_000){runCatching{fused.setMockMode(false).await()}};cleanupProviders()}
  private fun cleanupProviders(){if(directProviderAdded)runCatching{locationManager.removeTestProvider(LocationManager.GPS_PROVIDER)};directProviderAdded=false}
 }

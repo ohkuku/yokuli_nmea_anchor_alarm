@@ -41,6 +41,9 @@ data class RuntimeDiagnostics(
     val sharingSlowClientsDropped:Long=0,
     val wakeLockHeld:Boolean=false,
     val wifiLockHeld:Boolean=false,
+    val phoneMotionActive:Boolean=false,
+    val phoneHeadingActive:Boolean=false,
+    val phonePressureActive:Boolean=false,
     val activeOwners:Set<RuntimeOwner> = emptySet(),
     val serviceGeneration:Long=0,
     val serviceReady:Boolean=false,
@@ -90,7 +93,7 @@ class RuntimeDiagnosticsRepository @Inject constructor(
         scope.launch{SonarTileDiagnostics.state.collect{tile->_state.update{it.copy(sonarTileLastDurationMs=tile.lastRenderDurationMillis,sonarTileMaxDurationMs=tile.maxRenderDurationMillis)}}}
         scope.launch{TideRuntimeDiagnostics.state.collect{tide->_state.update{it.copy(tideCorrections=tide.corrections,tideLastDurationMs=tide.lastDurationMillis,tideMaxDurationMs=tide.maxDurationMillis)}}}
         scope.launch{sharing.status.collect{status->_state.update{it.copy(sharingClients=status.clientCount,sharingSlowClientsDropped=status.droppedSlowClients)}}}
-        scope.launch{resources.state.collect{snapshot->_state.update{it.copy(wakeLockHeld=snapshot.wakeLockHeld,wifiLockHeld=snapshot.wifiLockHeld,activeOwners=snapshot.owners)}}}
+        scope.launch{resources.state.collect{snapshot->_state.update{it.copy(wakeLockHeld=snapshot.wakeLockHeld,wifiLockHeld=snapshot.wifiLockHeld,phoneMotionActive=snapshot.phoneMotionActive,phoneHeadingActive=snapshot.phoneHeadingActive,phonePressureActive=snapshot.phonePressureActive,activeOwners=snapshot.owners)}}}
     }
 
     fun recordPositionDisposition(disposition:String){_state.update{state->when(disposition){

@@ -58,7 +58,10 @@ class PositionIntegrityFilter(
         }
     }
 
-    fun evaluate(fix: NavigationFix, motion: PhoneMotionState? = null): PositionIntegrityResult {
+    fun evaluate(fix: NavigationFix, motion: PhoneMotionState? = null): PositionIntegrityResult =
+        evaluateCurrentQuality(fix.withCurrentNmeaComponents(),motion)
+
+    private fun evaluateCurrentQuality(fix: NavigationFix, motion: PhoneMotionState?): PositionIntegrityResult {
         if (!fix.valid || !fix.latitude.isFinite() || !fix.longitude.isFinite() ||
             fix.latitude !in -90.0..90.0 || fix.longitude !in -180.0..180.0
         ) return PositionIntegrityResult.Rejected(fix, "INVALID_POSITION")
@@ -191,10 +194,43 @@ class PositionIntegrityFilter(
     private fun qualityReason(fix:NavigationFix):String?=
         if(fix.horizontalAccuracyMeters==null&&fix.hdop==null)"QUALITY_NOT_REPORTED" else null
 
+    /**
+     * NavigationRepository deliberately keeps omitted GGA fields for display
+     * and diagnostics. Integrity decisions use only currently fresh quality
+     * evidence, so an old good HDOP or an old bad fix-quality flag cannot be
+     * refreshed by an unrelated RMC/GLL position sentence.
+     */
+    private fun NavigationFix.withCurrentNmeaComponents(qualityMaxAgeMillis:Long=5_000L):NavigationFix{
+        if(positionProvider!=PositionProvider.NMEA)return this
+        fun fresh(received:Long?,maxAgeMillis:Long)=(received?:receivedElapsedRealtime).let{receivedElapsedRealtime-it in 0L..maxAgeMillis}
+        val hdopFresh=fresh(hdopReceivedElapsedRealtime,qualityMaxAgeMillis)
+        val trueHeadingFresh=fresh(headingReceivedElapsedRealtime,HEADING_MAX_AGE_MILLIS)
+        val magneticHeadingFresh=fresh(headingMagneticReceivedElapsedRealtime,HEADING_MAX_AGE_MILLIS)
+        return copy(
+            hdop=hdop.takeIf{hdopFresh},
+            fixQuality=fixQuality.takeIf{fresh(fixQualityReceivedElapsedRealtime,qualityMaxAgeMillis)},
+            satellites=satellites.takeIf{fresh(satellitesReceivedElapsedRealtime,qualityMaxAgeMillis)},
+            altitudeMeters=altitudeMeters.takeIf{fresh(altitudeReceivedElapsedRealtime,qualityMaxAgeMillis)},
+            horizontalAccuracyMeters=horizontalAccuracyMeters.takeIf{hdopFresh},
+            sogKnots=sogKnots.takeIf{fresh(sogReceivedElapsedRealtime,COURSE_MAX_AGE_MILLIS)},
+            cogTrueDegrees=cogTrueDegrees.takeIf{fresh(cogReceivedElapsedRealtime,COURSE_MAX_AGE_MILLIS)},
+            speedThroughWaterKnots=speedThroughWaterKnots.takeIf{fresh(speedThroughWaterReceivedElapsedRealtime,HEADING_MAX_AGE_MILLIS)},
+            headingTrueDegrees=headingTrueDegrees.takeIf{trueHeadingFresh},
+            headingMagneticDegrees=headingMagneticDegrees.takeIf{magneticHeadingFresh},
+            headingSource=if(headingSource==com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL&&!trueHeadingFresh)com.yokuli.anchorwatch.domain.model.HeadingSource.NONE else headingSource,
+            headingQuality=if(headingSource==com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL&&!trueHeadingFresh)HeadingQuality.UNAVAILABLE else headingQuality,
+            headingSampleSequence=headingSampleSequence.takeIf{trueHeadingFresh},
+        )
+    }
+
     private fun distance(a: NavigationFix, b: NavigationFix): Double =
         AnchorGeometry.distanceMeters(a.latitude, a.longitude, b.latitude, b.longitude)
 
     private fun bearingDifference(a: Double, b: Double): Double = abs((a - b + 540.0) % 360.0 - 180.0)
 
-    private companion object{const val UNKNOWN_ACCURACY_METERS=50.0}
+    private companion object{
+        const val UNKNOWN_ACCURACY_METERS=50.0
+        const val COURSE_MAX_AGE_MILLIS=5_000L
+        const val HEADING_MAX_AGE_MILLIS=10_000L
+    }
 }
