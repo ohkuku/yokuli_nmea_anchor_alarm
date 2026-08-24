@@ -6,11 +6,20 @@ import com.yokuli.anchorwatch.domain.model.HeadingQuality
 import com.yokuli.anchorwatch.domain.model.HeadingSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionHealth
+import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
+import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
+import com.yokuli.anchorwatch.data.vessel.VesselDataHub
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -31,6 +40,7 @@ data class AcceptedPositionState(
 data class AcceptedPositionEvent(
     val source: GpsDataSource,
     val accepted: IntegrityAcceptedFix,
+    val headingEvidence:AnchorHeadingEvidence=AnchorHeadingEvidence(reason="NOT_REPORTED"),
 )
 
 /**
@@ -41,7 +51,11 @@ data class AcceptedPositionEvent(
 class AcceptedPositionRepository @Inject constructor(
     private val phoneHeading: PhoneHeadingRepository,
     private val phoneMotion: PhoneMotionRepository,
+    private val vesselAttitude:PhoneVesselAttitudeRepository,
+    private val vesselDataHub:VesselDataHub,
+    vesselSettings:VesselSettingsRepository,
 ) {
+    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     private val filter = PositionIntegrityFilter()
     private val _state = MutableStateFlow(AcceptedPositionState())
     val state = _state.asStateFlow()
@@ -51,7 +65,14 @@ class AcceptedPositionRepository @Inject constructor(
     )
     val accepted = _accepted.asSharedFlow()
     private var phoneHeadingEvidenceEnabled = false
+    @Volatile private var headingPreference=VesselSourcePreference.AUTO
+    @Volatile private var phoneMountState=PhoneVesselMountState.UNCALIBRATED
     private var lastSubmissionKey: Triple<GpsDataSource, Long, String>? = null
+
+    init{
+        scope.launch{vesselSettings.settings.collect{headingPreference=it.headingPreference}}
+        scope.launch{vesselAttitude.mountState.collect{phoneMountState=it}}
+    }
 
     @Synchronized
     fun selectSource(source: GpsDataSource): Boolean {
@@ -126,19 +147,11 @@ class AcceptedPositionRepository @Inject constructor(
             headingTrueDegrees=rawFix.headingTrueDegrees.takeIf{rawFix.headingReceivedElapsedRealtime.isFreshAt(now)},
             headingMagneticDegrees=rawFix.headingMagneticDegrees.takeIf{rawFix.headingMagneticReceivedElapsedRealtime.isFreshAt(now)},
         ) else rawFix
-        // Phone orientation is optional estimator evidence for either selected
-        // position source. A physical NMEA heading always wins when present.
-        val usePhone = phoneHeadingEvidenceEnabled && safetyFix.headingTrueDegrees == null
-        val fix = if (usePhone) safetyFix.copy(
-            headingTrueDegrees = phone.trueHeadingDegrees,
-            headingReceivedElapsedRealtime = phone.receivedElapsedRealtime,
-            headingSource = if (phone.trueHeadingDegrees != null) HeadingSource.PHONE else HeadingSource.NONE,
-            headingQuality = phone.quality,
-            headingEpoch = phone.epoch,
-            headingSampleSequence = phone.sequence,
-        ) else safetyFix.copy(
-            headingSource = safetyFix.headingSource.takeIf { safetyFix.headingTrueDegrees != null } ?: HeadingSource.NONE,
-            headingQuality = safetyFix.headingQuality.takeIf { safetyFix.headingTrueDegrees != null } ?: HeadingQuality.UNAVAILABLE,
+        val evidence=AnchorHeadingEvidenceRouter.routeSelected(phoneHeadingEvidenceEnabled,headingPreference,vesselDataHub.snapshot.value.headingTrueDegrees,phone,phoneMountState)
+        val fix=safetyFix.copy(
+            headingTrueDegrees=evidence.trueDegrees,
+            headingReceivedElapsedRealtime=when(evidence.source){HeadingSource.PHONE->phone.receivedElapsedRealtime;HeadingSource.NMEA_PHYSICAL->safetyFix.headingReceivedElapsedRealtime;else->null},
+            headingSource=evidence.source,headingQuality=evidence.quality,headingEpoch=evidence.epoch,headingSampleSequence=evidence.sequence,
         )
         val integrityStarted = System.nanoTime()
         val result = filter.evaluate(fix, phoneMotion.state.value.takeIf { source == GpsDataSource.SYSTEM })
@@ -158,7 +171,7 @@ class AcceptedPositionRepository @Inject constructor(
                         integrityLastDurationMicros = integrityMicros,
                         integrityMaxDurationMicros = integrityMaxMicros,
                     )
-                    _accepted.tryEmit(AcceptedPositionEvent(source, accepted))
+                    _accepted.tryEmit(AcceptedPositionEvent(source, accepted,evidence))
                 }
             }
             is PositionIntegrityResult.Quarantined -> {

@@ -15,6 +15,7 @@ import javax.inject.Singleton
 class NmeaRuntime @Inject constructor(
     private val navigation:NavigationRepository,
     private val resources:RuntimeResourceManager,
+    private val manualDisconnect:NmeaManualDisconnectRepository,
 ){
     val connectionState get()=navigation.connectionState
     /**
@@ -23,9 +24,13 @@ class NmeaRuntime @Inject constructor(
      * re-enter the socket that the Data page is already using.
      */
     suspend fun ensureConnected(profile:ConnectionProfile){
+        if(manualDisconnect.current().suppressed)return
         if(!navigation.claimBackgroundConnectionIfConnected()){
             navigation.acquireBackgroundConnection(profile)
         }
     }
     fun releaseIfUnowned(){if(!resources.snapshot().needsNmeaTransport)navigation.releaseBackgroundConnection()}
+    suspend fun userDisconnected()=manualDisconnect.current().suppressed||navigation.isUserDisconnected()
+    suspend fun markUserDisconnected(){manualDisconnect.suppress()}
+    suspend fun clearUserDisconnect(){manualDisconnect.clear();navigation.clearUserDisconnectLatch()}
 }

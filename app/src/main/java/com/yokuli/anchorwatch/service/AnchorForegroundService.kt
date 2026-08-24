@@ -87,6 +87,7 @@ class AnchorForegroundService : Service() {
         const val UPDATE_RADIUS = "com.yokuli.anchorwatch.UPDATE_RADIUS"
         const val STOP_WATCH_AND_DISCONNECT = "com.yokuli.anchorwatch.STOP_WATCH_AND_DISCONNECT"
         const val STOP_NMEA_DEPENDENCIES_AND_DISCONNECT = "com.yokuli.anchorwatch.STOP_NMEA_DEPENDENCIES_AND_DISCONNECT"
+        const val CONTINUE_TRIP_WITH_PHONE_AND_DISCONNECT = "com.yokuli.anchorwatch.CONTINUE_TRIP_WITH_PHONE_AND_DISCONNECT"
         const val ACCEPT_ESTIMATED_CENTER = "com.yokuli.anchorwatch.ACCEPT_ESTIMATED_CENTER"
         const val KEEP_CURRENT_CENTER = "com.yokuli.anchorwatch.KEEP_CURRENT_CENTER"
         const val CONTINUE_ESTIMATING_CENTER = "com.yokuli.anchorwatch.CONTINUE_ESTIMATING_CENTER"
