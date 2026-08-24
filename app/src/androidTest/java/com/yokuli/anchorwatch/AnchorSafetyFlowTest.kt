@@ -41,6 +41,7 @@ import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.SharingServerState
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
+import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.di.AnchorWatchEntryPoint
 import com.yokuli.anchorwatch.domain.model.AnchorCenterStatus
@@ -340,11 +341,31 @@ class AnchorSafetyFlowTest {
                 requireNotNull(selected)
                 assertEquals(GpsDataSource.NMEA,selected.gpsDataSource)
                 assertTrue(!selected.demoMode)
+                assertEquals("Save/connect must validate and retain one live RX socket, not open a disposable preflight client",1,server.accepted.get())
                 compose.onNodeWithText("Settings").performClick()
                 compose.onNodeWithTag("settings_list").performScrollToIndex(3)
                 compose.onNodeWithTag("settings_positioning").performClick()
                 compose.onNodeWithTag("gps_source_nmea").assertIsEnabled()
             }
+        }
+    }
+
+    @Test fun nmeaConnectionFormExposesIndependentReceiveAndSendPorts() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        outputSettings.save(NmeaDeviceOutputSettings(
+            transportMode=NmeaOutputTransportMode.DEDICATED_TCP,
+            outputHost="192.168.1.211",
+            outputPort=10110,
+        ))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Data").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_tx_route",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("nmea_rx_port").assertExists()
+            compose.onNodeWithTag("nmea_tx_route").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("nmea_tx_host").assertExists()
+            compose.onNodeWithTag("nmea_tx_port").assertExists()
+            compose.onNodeWithText("192.168.1.211").assertExists()
         }
     }
 
@@ -1033,10 +1054,10 @@ private class TestNmeaServer : Closeable {
                 socket.getOutputStream().write(sentence.get())
                 depthSentence.get()?.let{socket.getOutputStream().write(it)}
                 socket.getOutputStream().flush()
-                // Every newly accepted socket gets a short validation burst so both the
-                // endpoint preflight and the real transport can prove that live NMEA is
-                // present. Afterwards use a realistic low visual cadence: safety code still
-                // sees every sentence, while Compose tests get an idle window between fixes.
+                // Every newly accepted live socket gets a short validation burst. The App
+                // must retain this same socket; it must never open a disposable preflight
+                // client first. Afterwards use a realistic low visual cadence: safety code
+                // still sees every sentence, while Compose tests get an idle window.
                 delay(if (emitted++ < 3) 100 else 2_000)
             }
         } catch (_: Exception) {

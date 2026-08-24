@@ -34,6 +34,7 @@ import com.yokuli.anchorwatch.data.nmea.NmeaEndpointPreflight
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldObservation
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldRepository
 import com.yokuli.anchorwatch.data.nmea.Protocol
+import com.yokuli.anchorwatch.data.nmea.output.NmeaOutputEndpointPolicy
 import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
@@ -154,7 +155,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-enum class ConnectionAttemptState { IDLE, TESTING, FAILED }
+enum class ConnectionAttemptState { IDLE, TESTING, WARNING, FAILED }
 data class ConnectionAttempt(val state:ConnectionAttemptState=ConnectionAttemptState.IDLE,val message:String="")
 data class CentreRecalculationUiState(val sessionId:Long?=null,val sessionActive:Boolean=false,val loading:Boolean=false,val result:AnchorCentreRecalculationResult?=null)
 const val CORRECTED_SONAR_HISTORY_ID = -1L
@@ -519,12 +520,27 @@ class MainViewModel @Inject constructor(
 
     fun validateProfile(profile:ConnectionProfile)=endpointPreflight.validate(profile,_ui.value.settings.nmeaSharingEnabled,_ui.value.settings.nmeaSharingPort)
 
-    fun saveAndConnect(profile:ConnectionProfile)=viewModelScope.launch{
+    fun saveAndConnect(profile:ConnectionProfile)=saveAndConnect(
+        profile=profile,
+        outputMode=_ui.value.outputSettings.transportMode,
+        outputHost=_ui.value.outputSettings.outputHost,
+        outputPort=_ui.value.outputSettings.outputPort,
+    )
+
+    fun saveAndConnect(profile:ConnectionProfile,outputMode:NmeaOutputTransportMode,outputHost:String,outputPort:Int)=viewModelScope.launch{
         if(_ui.value.connection!=NmeaConnectionState.DISCONNECTED||_ui.value.connectionAttempt.state==ConnectionAttemptState.TESTING)return@launch
         endpointPreflight.validate(profile,_ui.value.settings.nmeaSharingEnabled,_ui.value.settings.nmeaSharingPort)?.let{message->_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))};return@launch}
-        _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.TESTING,"Testing the endpoint and waiting for valid NMEA data…"))}
-        val result=endpointPreflight.check(profile,_ui.value.settings.nmeaSharingEnabled,_ui.value.settings.nmeaSharingPort)
-        if(result.isFailure){val detail=result.exceptionOrNull()?.message?.takeIf{it.isNotBlank()}?:"The NMEA endpoint test failed.";_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,detail))};return@launch}
+        val nextOutput=_ui.value.outputSettings.copy(transportMode=outputMode,outputHost=outputHost.trim(),outputPort=outputPort)
+        if(!NmeaOutputEndpointPolicy.isValid(nextOutput,profile)){
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,if(outputMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)"Same-socket NMEA TX requires a valid TCP input endpoint." else "Dedicated NMEA TX needs a valid host and port from 1 to 65535."))}
+            return@launch
+        }
+        // Do not preflight with a disposable socket and then reconnect. Many
+        // marine gateways allow only one reader or release the previous client
+        // slowly, which made the test socket consume the stream while the real
+        // App socket appeared quiet. The long-lived RX transport is itself the
+        // endpoint test and must prove that it receives valid NMEA traffic.
+        _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.TESTING,"Opening the live endpoint and waiting for valid NMEA data…"))}
         val previous=_ui.value.settings
         val connectedAt=android.os.SystemClock.elapsedRealtime()
         val validSentenceBaseline=nav.diagnostics.value.validSentences
@@ -532,16 +548,28 @@ class MainViewModel @Inject constructor(
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"The verified endpoint could not be claimed by the live connection."))}
             return@launch
         }
-        val live=withTimeoutOrNull(10_000){combine(nav.fix,nav.diagnostics){fix,diagnostics->
+        var liveSocketOpened=false
+        val validationWindowMillis=profile.noDataTimeoutSeconds.coerceIn(10,30)*1_000L
+        val live=withTimeoutOrNull(validationWindowMillis){combine(nav.fix,nav.diagnostics,nav.transportDiagnostics){fix,diagnostics,transport->
+            if(transport.connectedAtElapsedRealtime!=null)liveSocketOpened=true
             val freshFix=fix?.takeIf{it.valid&&it.receivedElapsedRealtime>=connectedAt}
             freshFix to (diagnostics.validSentences>validSentenceBaseline)
         }.first{(fix,validTraffic)->fix!=null||validTraffic}}
         if(live==null){
-            // The preflight socket and the App's long-lived connection are two
-            // separate transports. The live socket must independently prove it
-            // is delivering at least one valid NMEA sentence.
+            val transport=nav.transportDiagnostics.value
+            if(liveSocketOpened){
+                // A quiet or temporarily dropped marine gateway is fragile:
+                // preserve the one long-lived transport (and its configured
+                // auto-reconnect policy) instead of forcing another handshake.
+                prefs.save(previous.copy(profile=profile))
+                outputSettingsRepository.save(nextOutput)
+                _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.WARNING,"The RX socket was opened and is being kept alive, but no valid NMEA sentence has arrived yet. It will continue listening; do not reconnect repeatedly. Check RX port, checksum and server output."))}
+                awaitLateNmeaValidation(connectedAt,validSentenceBaseline)
+                return@launch
+            }
             nav.disconnect()
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"The endpoint test passed, but the live NMEA connection did not deliver valid traffic. The connection was closed."))}
+            val detail=transport.lastDisconnectReason?.takeIf{it.isNotBlank()}
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,detail?.let{"The live NMEA connection could not be opened: $it"}?:"The live NMEA connection could not be opened. Check the RX host, port and network."))}
             return@launch
         }
         val liveFix=live.first
@@ -563,7 +591,21 @@ class MainViewModel @Inject constructor(
             // Anchor position source without a fresh accepted NMEA position.
             prefs.save(previous.copy(profile=profile))
         }
+        outputSettingsRepository.save(nextOutput)
         _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+    }
+
+    private fun awaitLateNmeaValidation(connectedAt:Long,validSentenceBaseline:Long)=viewModelScope.launch{
+        val outcome=combine(nav.fix,nav.diagnostics,nav.connectionState){fix,diagnostics,state->
+            val freshFix=fix?.takeIf{it.valid&&it.receivedElapsedRealtime>=connectedAt}
+            Triple(freshFix,diagnostics.validSentences>validSentenceBaseline,state)
+        }.first{(_,validTraffic,state)->validTraffic||state==NmeaConnectionState.DISCONNECTED}
+        if(!outcome.second)return@launch
+        val latest=prefs.settings.first()
+        if(outcome.first!=null&&!latest.demoMode&&_ui.value.active==null&&!_ui.value.outputSettings.phonePositionEnabled){
+            prefs.save(latest.copy(gpsDataSource=GpsDataSource.NMEA,mockEnabled=false))
+        }
+        _ui.update{state->if(state.connectionAttempt.state==ConnectionAttemptState.WARNING)state.copy(connectionAttempt=ConnectionAttempt())else state}
     }
 
     fun disconnect(){

@@ -498,12 +498,16 @@ private fun humanBytes(value:Long):String=when{value>=1024L*1024L*1024L->"%.1f G
 
 @Composable internal fun localizeKnownMessage(message:String):String{
  if(!LocalAppLanguage.current.usesChinese())return message
+ if(message.startsWith("The live NMEA connection could not be opened:"))return "无法建立实时 NMEA 连接：${message.substringAfter(':').trim()}"
  return when(message){
   "Port must be between 1 and 65535."->"端口必须在 1 到 65535 之间。"
   "Host or IP address is required."->"必须填写主机名或 IP 地址。"
   "Enter a host name or IP address, not a URL."->"请输入主机名或 IP 地址，不要填写网址。"
   "Host name is too long."->"主机名过长。"
   "Testing the endpoint and waiting for valid NMEA data…"->"正在测试端点并等待有效 NMEA 数据…"
+  "Opening the live endpoint and waiting for valid NMEA data…"->"正在建立唯一的实时连接并等待有效 NMEA 数据…"
+  "The RX socket was opened and is being kept alive, but no valid NMEA sentence has arrived yet. It will continue listening; do not reconnect repeatedly. Check RX port, checksum and server output."->"RX Socket 已建立并会保持开启，但尚未收到有效 NMEA 语句。应用将继续监听，请不要反复重连；请检查 RX 端口、校验和设置及服务器输出。"
+  "The live NMEA connection could not be opened. Check the RX host, port and network."->"无法建立实时 NMEA 连接，请检查 RX 主机、端口和网络。"
   "The NMEA endpoint test failed."->"NMEA 端点测试失败。"
   "The endpoint responded, but no valid NMEA sentence arrived within 4 seconds."->"端点已有响应，但 4 秒内没有收到有效 NMEA 语句。"
   "The endpoint test passed, but the live NMEA connection did not deliver a fresh position."->"端点测试通过，但实时 NMEA 连接没有提供新的位置。"
