@@ -18,6 +18,7 @@ import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import com.yokuli.anchorwatch.runtime.*
 import com.yokuli.anchorwatch.runtime.nmea.NmeaRuntime
+import com.yokuli.anchorwatch.runtime.output.PhonePositionNmeaOutputRuntime
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.*
@@ -42,6 +43,7 @@ class TripRuntime @Inject constructor(
     private val mountCalibration:VesselMountCalibrationRepository,
     private val nmeaFields:NmeaFieldRepository,
     private val dashboards:TripDashboardRepository,
+    private val publisher:PhonePositionNmeaOutputRuntime,
 ){
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     private val mutex=Mutex()
@@ -52,10 +54,12 @@ class TripRuntime @Inject constructor(
     private var lastPositionAt:Long?=null
     private var lastRecordedPositionSource:String?=null
     private var lastRecordedHeadingSource:String?=null
+    private var lastRecordedWindSource:String?=null
     private var positionGapOpen:Boolean?=null
     private var lastImpactElapsed:Long?=null
     private var phoneMotionRecordingAllowed=false
     private var nmeaTransportOwned=false
+    private var manualNmeaDisconnected=false
     /** "Expected" is session memory, not an alias for "available now". Once a
      * boat instrument has participated in this trip, its later disappearance
      * must produce a gap and its return a recovery event. */
@@ -77,6 +81,8 @@ class TripRuntime @Inject constructor(
         // Rebuild the per-field expectation memory from durable samples. A
         // process restart must not turn a later missing field into "never
         // observed", otherwise real depth/wind/NMEA gaps would be hidden.
+        val lastNmeaUserChoice=dao.events(existing.id).lastOrNull{it.type in setOf("NMEA_DISCONNECTED_BY_USER","NMEA_RECONNECTED_BY_USER")}
+        manualNmeaDisconnected=lastNmeaUserChoice?.type=="NMEA_DISCONNECTED_BY_USER"
         nmeaExpected=existing.nmeaWasActiveAtStart||dao.hasNmeaSamples(existing.id)
         depthExpected=existing.minDepthMeters!=null||dao.hasDepthSamples(existing.id)
         windExpected=dao.hasWindSamples(existing.id)
@@ -121,6 +127,7 @@ class TripRuntime @Inject constructor(
         catch(error:Exception){releaseOwnedResources();throw error}
         active=value.copy(id=id,eventCount=1)
         nmeaExpected=value.nmeaWasActiveAtStart
+        manualNmeaDisconnected=false
         depthExpected=false
         windExpected=false
         resetRecordingEdges()
@@ -193,7 +200,7 @@ class TripRuntime @Inject constructor(
         val now=System.currentTimeMillis()
         val updated=current.copy(waypointCount=current.waypointCount+1,eventCount=current.eventCount+1)
         val snapshot=hub.snapshot.value
-        dao.updateSessionAndInsertEventAndWaypoint(updated,TripEventEntity(tripId=current.id,timestamp=now,type="USER_WAYPOINT",severity="INFO",latitude=position.latitude,longitude=position.longitude),TripWaypointEntity(tripId=current.id,timestamp=now,latitude=position.latitude,longitude=position.longitude,name=name.trim().ifBlank{"Waypoint ${current.waypointCount+1}"},note=note.trim(),type=type,positionSource=snapshot.position.source.name,sogKnots=snapshot.sogKnots.currentOrHeldValue(),cogTrueDegrees=snapshot.cogTrueDegrees.currentOrHeldValue(),headingTrueDegrees=snapshot.headingTrueDegrees.currentOrHeldValue(),speedThroughWaterKnots=snapshot.speedThroughWaterKnots.currentOrHeldValue(),depthMeters=snapshot.depthMeters.currentOrHeldValue(),trueWindSpeedKnots=snapshot.trueWind.speedKnots.currentOrHeldValue(),trueWindAngleDegrees=snapshot.trueWind.angleDegrees.currentOrHeldValue(),apparentWindSpeedKnots=snapshot.apparentWind.speedKnots.currentOrHeldValue(),apparentWindAngleDegrees=snapshot.apparentWind.angleDegrees.currentOrHeldValue(),heelDegrees=snapshot.attitude.currentOrHeldValue()?.heelDegrees,pitchDegrees=snapshot.attitude.currentOrHeldValue()?.pitchDegrees,pressureHpa=snapshot.pressureHpa.currentOrHeldValue()))
+        dao.updateSessionAndInsertEventAndWaypoint(updated,TripEventEntity(tripId=current.id,timestamp=now,type="USER_WAYPOINT",severity="INFO",latitude=position.latitude,longitude=position.longitude),TripWaypointEntity(tripId=current.id,timestamp=now,latitude=position.latitude,longitude=position.longitude,name=name.trim().ifBlank{"Waypoint ${current.waypointCount+1}"},note=note.trim(),type=type,positionSource=snapshot.position.source.name,sogKnots=snapshot.sogKnots.currentOrHeldValue(),cogTrueDegrees=snapshot.cogTrueDegrees.currentOrHeldValue(),headingTrueDegrees=snapshot.headingTrueDegrees.currentOrHeldValue(),speedThroughWaterKnots=snapshot.speedThroughWaterKnots.currentOrHeldValue(),depthMeters=snapshot.depthMeters.currentOrHeldValue(),trueWindSpeedKnots=snapshot.trueWind.speedKnots.currentOrHeldValue(),trueWindAngleDegrees=snapshot.trueWind.angleDegrees.currentOrHeldValue(),apparentWindSpeedKnots=snapshot.apparentWind.speedKnots.currentOrHeldValue(),apparentWindAngleDegrees=snapshot.apparentWind.angleDegrees.currentOrHeldValue(),heelDegrees=snapshot.attitude.currentOrHeldValue()?.heelDegrees,pitchDegrees=snapshot.attitude.currentOrHeldValue()?.pitchDegrees,pressureHpa=snapshot.pressureHpa.currentOrHeldValue(),positionSourceId=snapshot.position.sourceId(),headingSourceId=snapshot.headingTrueDegrees.sourceId(),headingReference=snapshot.headingTrueDegrees.referenceLabel(),stwSourceId=snapshot.speedThroughWaterKnots.sourceId(),apparentWindAngleSourceId=snapshot.apparentWind.angleDegrees.sourceId(),apparentWindSpeedSourceId=snapshot.apparentWind.speedKnots.sourceId(),trueWindAngleSourceId=snapshot.trueWind.angleDegrees.sourceId(),trueWindSpeedSourceId=snapshot.trueWind.speedKnots.sourceId(),trueWindDirectionSourceId=snapshot.trueWind.directionDegrees.sourceId(),trueWindProvenance=snapshot.trueWind.speedKnots.provenanceLabel(),trueWindReference=snapshot.trueWind.speedKnots.referenceLabel(),depthSourceId=snapshot.depthMeters.sourceId()))
         active=updated
         TripRuntimeResult(true,"Waypoint saved.",updated)
     }
@@ -204,6 +211,22 @@ class TripRuntime @Inject constructor(
         releaseOwnedResources()
     }
 
+    suspend fun continueWithPhoneAfterNmeaDisconnect():TripRuntimeResult=mutex.withLock{
+        val current=active?.takeIf{!it.paused}?:return@withLock TripRuntimeResult(false,"A running Trip Watch is required.",active)
+        val nowElapsed=SystemClock.elapsedRealtime();val phoneReady=hub.hasFreshPhonePosition(nowElapsed)
+        if(!phoneReady)return@withLock TripRuntimeResult(false,"A fresh Phone GNSS position is required before disconnecting NMEA without pausing the trip.",current)
+        val flush=flushLocked();if(flush.writeFailed)return@withLock TripRuntimeResult(false,"Buffered trip samples could not be saved; NMEA remains connected.",current)
+        val persistedCurrent=active?:current
+        manualNmeaDisconnected=true;nmeaTransportOwned=false
+        setResourceRequirement(false);nmeaRuntime.releaseIfUnowned()
+        val vessel=vesselSettings.settings.first();if(vessel.positionPreference!=VesselSourcePreference.PHONE)vesselSettings.save(vessel.copy(positionPreference=VesselSourcePreference.PHONE))
+        val now=System.currentTimeMillis();val updated=persistedCurrent.copy(positionPreference=VesselSourcePreference.PHONE.name,eventCount=persistedCurrent.eventCount+2)
+        dao.updateSessionAndInsertEvent(updated,TripEventEntity(tripId=persistedCurrent.id,timestamp=now,type="NMEA_DISCONNECTED_BY_USER",severity="WARNING",detailJson="{\"tripContinuesWith\":\"PHONE_GNSS\"}"))
+        dao.insertEvent(TripEventEntity(tripId=persistedCurrent.id,timestamp=now,type="INSTRUMENT_GAP_STARTED",severity="WARNING",detailJson="{\"reason\":\"USER_DISCONNECTED_NMEA\"}"))
+        active=updated
+        TripRuntimeResult(true,"Trip Watch continues with Phone GNSS; NMEA instruments are marked as a gap.",updated)
+    }
+
     private suspend fun ownResources(session:TripSessionEntity){
         val calibration=mountCalibration.calibration.first()
         val motionRuntimeEnabled=session.phoneMotionEnabled&&vesselAttitude.capabilities.attitudeAvailable&&calibration.calibratedAt>0L&&session.mountCalibrationVersion==calibration.version
@@ -211,7 +234,7 @@ class TripRuntime @Inject constructor(
         // A trip that began phone-only may adopt live boat instruments later.
         // Pause/resume must preserve that expectation instead of falling back
         // to the immutable "active at start" flag and silently losing NMEA.
-        nmeaTransportOwned=session.nmeaWasActiveAtStart||nmeaExpected
+        nmeaTransportOwned=!manualNmeaDisconnected&&(session.nmeaWasActiveAtStart||nmeaExpected)
         setResourceRequirement(nmeaTransportOwned)
         if(nmeaTransportOwned)nmeaRuntime.ensureConnected(appSettings.settings.first().profile)
     }
@@ -224,6 +247,8 @@ class TripRuntime @Inject constructor(
      * after process restore unless it was active at trip start. */
     private suspend fun claimLiveNmeaTransport(){
         if(nmeaTransportOwned)return
+        if(manualNmeaDisconnected&&nmeaRuntime.userDisconnected())return
+        if(manualNmeaDisconnected){manualNmeaDisconnected=false;active?.let{current->val updated=current.copy(eventCount=current.eventCount+1);dao.updateSessionAndInsertEvent(updated,TripEventEntity(tripId=current.id,timestamp=System.currentTimeMillis(),type="NMEA_RECONNECTED_BY_USER",severity="INFO"));active=updated}}
         setResourceRequirement(true)
         try{
             nmeaRuntime.ensureConnected(appSettings.settings.first().profile)
@@ -256,10 +281,12 @@ class TripRuntime @Inject constructor(
             val rows=nmeaFields.fields.value.filter{it.key.stableId in customIds&&it.isFresh(now,60_000L)}.map{field->val binding=bindings[field.key.stableId];TripCustomMetricSampleEntity(tripId=session.id,timestamp=nowWall,fieldId=field.key.stableId,displayName=binding?.label?.takeIf{it.isNotBlank()}?:field.key.transducerName?:"${field.key.talker}${field.key.sentenceType}:${field.key.fieldIndex}",numericValue=binding?.transformed(field.value)?:field.value,textValue=field.text,unit=binding?.unitOverride?.takeIf{it.isNotBlank()}?:field.unit,sentenceType=field.key.sentenceType,fieldAgeMillis=(now-field.receivedElapsedRealtime).coerceAtLeast(0))}
             if(rows.isNotEmpty())dao.insertCustomMetrics(rows)
         }
-        val positionSource=sample.positionSource.takeIf{sample.latitude!=null&&sample.longitude!=null}?:VesselDataSource.NONE.name
+        val positionSource=sample.positionSourceId?:sample.positionSource.takeIf{sample.latitude!=null&&sample.longitude!=null}?:VesselDataSource.NONE.name
         lastRecordedPositionSource?.takeIf{it!=positionSource}?.let{previous->dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="POSITION_SOURCE_CHANGED",severity="INFO",detailJson="{\"from\":\"$previous\",\"to\":\"$positionSource\"}"));newEvents++};lastRecordedPositionSource=positionSource
-        val headingSource=sample.headingSource.takeIf{sample.headingTrueDegrees!=null}?:VesselDataSource.NONE.name
+        val headingSource=sample.headingSourceId?:sample.headingSource.takeIf{sample.headingTrueDegrees!=null}?:VesselDataSource.NONE.name
         lastRecordedHeadingSource?.takeIf{it!=headingSource}?.let{previous->dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="HEADING_SOURCE_CHANGED",severity="INFO",detailJson="{\"from\":\"$previous\",\"to\":\"$headingSource\"}"));newEvents++};lastRecordedHeadingSource=headingSource
+        val windSource=sample.trueWindProvenance?:sample.trueWindSpeedSourceId?:sample.apparentWindSpeedSourceId?:"NONE"
+        lastRecordedWindSource?.takeIf{it!=windSource}?.let{previous->dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="WIND_SOURCE_CHANGED",severity="INFO",detailJson="{\"from\":\"$previous\",\"to\":\"$windSource\"}"));newEvents++};lastRecordedWindSource=windSource
         val gap=sample.latitude==null||sample.longitude==null||(sample.positionAgeMillis?:Long.MAX_VALUE)>30_000L
         if(positionGapOpen!=gap){if(gap){dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="POSITION_GAP_STARTED",severity="WARNING"));newEvents++}else if(positionGapOpen==true){dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="POSITION_GAP_ENDED",severity="INFO",latitude=sample.latitude,longitude=sample.longitude));newEvents++};positionGapOpen=gap}
         snapshot.motion.value?.let{motion->val impactAt=motion.impactCandidateElapsedRealtime;if(impactAt!=null&&impactAt!=lastImpactElapsed){dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="IMPACT_CANDIDATE",severity="ATTENTION",latitude=sample.latitude,longitude=sample.longitude,detailJson="{\"peakG\":${motion.impactPeakG?:0.0},\"heelDegrees\":${sample.heelDegrees?:"null"},\"pitchDegrees\":${sample.pitchDegrees?:"null"},\"sogKnots\":${sample.sogKnots?:"null"}}"));lastImpactElapsed=impactAt;newEvents++}}
@@ -288,6 +315,7 @@ class TripRuntime @Inject constructor(
         lastPositionAt=null
         lastRecordedPositionSource=null
         lastRecordedHeadingSource=null
+        lastRecordedWindSource=null
         positionGapOpen=null
         lastImpactElapsed=null
         eventTransitions.reset()
@@ -308,13 +336,21 @@ class TripRuntime @Inject constructor(
             // no dedicated SOG/COG age column.
             sogKnots=s.sogKnots.currentOrHeldValue(),cogTrueDegrees=s.cogTrueDegrees.currentOrHeldValue(),sogAgeMillis=age(s.sogKnots,elapsed),cogAgeMillis=age(s.cogTrueDegrees,elapsed),headingTrueDegrees=s.headingTrueDegrees.value,headingSource=s.headingTrueDegrees.source.name,headingAgeMillis=age(s.headingTrueDegrees,elapsed),
             depthMeters=s.depthMeters.value,depthSource=s.depthMeters.source.name,depthAgeMillis=age(s.depthMeters,elapsed),speedThroughWaterKnots=s.speedThroughWaterKnots.value,stwSource=s.speedThroughWaterKnots.source.name,stwAgeMillis=age(s.speedThroughWaterKnots,elapsed),
-            trueWindSpeedKnots=s.trueWind.speedKnots.value,trueWindDirectionDegrees=s.trueWind.directionDegrees.value,trueWindAngleDegrees=s.trueWind.angleDegrees.value,apparentWindSpeedKnots=s.apparentWind.speedKnots.value,apparentWindAngleDegrees=s.apparentWind.angleDegrees.value,windSource=s.trueWind.speedKnots.source.name,windAgeMillis=age(s.trueWind.speedKnots,elapsed),
+            trueWindSpeedKnots=s.trueWind.speedKnots.value,trueWindDirectionDegrees=s.trueWind.directionDegrees.value,trueWindAngleDegrees=s.trueWind.angleDegrees.value,apparentWindSpeedKnots=s.apparentWind.speedKnots.value,apparentWindAngleDegrees=s.apparentWind.angleDegrees.value,windSource=s.trueWind.speedKnots.provenance?:s.trueWind.speedKnots.source.name,windAgeMillis=age(s.trueWind.speedKnots,elapsed),
             trueWindSpeedAgeMillis=age(s.trueWind.speedKnots,elapsed),trueWindDirectionAgeMillis=age(s.trueWind.directionDegrees,elapsed),trueWindAngleAgeMillis=age(s.trueWind.angleDegrees,elapsed),apparentWindSpeedAgeMillis=age(s.apparentWind.speedKnots,elapsed),apparentWindAngleAgeMillis=age(s.apparentWind.angleDegrees,elapsed),
             heelDegrees=attitude.value?.heelDegrees,pitchDegrees=attitude.value?.pitchDegrees,rollRateDegPerSec=attitude.value?.rollRateDegreesPerSecond,pitchRateDegPerSec=attitude.value?.pitchRateDegreesPerSecond,yawRateDegPerSec=attitude.value?.yawRateDegreesPerSecond,motionScore=motion.value?.score,rollPeriodSeconds=motion.value?.dominantRollPeriodSeconds,rollPeriodConfidence=motion.value?.rollPeriodConfidence?.name,attitudeAgeMillis=age(attitude,elapsed),attitudeQuality=attitude.quality.name,attitudeMountSuspect=attitude.provenance=="PHONE_MOVED_OR_MOUNT_SUSPECT",
             pressureHpa=s.pressureHpa.value,pressureAgeMillis=age(s.pressureHpa,elapsed),ukcMeters=s.derived.underKeelClearanceMeters.value,
+            positionSourceId=s.position.sourceId(),headingSourceId=s.headingTrueDegrees.sourceId(),headingReference=s.headingTrueDegrees.referenceLabel(),stwSourceId=s.speedThroughWaterKnots.sourceId(),
+            apparentWindAngleSourceId=s.apparentWind.angleDegrees.sourceId(),apparentWindSpeedSourceId=s.apparentWind.speedKnots.sourceId(),
+            trueWindAngleSourceId=s.trueWind.angleDegrees.sourceId(),trueWindSpeedSourceId=s.trueWind.speedKnots.sourceId(),trueWindDirectionSourceId=s.trueWind.directionDegrees.sourceId(),
+            trueWindProvenance=s.trueWind.speedKnots.provenanceLabel(),trueWindReference=s.trueWind.speedKnots.referenceLabel(),depthSourceId=s.depthMeters.sourceId(),
+            publicationOwnershipState=publisher.status.value.streams.entries.sortedBy{it.key}.joinToString(";"){(stream,status)->"$stream:${status.ownership.name}"}.takeIf{it.isNotBlank()},
         )
     }
     private fun age(value:VesselObservation<*>,now:Long)=value.receivedElapsedRealtime?.let{(now-it).coerceAtLeast(0)}
     private fun <T> VesselObservation<T>.currentOrHeldValue():T?=value.takeIf{freshness==VesselDataFreshness.FRESH||freshness==VesselDataFreshness.HELD}
+    private fun VesselObservation<*>.sourceId()=sourceIdentity?.id?:source.name.takeUnless{it==VesselDataSource.NONE.name}
+    private fun VesselObservation<*>.referenceLabel()=when(val value=reference){VesselReference.TrueNorth->"TRUE_NORTH";VesselReference.MagneticNorth->"MAGNETIC_NORTH";VesselReference.WaterReferenced->"WATER_REFERENCED";VesselReference.GroundReferenced->"GROUND_REFERENCED";VesselReference.VesselRelative->"VESSEL_RELATIVE";is VesselReference.Depth->"DEPTH_${value.reference.name}";null->null}
+    private fun VesselObservation<*>.provenanceLabel()=provenance?:when(val value=provenanceDetail){is VesselProvenance.Derived->"${value.algorithm}:${value.inputs.joinToString(","){it.id}}";is VesselProvenance.Nmea->"NMEA:${value.source.id}";is VesselProvenance.PhoneSensor->"PHONE:${value.sensor}:CAL_${value.calibrationVersion?:0}";null->null}
     private fun max(a:Double?,b:Double?)=listOfNotNull(a,b).maxOrNull();private fun min(a:Double?,b:Double?)=listOfNotNull(a,b).minOrNull()
 }

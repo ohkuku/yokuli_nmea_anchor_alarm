@@ -240,3 +240,35 @@ object Migration16To17:Migration(16,17){
   db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN latestEstimateEpoch INTEGER NOT NULL DEFAULT 0")
  }
 }
+
+/** Field-level source identity and reference provenance for reports, replay and sonar audits. */
+object Migration17To18:Migration(17,18){
+ override fun migrate(db:SupportSQLiteDatabase){
+  listOf(
+   "positionSourceId TEXT","headingSourceId TEXT","headingReference TEXT","stwSourceId TEXT",
+   "apparentWindAngleSourceId TEXT","apparentWindSpeedSourceId TEXT",
+   "trueWindAngleSourceId TEXT","trueWindSpeedSourceId TEXT","trueWindDirectionSourceId TEXT",
+   "trueWindProvenance TEXT","trueWindReference TEXT","depthSourceId TEXT","publicationOwnershipState TEXT",
+  ).forEach{column->db.execSQL("ALTER TABLE trip_samples ADD COLUMN $column")}
+  listOf(
+   "positionSourceId TEXT","headingSourceId TEXT","headingReference TEXT","stwSourceId TEXT",
+   "apparentWindAngleSourceId TEXT","apparentWindSpeedSourceId TEXT",
+   "trueWindAngleSourceId TEXT","trueWindSpeedSourceId TEXT","trueWindDirectionSourceId TEXT",
+   "trueWindProvenance TEXT","trueWindReference TEXT","depthSourceId TEXT",
+  ).forEach{column->db.execSQL("ALTER TABLE trip_waypoints ADD COLUMN $column")}
+  listOf(
+   "apparentWindSpeedKnots REAL","apparentWindAngleDegrees REAL","apparentWindSpeedAgeMillis INTEGER","apparentWindAngleAgeMillis INTEGER",
+   "trueWindSpeedAgeMillis INTEGER","trueWindDirectionAgeMillis INTEGER","trueWindAngleDegrees REAL","trueWindAngleAgeMillis INTEGER",
+   "trueWindProvenance TEXT","trueWindReference TEXT","headingTrueDegrees REAL","headingSourceId TEXT","headingAgeMillis INTEGER","attitudeQuality TEXT",
+  ).forEach{column->db.execSQL("ALTER TABLE anchor_telemetry_samples ADD COLUMN $column")}
+  db.execSQL("ALTER TABLE anchor_telemetry_samples ADD COLUMN attitudeMountSuspect INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("ALTER TABLE depth_samples ADD COLUMN depthSourceId TEXT")
+  db.execSQL("ALTER TABLE depth_samples ADD COLUMN positionSourceId TEXT")
+  db.execSQL("ALTER TABLE depth_samples ADD COLUMN connectionGeneration INTEGER")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN headingEvidenceEnabled INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN headingEvidenceEpoch INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN headingEvidenceEnabledAt INTEGER")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN headingEvidenceSourceId TEXT")
+  db.execSQL("UPDATE anchor_sessions SET headingEvidenceEnabled=usePhoneHeading, headingEvidenceEpoch=CASE WHEN usePhoneHeading=1 THEN 1 ELSE 0 END, headingEvidenceEnabledAt=CASE WHEN usePhoneHeading=1 THEN startedAt ELSE NULL END")
+ }
+}

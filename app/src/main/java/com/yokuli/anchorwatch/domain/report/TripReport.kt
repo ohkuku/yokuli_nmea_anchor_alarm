@@ -13,7 +13,20 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 enum class ReportQuality { GOOD, PARTIAL, LIMITED }
+enum class TripTrueWindReference { EXTERNAL, WATER, GROUND }
+internal object TripTrueWindReferenceClassifier{
+    fun from(source:String?):TripTrueWindReference?{
+        val normalized=source?.uppercase()?:return null
+        return when{
+            "GROUND" in normalized->TripTrueWindReference.GROUND
+            "WATER" in normalized->TripTrueWindReference.WATER
+            "EXTERNAL" in normalized||normalized=="BOAT_NMEA"->TripTrueWindReference.EXTERNAL
+            else->null
+        }
+    }
+}
 data class TripFinding(val severity:String,val title:String,val detail:String)
+data class TripSourceTimelineEntry(val timestamp:Long,val type:String,val detailJson:String)
 data class HeelDistribution(val zeroToTenPercent:Double=0.0,val tenToTwentyPercent:Double=0.0,val twentyToThirtyPercent:Double=0.0,val overThirtyPercent:Double=0.0)
 data class WindHeelBand(val label:String,val sampleCount:Long,val medianAbsHeelDegrees:Double?,val p95AbsHeelDegrees:Double?)
 data class TripReport(
@@ -43,6 +56,10 @@ data class TripReport(
     val legs:List<TripLegSummary> = emptyList(),
     val trueWindCoveragePercent:Double=0.0,
     val apparentWindCoveragePercent:Double=0.0,
+    val externalTrueWindCoveragePercent:Double=0.0,
+    val derivedWaterTrueWindCoveragePercent:Double=0.0,
+    val derivedGroundTrueWindCoveragePercent:Double=0.0,
+    val sourceTimeline:List<TripSourceTimelineEntry> = emptyList(),
 ){companion object{const val ENGINE_VERSION="TRIP_REPORT_V3"}}
 
 class TripReportEngine @Inject constructor(private val dao:TripDao){
@@ -52,6 +69,7 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
         val legAnalytics=TripLegAccumulator(session.startedAt,waypoints.map{TripLegBoundary(it.timestamp,it.name)})
         var afterTimestamp=Long.MIN_VALUE;var afterId=Long.MIN_VALUE
         var count=0L;var positionCount=0L;var depthCount=0L;var attitudeCount=0L;var windCount=0L;var trueWindCount=0L;var apparentWindCount=0L
+        var externalTrueWindCount=0L;var derivedWaterTrueWindCount=0L;var derivedGroundTrueWindCount=0L
         var distance=0.0;var previousPosition:TripSampleEntity?=null
         var startLatitude:Double?=null;var startLongitude:Double?=null;var endLatitude:Double?=null;var endLongitude:Double?=null
         val movingSog=StreamingStatistics();val boatSpeed=StreamingStatistics();var maxSogTimestamp:Long?=null
@@ -65,6 +83,7 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
         val windHeel=List(5){StreamingStatistics(seed=0x59100+it)}
         var setNorth=0.0;var setEast=0.0;var setCount=0L
         var previousHighHeelAt:Long?=null;var sustainedHeelMillis=0L
+        val sourceTimeline=mutableListOf<TripSourceTimelineEntry>()
         val sailing=SailingAnalyticsAccumulator()
 
         while(true){
@@ -110,7 +129,15 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
                 sample.rollPeriodSeconds?.takeIf{attitudeUsable&&it>0}?.let(rollPeriod::add)
                 val trueWindDirectionUsable=(sample.trueWindDirectionAgeMillis?:Long.MAX_VALUE)<=WIND_USABLE_MILLIS
                 val trueWindAngleUsable=(sample.trueWindAngleAgeMillis?:Long.MAX_VALUE)<=WIND_USABLE_MILLIS
-                if(trueWindSpeedUsable&&sample.trueWindSpeedKnots!=null)trueWindCount++
+                if(trueWindSpeedUsable&&sample.trueWindSpeedKnots!=null){
+                    trueWindCount++
+                    when(TripTrueWindReferenceClassifier.from(sample.trueWindProvenance?:sample.windSource)){
+                        TripTrueWindReference.EXTERNAL->externalTrueWindCount++
+                        TripTrueWindReference.WATER->derivedWaterTrueWindCount++
+                        TripTrueWindReference.GROUND->derivedGroundTrueWindCount++
+                        null->Unit
+                    }
+                }
                 if(apparentWindSpeedUsable&&sample.apparentWindSpeedKnots!=null)apparentWindCount++
                 if((trueWindSpeedUsable&&sample.trueWindSpeedKnots!=null)||(apparentWindSpeedUsable&&sample.apparentWindSpeedKnots!=null))windCount++
                 sample.apparentWindSpeedKnots?.takeIf{apparentWindSpeedUsable}?.let(apparentWind::add)
@@ -136,11 +163,15 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
         }
 
         val eventCounts=mutableMapOf<String,Int>();var totalEvents=0;afterTimestamp=Long.MIN_VALUE;afterId=Long.MIN_VALUE
-        while(true){val page=dao.eventsPage(sessionId,afterTimestamp,afterId,PAGE_SIZE);if(page.isEmpty())break;page.forEach{event->eventCounts[event.type]=(eventCounts[event.type]?:0)+1;totalEvents++};val last=page.last();afterTimestamp=last.timestamp;afterId=last.id}
+        while(true){val page=dao.eventsPage(sessionId,afterTimestamp,afterId,PAGE_SIZE);if(page.isEmpty())break;page.forEach{event->eventCounts[event.type]=(eventCounts[event.type]?:0)+1;totalEvents++;if(event.type in SOURCE_TIMELINE_EVENTS)sourceTimeline+=TripSourceTimelineEntry(event.timestamp,event.type,event.detailJson)};val last=page.last();afterTimestamp=last.timestamp;afterId=last.id}
         val waypointCount=waypoints.size
         val impactCount=eventCounts["IMPACT_CANDIDATE"]?:0;val gapCount=eventCounts["POSITION_GAP_STARTED"]?:0;val nmeaGapCount=eventCounts["NMEA_DATA_GAP"]?:0;val depthGapCount=eventCounts["DEPTH_DATA_UNAVAILABLE"]?:0;val windGapCount=eventCounts["WIND_DATA_UNAVAILABLE"]?:0;val phoneMotionGapCount=eventCounts["PHONE_MOTION_UNAVAILABLE"]?:0;val highMotionCount=eventCounts["HIGH_MOTION"]?:0;val positionSourceChangeCount=eventCounts["POSITION_SOURCE_CHANGED"]?:0;val headingSourceChangeCount=eventCounts["HEADING_SOURCE_CHANGED"]?:0
         val positionCoverage=percent(positionCount,count);val depthCoverage=percent(depthCount,count);val attitudeCoverage=percent(attitudeCount,count);val windCoverage=percent(windCount,count);val trueWindCoverage=percent(trueWindCount,count);val apparentWindCoverage=percent(apparentWindCount,count)
-        val quality=when{positionCoverage>=90->ReportQuality.GOOD;positionCoverage>=60->ReportQuality.PARTIAL;else->ReportQuality.LIMITED}
+        val externalTrueWindCoverage=percent(externalTrueWindCount,count);val derivedWaterTrueWindCoverage=percent(derivedWaterTrueWindCount,count);val derivedGroundTrueWindCoverage=percent(derivedGroundTrueWindCount,count)
+        // Overall GOOD requires both navigational continuity and meaningful
+        // environmental coverage. A perfect GPS trace with no wind must not be
+        // summarized as a uniformly good data set.
+        val quality=when{positionCoverage>=90&&windCoverage>=60->ReportQuality.GOOD;positionCoverage>=60->ReportQuality.PARTIAL;else->ReportQuality.LIMITED}
         val setDrift=if(setCount>0){val north=setNorth/setCount;val east=setEast/setCount;((Math.toDegrees(atan2(east,north))+360)%360) to sqrt(north*north+east*east)}else null
         val signedMedian=headingCog.quantile(.5);val headingBias=signedMedian?.takeIf{abs(it)>=1.0}?.let{if(it>0)"STARBOARD" else "PORT"}?:signedMedian?.let{"NEUTRAL"}
         val sailingSummary=sailing.summary()
@@ -151,6 +182,7 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
             if(depth.count>0&&depthCoverage<80)add(TripFinding("INFO","Depth coverage is incomplete","Usable depth was present for ${depthCoverage.toInt()}% of samples."))
             if(depthGapCount>0)add(TripFinding("ATTENTION","Depth data became unavailable","Depth became unavailable $depthGapCount times after it had first been observed."))
             if(windGapCount>0)add(TripFinding("ATTENTION","Wind data became unavailable","Wind became unavailable $windGapCount times after it had first been observed."))
+            if(windCoverage<60)add(TripFinding("ATTENTION","Wind coverage is limited","Usable apparent or true wind was present for ${windCoverage.toInt()}% of samples; overall quality is not rated GOOD."))
             if(phoneMotionGapCount>0)add(TripFinding("ATTENTION","Phone motion data became unavailable","Requested phone motion data became unavailable $phoneMotionGapCount times."))
             if(positionSourceChangeCount+headingSourceChangeCount>0)add(TripFinding("INFO","Data sources changed","Position source changed $positionSourceChangeCount times and heading source changed $headingSourceChangeCount times."))
             if(session.droppedSampleCount>0)add(TripFinding("ATTENTION","Recorder backpressure","${session.droppedSampleCount} samples were dropped from the bounded write queue."))
@@ -178,6 +210,8 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
             quality=quality,findings=findings,motionAlgorithmVersion=session.motionAlgorithmVersion,averageBoatSpeedKnots=boatSpeed.mean(),p95BoatSpeedKnots=boatSpeed.quantile(.95),maxBoatSpeedKnots=boatSpeed.maximum,fastest500mAverageKnots=fastest500m,fastest500mStartedAt=fastest500mStart,fastest500mEndedAt=fastest500mEnd,
             sailingUsableSampleCount=sailingSummary.usableSampleCount,portTackMillis=sailingSummary.portTackMillis,starboardTackMillis=sailingSummary.starboardTackMillis,pointOfSailMillis=sailingSummary.pointOfSailMillis,tackCount=sailingSummary.tackCount,gybeCount=sailingSummary.gybeCount,
             legs=legAnalytics.summaries(session.endedAt?:System.currentTimeMillis()),trueWindCoveragePercent=trueWindCoverage,apparentWindCoveragePercent=apparentWindCoverage,
+            externalTrueWindCoveragePercent=externalTrueWindCoverage,derivedWaterTrueWindCoveragePercent=derivedWaterTrueWindCoverage,derivedGroundTrueWindCoveragePercent=derivedGroundTrueWindCoverage,
+            sourceTimeline=sourceTimeline,
         )
     }
 
@@ -200,5 +234,6 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
         const val HEADING_COG_MIN_SOG=1.5
         const val SUSTAINED_HEEL_DEGREES=25.0
         val WIND_BAND_LABELS=listOf("0–10 kn","10–15 kn","15–20 kn","20–25 kn","25+ kn")
+        val SOURCE_TIMELINE_EVENTS=setOf("POSITION_SOURCE_CHANGED","HEADING_SOURCE_CHANGED","WIND_SOURCE_CHANGED","PHONE_MOUNT_SUSPECT","NMEA_DATA_GAP","NMEA_DATA_RESTORED")
     }
 }

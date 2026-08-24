@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 17
+const val DATABASE_SCHEMA_VERSION = 18
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -99,6 +99,12 @@ data class AnchorSessionEntity(
     @ColumnInfo(defaultValue = "0") val candidateGpsMarginMeters:Double=0.0,
     @ColumnInfo(defaultValue = "0") val candidateRadialObservable:Boolean=false,
     @ColumnInfo(defaultValue = "'NO_USABLE_CIRCLE_FIT'") val candidateObservabilityReason:String="NO_USABLE_CIRCLE_FIT",
+    /** Explicit evidence state. [usePhoneHeading] is retained only as a
+     * compatibility mirror for older archives and database readers. */
+    @ColumnInfo(defaultValue = "0") val headingEvidenceEnabled:Boolean=false,
+    @ColumnInfo(defaultValue = "0") val headingEvidenceEpoch:Long=0L,
+    val headingEvidenceEnabledAt:Long?=null,
+    val headingEvidenceSourceId:String?=null,
 )
 
 @Entity(tableName="saved_anchorages",indices=[Index("updatedAt"),Index("lastVisitedAt")])
@@ -196,13 +202,20 @@ data class TripSampleEntity(
  val sogAgeMillis:Long?=null,val cogAgeMillis:Long?=null,
  val trueWindSpeedAgeMillis:Long?=null,val trueWindDirectionAgeMillis:Long?=null,val trueWindAngleAgeMillis:Long?=null,val apparentWindSpeedAgeMillis:Long?=null,val apparentWindAngleAgeMillis:Long?=null,
  @ColumnInfo(defaultValue="'UNKNOWN'")val attitudeQuality:String="UNKNOWN",@ColumnInfo(defaultValue="0")val attitudeMountSuspect:Boolean=false,
+ val positionSourceId:String?=null,
+ val headingSourceId:String?=null,val headingReference:String?=null,
+ val stwSourceId:String?=null,
+ val apparentWindAngleSourceId:String?=null,val apparentWindSpeedSourceId:String?=null,
+ val trueWindAngleSourceId:String?=null,val trueWindSpeedSourceId:String?=null,val trueWindDirectionSourceId:String?=null,
+ val trueWindProvenance:String?=null,val trueWindReference:String?=null,
+ val depthSourceId:String?=null,val publicationOwnershipState:String?=null,
 )
 
 @Entity(tableName="trip_events",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])
 data class TripEventEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val type:String,val severity:String,val latitude:Double?=null,val longitude:Double?=null,val detailJson:String="{}")
 
 @Entity(tableName="trip_waypoints",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])
-data class TripWaypointEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val latitude:Double,val longitude:Double,val name:String,val note:String="",val type:String="GENERAL",val positionSource:String?=null,val sogKnots:Double?=null,val cogTrueDegrees:Double?=null,val headingTrueDegrees:Double?=null,val speedThroughWaterKnots:Double?=null,val depthMeters:Double?=null,val trueWindSpeedKnots:Double?=null,val trueWindAngleDegrees:Double?=null,val apparentWindSpeedKnots:Double?=null,val apparentWindAngleDegrees:Double?=null,val heelDegrees:Double?=null,val pitchDegrees:Double?=null,val pressureHpa:Double?=null)
+data class TripWaypointEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val latitude:Double,val longitude:Double,val name:String,val note:String="",val type:String="GENERAL",val positionSource:String?=null,val sogKnots:Double?=null,val cogTrueDegrees:Double?=null,val headingTrueDegrees:Double?=null,val speedThroughWaterKnots:Double?=null,val depthMeters:Double?=null,val trueWindSpeedKnots:Double?=null,val trueWindAngleDegrees:Double?=null,val apparentWindSpeedKnots:Double?=null,val apparentWindAngleDegrees:Double?=null,val heelDegrees:Double?=null,val pitchDegrees:Double?=null,val pressureHpa:Double?=null,val positionSourceId:String?=null,val headingSourceId:String?=null,val headingReference:String?=null,val stwSourceId:String?=null,val apparentWindAngleSourceId:String?=null,val apparentWindSpeedSourceId:String?=null,val trueWindAngleSourceId:String?=null,val trueWindSpeedSourceId:String?=null,val trueWindDirectionSourceId:String?=null,val trueWindProvenance:String?=null,val trueWindReference:String?=null,val depthSourceId:String?=null)
 
 @Entity(tableName="trip_custom_metric_samples",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"]),Index(value=["tripId","fieldId","timestamp"])])
 data class TripCustomMetricSampleEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,val fieldId:String,val displayName:String,val numericValue:Double?=null,val textValue:String?=null,val unit:String?=null,val sentenceType:String,val fieldAgeMillis:Long)
@@ -211,7 +224,7 @@ data class TripCustomMetricSampleEntity(@PrimaryKey(autoGenerate=true)val id:Lon
 data class TripDashboardEntity(@PrimaryKey val id:String,val preset:String,val title:String,val layoutJson:String,val updatedAt:Long)
 
 @Entity(tableName="anchor_telemetry_samples",foreignKeys=[ForeignKey(entity=AnchorSessionEntity::class,parentColumns=["id"],childColumns=["sessionId"],onDelete=ForeignKey.CASCADE)],indices=[Index("sessionId"),Index(value=["sessionId","timestamp"])])
-data class AnchorTelemetrySampleEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val depthMeters:Double?,val depthAgeMillis:Long?,val trueWindSpeedKnots:Double?,val trueWindDirectionDegrees:Double?,val windAgeMillis:Long?,val heelDegrees:Double?,val pitchDegrees:Double?,val rollRateDegPerSec:Double?,val pitchRateDegPerSec:Double?,val yawRateDegPerSec:Double?,val motionScore:Double?,val rollPeriodSeconds:Double?,val rollPeriodConfidence:String?,val pressureHpa:Double?)
+data class AnchorTelemetrySampleEntity(@PrimaryKey(autoGenerate=true)val id:Long=0,val sessionId:Long,val timestamp:Long,val depthMeters:Double?,val depthAgeMillis:Long?,val trueWindSpeedKnots:Double?,val trueWindDirectionDegrees:Double?,val windAgeMillis:Long?,val heelDegrees:Double?,val pitchDegrees:Double?,val rollRateDegPerSec:Double?,val pitchRateDegPerSec:Double?,val yawRateDegPerSec:Double?,val motionScore:Double?,val rollPeriodSeconds:Double?,val rollPeriodConfidence:String?,val pressureHpa:Double?,val apparentWindSpeedKnots:Double?=null,val apparentWindAngleDegrees:Double?=null,val apparentWindSpeedAgeMillis:Long?=null,val apparentWindAngleAgeMillis:Long?=null,val trueWindSpeedAgeMillis:Long?=null,val trueWindDirectionAgeMillis:Long?=null,val trueWindAngleDegrees:Double?=null,val trueWindAngleAgeMillis:Long?=null,val trueWindProvenance:String?=null,val trueWindReference:String?=null,val headingTrueDegrees:Double?=null,val headingSourceId:String?=null,val headingAgeMillis:Long?=null,val attitudeQuality:String?=null,@ColumnInfo(defaultValue="0")val attitudeMountSuspect:Boolean=false)
 
 @Entity(tableName = "sonar_surveys")
 data class SonarSurveyEntity(
@@ -283,6 +296,9 @@ data class DepthSampleEntity(
     @ColumnInfo(defaultValue = "0") val depthHeld: Boolean = false,
     @ColumnInfo(defaultValue = "0") val depthAgeMillis: Long = 0L,
     val depthSourceElapsedRealtime: Long? = null,
+    val depthSourceId:String?=null,
+    val positionSourceId:String?=null,
+    val connectionGeneration:Long?=null,
 )
 
 @Entity(tableName="tide_prediction_cache",primaryKeys=["stationId","year"])

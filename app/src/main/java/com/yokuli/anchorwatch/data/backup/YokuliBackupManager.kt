@@ -201,7 +201,7 @@ class YokuliBackupManager @Inject constructor(
     private val vesselSettingsRepository:VesselSettingsRepository,
     private val outputSettingsRepository:OutputSettingsRepository,
     private val mountCalibrationRepository:VesselMountCalibrationRepository,
-    private val navigation:NavigationRepository=NavigationRepository(LiveDepthRepository(settingsRepository),LiveWindRepository(),com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard()),
+    private val navigation:NavigationRepository=NavigationRepository(LiveDepthRepository(settingsRepository),LiveWindRepository(),com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard(),com.yokuli.anchorwatch.data.vessel.VesselSourceRegistry()),
     private val mockGps:GlobalMockLocationManager=GlobalMockLocationManager(context,LocationServices.getFusedLocationProviderClient(context)),
     private val sharingServer:NmeaSharingServer=NmeaSharingServer(NetworkAddressProvider()),
 ){
@@ -311,8 +311,12 @@ class YokuliBackupManager @Inject constructor(
                 alarmSound=if(validation.appSettings.alarmSound==AlarmSound.CUSTOM)AlarmSound.SYSTEM_ALARM else validation.appSettings.alarmSound,
             )
             val settingsError=runCatching{settingsRepository.save(imported)}.exceptionOrNull()
-            val vesselSettingsError=validation.files[YokuliBackupArchive.VESSEL_SETTINGS]?.let{file->runCatching{val value=gson.fromJson(file.readText(),BackupVesselSettingsV3::class.java);require(value.schemaVersion in 1..3);vesselSettingsRepository.save(value.value);value.mountCalibration?.let{mountCalibrationRepository.restore(it)}}.exceptionOrNull()}
-            val outputSettingsError=runCatching{outputSettingsRepository.save(NmeaDeviceOutputSettings(false))}.exceptionOrNull()
+            var restoredOutput=NmeaDeviceOutputSettings()
+            val vesselSettingsError=validation.files[YokuliBackupArchive.VESSEL_SETTINGS]?.let{file->runCatching{val value=gson.fromJson(file.readText(),BackupVesselSettingsV3::class.java);require(value.schemaVersion in 1..3);vesselSettingsRepository.save(value.value);restoredOutput=value.output;value.mountCalibration?.let{mountCalibrationRepository.restore(it)}}.exceptionOrNull()}
+            // Destination/address choices are configuration and survive restore;
+            // publication is an operational decision and is always forced OFF.
+            val safeOutput=restoredOutput.copy(phonePositionEnabled=false,phoneHeadingEnabled=false,phoneMotionEnabled=false,phonePressureEnabled=false,proprietaryStatusEnabled=false,positionPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,headingPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,motionPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,pressurePolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,derivedWindPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,destinations=restoredOutput.destinations.map{it.copy(enabled=false)})
+            val outputSettingsError=runCatching{outputSettingsRepository.save(safeOutput)}.exceptionOrNull()
             val rebuildError=runCatching{gridUpdater.rebuildMissing()}.exceptionOrNull()
             val message=buildString{
                 append("Backup data restored. Active watches were restored paused; sonar recording was closed.")

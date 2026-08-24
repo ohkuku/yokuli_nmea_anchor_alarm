@@ -20,6 +20,7 @@ import com.yokuli.anchorwatch.data.database.Migration13To14
 import com.yokuli.anchorwatch.data.database.Migration14To15
 import com.yokuli.anchorwatch.data.database.Migration15To16
 import com.yokuli.anchorwatch.data.database.Migration16To17
+import com.yokuli.anchorwatch.data.database.Migration17To18
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -33,7 +34,7 @@ class Migration5To6Test {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         for(startVersion in listOf(8,9)){
             val name="migration-v$startVersion-v11-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeFromV5(context,name,startVersion)
-            val remaining=when(startVersion){8->arrayOf(Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17);else->arrayOf(Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17)}
+            val remaining=when(startVersion){8->arrayOf(Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17,Migration17To18);else->arrayOf(Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17,Migration17To18)}
             val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(*remaining).build()
             try{
                 database.openHelper.writableDatabase
@@ -49,7 +50,7 @@ class Migration5To6Test {
     }
     @Test fun migration10To11PreservesOperationalDataAndCreatesBoundedIncidentTable()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val name="migration-v10-v11-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeToV10(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17,Migration17To18).build()
         try{
             database.openHelper.writableDatabase
             assertEquals(1,database.anchorDao().sessions().first().size);assertEquals(0L,database.incidentLogDao().count())
@@ -60,7 +61,7 @@ class Migration5To6Test {
 
     @Test fun migration7To8PreservesV7SurveyAndCreatesOnlyDerivedCaches()=runBlocking {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val name="migration-v7-v8-${System.nanoTime()}.db";context.deleteDatabase(name);createV5(context,name);upgradeToV7(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17,Migration17To18).build()
         try{
             database.openHelper.writableDatabase
             val survey=database.sonarDao().survey(91L)!!
@@ -80,7 +81,7 @@ class Migration5To6Test {
         val name="migration-v5-v6-${System.nanoTime()}.db"
         context.deleteDatabase(name)
         createV5(context,name)
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7,Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(Migration5To6,Migration6To7,Migration7To8,Migration8To9,Migration9To10,Migration10To11,Migration11To12,Migration12To13,Migration13To14,Migration14To15,Migration15To16,Migration16To17,Migration17To18).build()
         try {
             database.openHelper.writableDatabase
             val session=database.anchorDao().sessions().first().single()
@@ -102,10 +103,12 @@ class Migration5To6Test {
             assertTrue(waypointColumns.containsAll(setOf("positionSource","sogKnots","cogTrueDegrees","headingTrueDegrees","speedThroughWaterKnots","depthMeters","trueWindSpeedKnots","trueWindAngleDegrees","apparentWindSpeedKnots","apparentWindAngleDegrees","heelDegrees","pitchDegrees","pressureHpa")))
             val tripSampleColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(trip_samples)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
             assertTrue(tripSampleColumns.containsAll(setOf("sogAgeMillis","cogAgeMillis","trueWindSpeedAgeMillis","trueWindDirectionAgeMillis","trueWindAngleAgeMillis","apparentWindSpeedAgeMillis","apparentWindAngleAgeMillis","attitudeQuality","attitudeMountSuspect")))
+            assertTrue(tripSampleColumns.containsAll(setOf("positionSourceId","headingSourceId","headingReference","apparentWindSpeedSourceId","apparentWindAngleSourceId","trueWindSpeedSourceId","trueWindDirectionSourceId","trueWindAngleSourceId","trueWindProvenance","trueWindReference")))
             val anchorEpochColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(anchor_sessions)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
-            assertTrue(anchorEpochColumns.containsAll(setOf("estimationEpoch","estimationEpochStartedAt","adoptedCenterEpoch","latestEstimateEpoch")))
+            assertTrue(anchorEpochColumns.containsAll(setOf("estimationEpoch","estimationEpochStartedAt","adoptedCenterEpoch","latestEstimateEpoch","headingEvidenceEnabled","headingEvidenceEpoch","headingEvidenceEnabledAt","headingEvidenceSourceId")))
             val sonarColumns=database.openHelper.writableDatabase.query("PRAGMA table_info(depth_samples)").use{cursor->buildMap{while(cursor.moveToNext())put(cursor.getString(cursor.getColumnIndexOrThrow("name")),cursor.getInt(cursor.getColumnIndexOrThrow("notnull")))}}
             assertTrue(sonarColumns.keys.containsAll(setOf("baseGridX","baseGridY","sourceElapsedRealtime","rawDepthMeters","measuredDepthMeters","normalizedDepthMeters","gpsSource","positionProvider","positionCorrectionApplied","depthHeld","depthAgeMillis","depthSourceElapsedRealtime")))
+            assertTrue(sonarColumns.keys.containsAll(setOf("depthSourceId","positionSourceId","connectionGeneration")))
             assertEquals(0,sonarColumns.getValue("normalizedDepthMeters"))
             val sonarIndices=database.openHelper.writableDatabase.query("PRAGMA index_list(depth_samples)").use{cursor->buildSet{while(cursor.moveToNext())add(cursor.getString(cursor.getColumnIndexOrThrow("name")))}}
             assertTrue(sonarIndices.containsAll(setOf("index_depth_samples_baseGridX_baseGridY","index_depth_samples_surveyId_baseGridX_baseGridY","index_depth_samples_surveyId_sourceElapsedRealtime")))
