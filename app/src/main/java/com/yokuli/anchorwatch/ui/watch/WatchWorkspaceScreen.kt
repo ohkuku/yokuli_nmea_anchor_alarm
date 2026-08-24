@@ -48,6 +48,10 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness
 import com.yokuli.anchorwatch.domain.vessel.VesselDataSource
+import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
+import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
+import com.yokuli.anchorwatch.domain.vessel.VesselSourceClass
+import com.yokuli.anchorwatch.domain.vessel.CandidateValidity
 import com.yokuli.anchorwatch.domain.vessel.VesselObservation
 import com.yokuli.anchorwatch.domain.vessel.InstrumentLayoutPolicy
 import com.yokuli.anchorwatch.domain.vessel.InstrumentTileId
@@ -142,7 +146,7 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
             )
         }
     }
-    if(startDialog)TripStartDialog(state,{startDialog=false}){name,phoneMotion->startDialog=false;vm.startTrip(name,phoneMotion)}
+    if(startDialog)TripStartDialog(state,{startDialog=false}){name,phoneMotion,positionPreference->startDialog=false;vm.startTrip(name,phoneMotion,positionPreference)}
     if(customizeLayout){
         val dashboard=instrumentPages.getOrNull(instrumentPager.currentPage)?.second
         val currentTiles=dashboard?.tiles?.filter{it.tileId!=null}?:state.vesselSettings.layout(preset).map{DashboardTileBinding(tileId=it)}
@@ -290,7 +294,7 @@ private fun TripDashboardManagerDialog(
     )
 }
 
-private fun <T,R> VesselObservation<T>.mapValue(transform:(T)->R?):VesselObservation<R> = VesselObservation(value=value?.let(transform),source=source,observedAtUtcMillis=observedAtUtcMillis,receivedElapsedRealtime=receivedElapsedRealtime,quality=quality,freshness=freshness,provenance=provenance,sourceIdentity=sourceIdentity,sourceClass=sourceClass,reference=reference,provenanceDetail=provenanceDetail,conflict=conflict)
+private fun <T,R> VesselObservation<T>.mapValue(transform:(T)->R?):VesselObservation<R> = VesselObservation(value=value?.let(transform),source=source,observedAtUtcMillis=observedAtUtcMillis,receivedElapsedRealtime=receivedElapsedRealtime,quality=quality,freshness=freshness,provenance=provenance,sourceIdentity=sourceIdentity,sourceClass=sourceClass,reference=reference,provenanceDetail=provenanceDetail,conflict=conflict,sourceHeartbeatElapsedRealtime=sourceHeartbeatElapsedRealtime,selectionReason=selectionReason)
 
 private data class TripTileState(val title:String,val value:String,val source:VesselDataSource,val freshness:VesselDataFreshness,val receivedElapsedRealtime:Long?=null,val sourceDetail:String?=null)
 
@@ -460,9 +464,19 @@ private fun TripPositionMap(state:MainUiState){
 }
 
 @Composable
-private fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Boolean)->Unit){
+internal fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Boolean,VesselSourcePreference)->Unit){
     var name by remember{mutableStateOf("")}
-    val phoneMotionReady=state.phoneSensorCapabilities.attitudeAvailable&&state.vesselMountCalibration.calibratedAt>0L
+    var positionPreference by remember(state.vesselSettings.positionPreference){mutableStateOf(state.vesselSettings.positionPreference.takeUnless{it==VesselSourcePreference.DERIVED}?:VesselSourcePreference.AUTO)}
+    val positionCandidates=state.vesselData.candidates[VesselMetricId.POSITION].orEmpty()
+    val boatPositionReady=positionCandidates.any{it.sourceClass==VesselSourceClass.BOAT_NMEA&&it.validity==CandidateValidity.ELIGIBLE}
+    val phonePositionReady=positionCandidates.any{it.sourceClass==VesselSourceClass.PHONE_GNSS&&it.validity==CandidateValidity.ELIGIBLE}
+    val positionReady=when(positionPreference){
+        VesselSourcePreference.AUTO->state.vesselData.position.value!=null&&state.vesselData.position.freshness==VesselDataFreshness.FRESH
+        VesselSourcePreference.BOAT->boatPositionReady
+        VesselSourcePreference.PHONE->phonePositionReady
+        VesselSourcePreference.DERIVED->false
+    }
+    val phoneMotionReady=state.phoneSensorCapabilities.attitudeAvailable&&state.vesselMountCalibration.calibratedAt>0L&&state.phoneVesselMountState==com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState.VESSEL_MOUNTED
     var phoneMotion by remember(phoneMotionReady){mutableStateOf(phoneMotionReady)}
     AlertDialog(
         onDismissRequest=dismiss,
@@ -471,7 +485,19 @@ private fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Boo
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
                 OutlinedTextField(name,{name=it},label={Text(tr("Trip name (optional)","航程名称（可选）"))},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Text(tr("Recording readiness","记录就绪检查"),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
-                TripReadinessRow(tr("Position","位置"),state.vesselData.position.value!=null,"${sourceName(state.vesselData.position.source)} · ${freshnessName(state.vesselData.position.freshness)}")
+                Text(tr("Trip position source *","航程位置来源 *"),style=MaterialTheme.typography.labelLarge)
+                Text(tr("This is a per-trip recording choice and does not change the Anchor Watch GPS or the Data → Vessel default.","这是本次航程专用的记录选择，不会改变锚警 GPS，也不会修改“数据 → 船舶”的默认设置。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                    listOf(VesselSourcePreference.AUTO,VesselSourcePreference.BOAT,VesselSourcePreference.PHONE).forEach{value->
+                        FilterChip(
+                            selected=positionPreference==value,
+                            onClick={positionPreference=value},
+                            label={Text(when(value){VesselSourcePreference.AUTO->tr("Auto","自动");VesselSourcePreference.BOAT->tr("Boat NMEA","船载 NMEA");VesselSourcePreference.PHONE->tr("Phone GPS","手机 GPS");else->""},maxLines=1)},
+                            modifier=Modifier.weight(1f).testTag("trip_position_${value.name.lowercase()}"),
+                        )
+                    }
+                }
+                TripReadinessRow(tr("Selected position","选定位置"),positionReady,when(positionPreference){VesselSourcePreference.AUTO->"${sourceName(state.vesselData.position.source)} · ${freshnessName(state.vesselData.position.freshness)}";VesselSourcePreference.BOAT->if(boatPositionReady)tr("Fresh boat NMEA position","船载 NMEA 位置实时")else tr("No eligible boat position","没有合格的船载位置");VesselSourcePreference.PHONE->if(phonePositionReady)tr("Fresh Android GNSS position","Android GNSS 位置实时")else tr("Waiting for Android GNSS","正在等待 Android GNSS");else->tr("Unavailable","不可用")})
                 TripReadinessRow(tr("Heading","船首向"),state.vesselData.headingTrueDegrees.value!=null,"${sourceName(state.vesselData.headingTrueDegrees.source)} · ${freshnessName(state.vesselData.headingTrueDegrees.freshness)}")
                 TripReadinessRow(tr("Depth / wind","水深 / 风"),state.vesselData.depthMeters.value!=null||state.vesselData.trueWind.speedKnots.value!=null,tr("Optional; gaps are retained","可选；缺失会保留为空档"))
                 TripReadinessRow(tr("Phone pressure","手机气压"),state.phoneSensorCapabilities.pressureAvailable,if(state.phoneSensorCapabilities.pressureAvailable)tr("Recorded independently","将独立记录") else tr("No barometer","没有气压计"))
@@ -485,7 +511,7 @@ private fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Boo
                 Text(tr("You may start with missing optional instruments. Their gaps remain explicit; the app will not invent replacement values.","可在可选仪表缺失时开始；缺口会被明确保留，应用不会编造替代值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton={Button({start(name,phoneMotion)}){Text(tr("Start recording","开始记录"))}},
+        confirmButton={Button({start(name,phoneMotion,positionPreference)},enabled=positionReady,modifier=Modifier.testTag("start_trip_recording")){Text(tr("Start recording","开始记录"))}},
         dismissButton={TextButton(dismiss){Text(tr("Cancel","取消"))}},
     )
 }

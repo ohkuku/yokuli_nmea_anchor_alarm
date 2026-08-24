@@ -1,16 +1,8 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
-import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
-import com.yokuli.anchorwatch.data.vessel.PhoneHeadingOutputFormat
-import com.yokuli.anchorwatch.data.vessel.effectivePositionPolicy
-import com.yokuli.anchorwatch.data.vessel.effectiveHeadingPolicy
-import com.yokuli.anchorwatch.data.vessel.effectiveMotionPolicy
-import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
 import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
-import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
-import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.NmeaStreamReadiness
 import com.yokuli.anchorwatch.data.backup.BackupRestorePolicy
 
@@ -198,12 +190,11 @@ private fun signedDepthMeters(value:Double?)=value?.let{"${if(it>=0)"+" else ""}
 }
 
 @Composable private fun MapDepthSettingsPage(state:MainUiState,vm:MainViewModel){
- var showSonarDisclaimer by remember{mutableStateOf(false)}
  val offlineImport=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)vm.importOfflineMap(uri)}
  Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
   Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-   Text(tr("Map display controls","地图显示控制"),style=MaterialTheme.typography.titleMedium)
-   Text(tr("Choose Map, Satellite or Nautical and control the regional Local depth chart directly from the map layer button.","请直接通过地图页的图层按钮选择地图、卫星或航海底图，并控制区域水深海图。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(tr("Chart files & storage","海图文件与存储"),style=MaterialTheme.typography.titleMedium)
+   Text(tr("This page manages files only. Choose the base map, nautical source, overlays and current-position depth readouts from Map → Layers.","本页只管理文件。底图、航海图来源、叠加层和当前位置水深读数请在“地图 → 图层”中设置。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   }}
   Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
    Text(tr("Imported nautical chart","已导入航海图"),style=MaterialTheme.typography.titleMedium)
@@ -211,21 +202,10 @@ private fun signedDepthMeters(value:Double?)=value?.let{"${if(it>=0)"+" else ""}
     Text("${state.offlineMap.name?:tr("User chart","用户海图")} · ${state.offlineMap.format?.uppercase()?:"Raster"} · z${state.offlineMap.minZoom?:"?"}–${state.offlineMap.maxZoom?:"?"} · ${humanBytes(state.offlineMap.sizeBytes)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     state.offlineMap.description?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
    }
-   SettingSwitch(tr("Use imported chart in Nautical","航海模式优先使用已导入海图"),if(state.offlineMap.installed)tr("Uncovered areas fall back to the standard nautical view.","未覆盖区域会自动显示标准航海图。") else tr("No MBTiles chart installed","尚未安装 MBTiles 海图"),state.settings.offlineMapEnabled&&state.offlineMap.installed,state.offlineMap.installed,vm::setOfflineMapEnabled)
    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton({offlineImport.launch(arrayOf("application/vnd.sqlite3","application/x-sqlite3","application/octet-stream","*/*"))}){Icon(Icons.Default.FileOpen,null);Spacer(Modifier.width(6.dp));Text(if(state.offlineMap.installed)tr("Replace MBTiles","替换 MBTiles")else tr("Import MBTiles","导入 MBTiles"))};if(state.offlineMap.installed)TextButton(vm::removeOfflineMap){Icon(Icons.Default.DeleteOutline,null);Spacer(Modifier.width(4.dp));Text(tr("Remove","删除"))}}
-   Text(tr("When Nautical is selected, Anchor Watch prefers this chart. Map and Satellite remain unchanged. Google tiles are never cached.","选择航海模式时会优先使用此海图；普通地图和卫星图不受影响。Google 瓦片绝不会被缓存。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  }}
-  Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-   Text(tr("Depth data display","水深数据显示"),style=MaterialTheme.typography.titleMedium)
-   SettingSwitch(tr("Current-position LINZ depth","当前位置 LINZ 水深"),tr("Vector reference; never presented as live sonar","矢量海图参考；绝不会冒充实时声呐"),state.settings.showLinzDepthReference,BuildConfig.LINZ_API_KEY.isNotBlank()){vm.updateSettings(state.settings.copy(showLinzDepthReference=it))}
-   Text(tr("LINZ vector status: ${linzStatusLabel(state.linzDepth.status.name)}","LINZ 矢量状态：${linzStatusLabel(state.linzDepth.status.name)}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   HorizontalDivider()
-   SettingSwitch(tr("Personal sonar layer","个人声呐图层"),tr("Saved survey cells are viewable offline; live same-stream NMEA is required to record new soundings","已保存的调查网格可离线查看；记录新测深点要求实时同源 NMEA"),state.settings.sonarLayerEnabled,true){enabled->if(enabled&&!state.settings.sonarDisclaimerAccepted)showSonarDisclaimer=true else vm.setSonarLayerEnabled(enabled)}
-   Text(tr("Personal sonar uses a fixed 75% display opacity to keep alarm geometry readable.","个人声呐固定使用 75% 显示不透明度，以保持锚警范围清晰可读。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   SettingSwitch(tr("Current-position personal depth","当前位置个人水深"),tr("Show measured/interpolated status in Watch","在监控页显示实测/插值状态"),state.settings.showPersonalMapReference){vm.updateSettings(state.settings.copy(showPersonalMapReference=it))}
+   Text(tr("Importing or replacing a file does not change the visible map. Select Imported MBTiles in Map → Layers when you want to use it; uncovered tiles always fall back to the default online nautical view. Google tiles are never cached.","导入或替换文件不会改变当前地图。需要使用时，请在“地图 → 图层”选择“已导入 MBTiles”；未覆盖瓦片始终回退到默认在线航海图。Google 瓦片绝不会被缓存。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   }}
  }
- if(showSonarDisclaimer)SonarSafetyDisclaimerDialog({showSonarDisclaimer=false}){vm.setSonarLayerEnabled(true,acceptDisclaimer=true);showSonarDisclaimer=false}
 }
 
 @Composable private fun VesselProfileCard(state:MainUiState,vm:MainViewModel){
@@ -247,70 +227,54 @@ private fun signedDepthMeters(value:Double?)=value?.let{"${if(it>=0)"+" else ""}
  val alignmentValue=alignment.toDoubleOrNull()
  val alignmentDirty=alignmentValue!=null&&(!state.vesselMountCalibration.headingAligned||kotlin.math.abs(alignmentValue-state.vesselMountCalibration.headingAlignmentOffsetDegrees)>0.001)
  val caps=state.phoneSensorCapabilities
+ val zeroReady=state.vesselMountCalibration.calibratedAt>0L
+ val mounted=state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED
+ val alignmentReady=state.vesselMountCalibration.headingAligned
+ val productionReady=zeroReady&&mounted&&alignmentReady
  Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
   Text(tr("Phone vessel sensors","手机船舶传感器"),style=MaterialTheme.typography.titleMedium)
-  Text(tr("Attitude is calculated in a calibrated vessel frame. Positive heel means starboard; positive pitch means bow up. It is used by Trip Watch, not as an Anchor GPS fallback.","姿态会在校准后的船体坐标系中计算：正横倾表示右舷，正纵倾表示船艏向上。它用于航程监控，不会成为锚警 GPS 回退源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Text(tr("Complete these steps in order. Calibration turns handheld phone sensors into a vessel-frame source for Trip Watch and NMEA sharing; it never replaces the Anchor GPS source.","请按顺序完成以下步骤。校准会把手机传感器变成航程监控和 NMEA 分享可用的船体坐标源；它绝不会替代锚警 GPS。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Text(tr("Rotation ${if(caps.attitudeAvailable)"available" else "unavailable"} · Gyro ${if(caps.gyroAvailable)"available" else "unavailable"} · Pressure ${if(caps.pressureAvailable)"available" else "unavailable"}","旋转 ${if(caps.attitudeAvailable)"可用" else "不可用"} · 陀螺仪 ${if(caps.gyroAvailable)"可用" else "不可用"} · 气压 ${if(caps.pressureAvailable)"可用" else "不可用"}"),style=MaterialTheme.typography.bodySmall)
   HorizontalDivider()
-  Text(tr("Live phone measurements","手机实时测量"),fontWeight=FontWeight.SemiBold)
-  val liveAttitude=state.vesselData.attitude.value
-  Text("${tr("Heading","方位")} ${state.phoneHeading.liveTrueHeadingDegrees?.let{"%03.0f°T".format(it)}?:"—"} · ${tr("Heel","横倾")} ${liveAttitude?.heelDegrees?.let{"%+.1f°".format(it)}?:"—"} · ${tr("Pitch","纵倾")} ${liveAttitude?.pitchDegrees?.let{"%+.1f°".format(it)}?:"—"}",style=MaterialTheme.typography.bodyMedium)
-  Text("ROT ${liveAttitude?.yawRateDegreesPerSecond?.times(60.0)?.let{"%+.1f°/min".format(it)}?:"—"} · ${tr("Pressure","气压")} ${state.vesselData.pressureHpa.value?.let{"%.1f hPa".format(it)}?:"—"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  PhoneSensorStep(1,zeroReady,tr("Fix phone and set vessel zero","固定手机并设置船体零点"),tr("Choose the phone edge that points toward the bow. Keep the vessel near neutral attitude, then save zero.","选择朝向船艏的手机边缘。让船体尽量保持中性姿态，然后保存零点。"))
+  SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){DeviceBowAxis.entries.forEachIndexed{index,value->SegmentedButton(axis==value,{axis=value},shape=SegmentedButtonDefaults.itemShape(index,DeviceBowAxis.entries.size)){Text(deviceBowAxisLabel(value))}}}
+  Button({vm.calibrateVesselMount(axis)},Modifier.fillMaxWidth().testTag("phone_sensor_set_zero"),enabled=caps.attitudeAvailable){Text(if(zeroReady)tr("Recalibrate vessel zero","重新校准船体零点")else tr("Set vessel zero","设置船体零点"))}
+  if(zeroReady)Text(tr("Saved ${DateFormat.getDateTimeInstance().format(Date(state.vesselMountCalibration.calibratedAt))}","已保存：${DateFormat.getDateTimeInstance().format(Date(state.vesselMountCalibration.calibratedAt))}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   HorizontalDivider()
-  Text(tr("Phone role","手机角色"),fontWeight=FontWeight.SemiBold)
-  Text(
-   when(state.phoneVesselMountState){
-    PhoneVesselMountState.VESSEL_MOUNTED->tr("Vessel-mounted · eligible as a vessel sensor","已固定在船体 · 可作为船舶传感器")
-    PhoneVesselMountState.MOUNT_SUSPECT->tr("Mount movement detected · vessel output is suspended","检测到安装位置移动 · 已暂停船舶数据输出")
-    PhoneVesselMountState.HANDHELD->tr("Handheld · device navigation only","手持模式 · 仅用于设备导航")
-    PhoneVesselMountState.UNCALIBRATED->tr("Not calibrated · device navigation only","尚未校准 · 仅用于设备导航")
-   },style=MaterialTheme.typography.bodySmall,color=if(state.phoneVesselMountState==PhoneVesselMountState.MOUNT_SUSPECT)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-  )
-  SettingSwitch(
-   tr("Fixed to the vessel","手机已固定在船体"),
-   tr("Only enable this after the phone is secured and vessel zero is calibrated","仅在手机已牢固固定且完成船体零点校准后开启"),
-   state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED,
-   enabled=state.vesselMountCalibration.calibratedAt>0L,
-  ){vm.setPhoneVesselMounted(it)}
-  SettingSwitch(
-   tr("Automatic mount recovery","安装状态自动恢复"),
-   tr("After movement, restore vessel-sensor eligibility only after the phone is stable in its calibrated position for 7 seconds","检测到移动后，只有手机在已校准位置稳定 7 秒，才自动恢复船舶传感器资格"),
-   state.vesselMountCalibration.automaticMountRecovery,
-   enabled=state.vesselMountCalibration.calibratedAt>0L,
-  ){vm.setAutomaticMountRecovery(it)}
+  PhoneSensorStep(2,mounted,tr("Confirm the phone is vessel-mounted","确认手机已固定于船体"),tr("Enable only while the phone is secured in the exact calibrated position. Moving it suspends vessel output.","仅当手机牢固固定在校准位置时开启；移动手机会暂停船舶数据输出。"))
+  SettingSwitch(tr("Fixed to the vessel","手机已固定在船体"),tr("Requires a saved vessel zero","需要先保存船体零点"),mounted,enabled=zeroReady){vm.setPhoneVesselMounted(it)}
+  SettingSwitch(tr("Automatic mount recovery","安装状态自动恢复"),tr("After movement, restore eligibility only after 7 seconds stable in the calibrated position","移动后，只有在校准位置稳定 7 秒才恢复资格"),state.vesselMountCalibration.automaticMountRecovery,enabled=zeroReady){vm.setAutomaticMountRecovery(it)}
+  HorizontalDivider()
+  PhoneSensorStep(3,alignmentReady,tr("Align phone north to the vessel bow","将手机北向对齐船艏"),tr("Enter the measured true-heading offset. Production sharing remains locked until you explicitly confirm it.","输入测得的真船首向偏差。明确确认前，生产分享会保持锁定。"))
   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){
    OutlinedTextField(alignment,{value->alignment=value.filter{it.isDigit()||it=='.'||it=='-'}},label={Text(tr("Heading alignment","艏向对齐偏差"))},suffix={Text("°")},singleLine=true,modifier=Modifier.weight(1f))
-   Button({alignmentValue?.let(vm::setPhoneHeadingAlignment)},enabled=state.vesselMountCalibration.calibratedAt>0L&&alignmentDirty){Text(tr("Confirm alignment","确认对齐"))}
+   Button({alignmentValue?.let(vm::setPhoneHeadingAlignment)},enabled=zeroReady&&mounted&&alignmentDirty,modifier=Modifier.testTag("phone_sensor_confirm_heading")){Text(tr("Confirm","确认"))}
   }
-  Text(tr("This offset aligns mounted-phone north with the vessel bow; it never changes handheld approach guidance.","该偏差仅将固定手机的北向与船艏对齐，不会影响手持接近导航。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Text(if(state.vesselMountCalibration.headingAligned)tr("Heading alignment completed","船首向对齐已完成")else tr("Heading output will wait until this alignment is explicitly confirmed.","明确确认艏向对齐前，船首向输出会保持等待。"),style=MaterialTheme.typography.bodySmall,color=if(state.vesselMountCalibration.headingAligned)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
   HorizontalDivider()
-  Text(tr("Which phone edge points toward the bow?","手机哪一边指向船艏？"),fontWeight=FontWeight.SemiBold)
-  SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){DeviceBowAxis.entries.forEachIndexed{index,value->SegmentedButton(axis==value,{axis=value},shape=SegmentedButtonDefaults.itemShape(index,DeviceBowAxis.entries.size)){Text(deviceBowAxisLabel(value))}}}
-  Text(tr("Fix the phone securely and keep the vessel near neutral attitude, then set vessel zero.","请固定好手机，让船体尽量处于中性姿态，然后设置船体零点。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Button({vm.calibrateVesselMount(axis)},Modifier.fillMaxWidth(),enabled=caps.attitudeAvailable){Text(tr("Set vessel zero","设置船体零点"))}
-  if(state.vesselMountCalibration.calibratedAt>0)Text(tr("Last calibration: ${DateFormat.getDateTimeInstance().format(Date(state.vesselMountCalibration.calibratedAt))}","上次校准：${DateFormat.getDateTimeInstance().format(Date(state.vesselMountCalibration.calibratedAt))}"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Surface(color=if(productionReady)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,shape=MaterialTheme.shapes.medium,modifier=Modifier.testTag("phone_sensor_readiness")){Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(if(productionReady)tr("READY AS VESSEL SENSOR","可作为船舶传感器")else tr("NOT READY FOR PRODUCTION SHARING","尚不能用于生产分享"),fontWeight=FontWeight.Bold);Text(if(productionReady)tr("Trip motion and the canonical NMEA feed may use this calibrated vessel frame.","航程运动数据和统一 NMEA 数据流可以使用这个已校准的船体坐标系。")else tr("Complete every numbered step. Endpoint Test remains available on Data → Output, but Start sharing is blocked.","请完成全部编号步骤。数据 → 输出中的端点测试仍可用，但正式“开始分享”会被阻止。"),style=MaterialTheme.typography.bodySmall)}}
+  val liveAttitude=state.vesselData.attitude.value
+  Text(tr("Live verification","实时验证"),fontWeight=FontWeight.SemiBold)
+  Text("${tr("Heading","方位")} ${state.phoneHeading.liveTrueHeadingDegrees?.let{"%03.0f°T".format(it)}?:"—"} · ${tr("Heel","横倾")} ${liveAttitude?.heelDegrees?.let{"%+.1f°".format(it)}?:"—"} · ${tr("Pitch","纵倾")} ${liveAttitude?.pitchDegrees?.let{"%+.1f°".format(it)}?:"—"}",style=MaterialTheme.typography.bodyMedium)
+  Text("ROT ${liveAttitude?.yawRateDegreesPerSecond?.times(60.0)?.let{"%+.1f°/min".format(it)}?:"—"} · ${tr("Pressure","气压")} ${state.vesselData.pressureHpa.value?.let{"%.1f hPa".format(it)}?:"—"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   state.vesselCalibrationFeedback?.let{feedback->AssistChip(vm::clearVesselCalibrationFeedback,label={Text(when(feedback){"Vessel zero saved."->tr("Vessel zero saved","船体零点已保存");"End the active trip before changing vessel zero."->tr("End the active trip before changing vessel zero","请先结束活动航程，再修改船体零点");else->tr("No compatible rotation sample is available","没有可用的旋转传感器数据")})})}
  }}
 }
 
+@Composable private fun PhoneSensorStep(number:Int,complete:Boolean,title:String,detail:String){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.Top){AssistChip({},label={Text(if(complete)"✓" else number.toString())},enabled=false);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){Text(title,fontWeight=FontWeight.SemiBold);Text(detail,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
+
 @Suppress("DEPRECATION")
 @Composable internal fun DataOutputSettingsPage(state:MainUiState,vm:MainViewModel){
- val activeNmea=state.active?.positionSource==GpsDataSource.NMEA.name
- val nmeaSelected=state.settings.gpsDataSource==GpsDataSource.NMEA
  val writable=state.settings.profile.protocol==Protocol.TCP&&state.connection in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
- val outputReady=state.outputSettings.transportConfigured&&when(state.outputSettings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->writable;NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->state.outputSettings.outputHost.isNotBlank()&&state.outputSettings.outputPort in 1..65535}
+ val outputReady=state.outputSettings.transportConfigured&&when(state.outputSettings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->writable;NmeaOutputTransportMode.TCP_SERVER->state.outputSettings.outputPort in 1024..65535;NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->state.outputSettings.outputHost.isNotBlank()&&state.outputSettings.outputPort in 1..65535}
  val outputActive=state.outputSettings.publicationEnabled
- val motionFrameReady=state.vesselMountCalibration.calibratedAt>0L&&state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED
- val headingFrameReady=motionFrameReady&&state.vesselMountCalibration.headingAligned
- val canEnable=!activeNmea&&!nmeaSelected&&outputReady
- var host by remember(state.outputSettings.outputHost){mutableStateOf(state.outputSettings.outputHost)}
- var port by remember(state.outputSettings.outputPort){mutableStateOf(state.outputSettings.outputPort.toString())}
- var pendingEnable by remember{mutableStateOf<String?>(null)}
+ val motionFrameReady=state.vesselMountCalibration.calibratedAt>0L&&state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED&&state.vesselMountCalibration.headingAligned
+ var routeMode by remember(state.outputSettings.transportMode){mutableStateOf(state.outputSettings.transportMode)}
+ var host by remember(state.outputSettings.outputHost,state.settings.profile.host){mutableStateOf(state.outputSettings.outputHost.ifBlank{state.settings.profile.host})}
+ var port by remember(state.outputSettings.outputPort,state.settings.profile.port){mutableStateOf((state.outputSettings.outputPort.takeIf{it in 1..65535}?:state.settings.profile.port.takeIf{it in 1..65535}?:10110).toString())}
  var testResult by remember{mutableStateOf<String?>(null)}
  var confirmHeadingDiagnostic by remember{mutableStateOf(false)}
  var showPublisherDiagnostics by rememberSaveable{mutableStateOf(false)}
- var showAdvancedTransport by rememberSaveable{mutableStateOf(state.outputSettings.transportMode in setOf(NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST))}
+ var showAdvancedTransport by rememberSaveable{mutableStateOf(state.outputSettings.transportMode in setOf(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST))}
  var rawPaused by rememberSaveable{mutableStateOf(false)}
  var rawStreamFilter by rememberSaveable{mutableStateOf("")}
  var rawTypeFilter by rememberSaveable{mutableStateOf("")}
@@ -325,96 +289,65 @@ private fun signedDepthMeters(value:Double?)=value?.let{"${if(it>=0)"+" else ""}
  fun txAge(value:Long?)=value?.let{"%.1fs".format((txNow-it).coerceAtLeast(0L)/1_000.0)}?:"—"
  val testWrittenMessage=tr("Test written to the socket · server receipt is not confirmed","测试语句已写入 Socket · 尚未确认服务器是否收到")
  val testFailedMessage=tr("Test write failed — check status below","测试发送失败，请查看下方状态")
- fun applyOutput(id:String,enabled:Boolean){when(id){"position"->vm.setPhonePositionOutput(enabled);"heading"->vm.setPhoneHeadingOutput(enabled);"motion"->vm.setPhoneMotionOutput(enabled);"pressure"->vm.setPhonePressureOutput(enabled);else->vm.setPhoneProprietaryOutput(enabled)}}
- fun setOutput(id:String,enabled:Boolean){
-  if(!enabled){applyOutput(id,false);return}
-  val now=android.os.SystemClock.elapsedRealtime()
-  // Duplicate warnings inspect the physical boat stream, not only the Vessel
-  // Hub's currently selected display source.
-  val duplicate=when(id){
-   "position"->state.nmeaFix?.let{it.valid&&now-it.receivedElapsedRealtime in 0L..3_000L}==true
-   "heading"->state.nmeaInstruments.headingTrue?.let{(_,received)->now-received in 0L..3_000L}==true||state.nmeaFix?.let{fix->fix.headingSource==com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL&&(fix.headingReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{now-it in 0L..3_000L}}==true
-   else->false
-  }
-  if(duplicate)pendingEnable=id else applyOutput(id,true)
- }
- fun setPolicy(id:String,policy:PublicationPolicy){
-  if(policy==PublicationPolicy.OFF){vm.setPhoneOutputPolicy(id,policy);return}
-  if(policy==PublicationPolicy.BACKUP){vm.setPhoneOutputPolicy(id,policy);return}
-  val now=android.os.SystemClock.elapsedRealtime();val duplicate=when(id){"position"->state.nmeaFix?.let{it.valid&&now-it.receivedElapsedRealtime in 0L..3_000L}==true;"heading"->state.nmeaInstruments.headingTrue?.let{(_,received)->now-received in 0L..3_000L}==true;else->false}
-  if(duplicate)pendingEnable=id else vm.setPhoneOutputPolicy(id,policy)
- }
  LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
   item{PageHeader(tr("NMEA output","NMEA 输出"),tr("The server's transmit port and receive port may differ. Configure Server → App input and App → Server output independently.","服务器的发送端口与接收端口可能不同。请分别配置“服务器 → App”输入和“App → 服务器”输出。"))}
   item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-   Text(tr("Output purpose","输出用途"),style=MaterialTheme.typography.titleMedium)
-   SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-    SegmentedButton(state.outputSettings.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION,{vm.setNmeaOutputPurpose(NmeaOutputPurpose.BOAT_BUS_INJECTION)},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Boat injection","船载注入"))}
-    SegmentedButton(state.outputSettings.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED,{vm.setNmeaOutputPurpose(NmeaOutputPurpose.CANONICAL_CLIENT_FEED)},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("Canonical client feed","统一客户端流"))}
-   }
-   Text(if(state.outputSettings.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION)tr("Publishes selected Phone/derived streams with Off, Backup or Always ownership so the App does not duplicate healthy boat instruments.","按关闭、备用或始终策略向船载总线注入手机/推算数据，避免与正常船载仪表重复。")else tr("Publishes the Vessel Data Hub's selected source for every available instrument at a fixed heartbeat. It never forwards the raw boat input or a losing candidate.","按固定心跳发布船舶数据中心为每项仪表选中的唯一来源；不会原样转发船载输入，也不会发布落选候选源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   SettingSwitch(tr("Auto-start saved output","自动启动已保存输出"),tr("Off by default. When enabled, the foreground runtime starts this saved route only after App startup restores its configuration.","默认关闭。开启后，前台运行服务只会在 App 启动并恢复配置后启动这条已保存线路。"),state.outputSettings.autoStartOutput,enabled=!outputActive){vm.setNmeaOutputAutoStart(it)}
-  }}}
-  item{Card(colors=CardDefaults.cardColors(containerColor=if(outputActive)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)){Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-   Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(if(outputActive)Icons.Default.Sensors else Icons.Default.StopCircle,null,tint=if(outputActive)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(if(outputActive)tr("NMEA output is running","NMEA 输出正在运行")else tr("NMEA output is stopped","NMEA 输出已停止"),fontWeight=FontWeight.SemiBold);Text(if(outputActive&&state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)tr("TX is sharing the input TCP socket. Stop output here before stopping RX.","TX 正与输入共用 TCP Socket；停止 RX 前请先在这里停止输出。")else if(outputActive)tr("Dedicated TX is independent from NMEA input. Stop here to close the TX socket.","独立 TX 与 NMEA 输入相互独立；请在这里停止并关闭发送 Socket。")else tr("Saving an endpoint or stream does not send anything until Start output.","保存端点或数据流不会自动发送；必须明确点击“启动输出”。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
-   if(outputActive)Button(vm::stopNmeaOutput,Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Stop,null);Spacer(Modifier.width(6.dp));Text(tr("Stop all NMEA output","停止全部 NMEA 输出"))}
-   else Button(vm::startNmeaOutput,Modifier.fillMaxWidth(),enabled=state.outputSettings.anyStreamSelected){Icon(Icons.Default.PlayArrow,null);Spacer(Modifier.width(6.dp));Text(tr("Start NMEA output","启动 NMEA 输出"))}
-   if(state.outputSettings.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&!headingFrameReady&&state.outputSettings.effectiveHeadingPolicy!=PublicationPolicy.OFF)Text(tr("Heading is selected but will wait for vessel zero, explicit heading alignment and a secure vessel mount. Other ready streams continue.","已选择船首向，但会等待船体零点、明确艏向对齐和牢固安装；其他已就绪数据流会继续。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-   if(state.outputSettings.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&!motionFrameReady&&state.outputSettings.effectiveMotionPolicy!=PublicationPolicy.OFF)Text(tr("Motion is selected but will wait for vessel-zero calibration and a secure mount. Other ready streams continue.","已选择船体运动，但会等待船体零点校准和牢固安装；其他已就绪数据流会继续。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-   if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_output_error"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+   Text(tr("Share usable vessel data","分享可用船舶数据"),style=MaterialTheme.typography.titleMedium)
+   Text(tr("The source for each value is chosen once in Data → Vessel. Output sends that canonical value at a steady heartbeat, keeps an unchanged held measurement present, and never forwards a losing source or a null update.","每项数据的来源只在“数据 → 船舶”中选择一次。输出会以稳定心跳发送该统一值；数值未变化时仍保持发送，且绝不转发落选来源或 null 更新。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   val phoneFrameReady=state.vesselMountCalibration.calibratedAt>0L&&state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED&&state.vesselMountCalibration.headingAligned
+   Surface(color=if(phoneFrameReady)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small){Text(if(phoneFrameReady)tr("Phone vessel sensors are calibrated and the canonical vessel feed is eligible to share.","手机船舶传感器已校准，统一船舶数据流可以分享。")else tr("Sharing is locked until Settings → Phone vessel sensors is calibrated and the phone is confirmed vessel-mounted. This prevents an uncalibrated phone frame from entering the boat network.","完成“设置 → 手机船舶传感器”校准并确认手机已固定于船体前，分享保持锁定，防止未经校准的手机坐标系进入船载网络。"),Modifier.fillMaxWidth().padding(10.dp),style=MaterialTheme.typography.bodySmall)}
+   Text(tr("What will be shared","将分享的数据"),style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
+   Text(tr("Every usable selected Position/SOG/COG, Heading, STW, apparent/true wind, Depth, ROT and Pressure value. Incomplete or expired measurements suppress the whole sentence instead of sending blanks.","所有可用且已选中的船位/SOG/COG、船首向、对水航速、视风/真风、水深、转向率和气压。数据不完整或租约过期时会停止整条语句，绝不会发送空值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(tr("Output never auto-starts. Press Start below for each App run so a fragile single-client gateway is not occupied unexpectedly.","输出绝不会自动启动。每次 App 运行都必须在下方明确点击启动，避免意外占用脆弱的单客户端网关。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
   }}}
   item{Card(Modifier.testTag("nmea_output_route")){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
    Text(tr("Boat Gateway","船载网关"),style=MaterialTheme.typography.titleMedium)
    if(!state.outputSettings.transportConfigured)Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(tr("Choose where App/phone NMEA should be sent. Nothing is enabled until you make this explicit choice.","请先明确选择 App / 手机 NMEA 的发送位置；完成选择前不会启用任何输出。"),Modifier.fillMaxWidth().padding(10.dp),style=MaterialTheme.typography.bodySmall)}
-   else if(!state.outputSettings.anyStreamSelected)Text(tr("Next: select only the phone streams the boat needs, then test and explicitly start output.","下一步：只选择船端需要的手机数据流，完成测试后再明确启动输出。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small){Column(Modifier.fillMaxWidth().padding(10.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){
     Text(tr("Connection direction","连接方向"),style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
     Text("Server → App  (RX)  · ${state.settings.profile.protocol} · ${state.settings.profile.host}:${state.settings.profile.port}",style=MaterialTheme.typography.bodySmall)
-    val outputEndpoint=if(state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)state.settings.profile.host to state.settings.profile.port else state.outputSettings.outputHost to state.outputSettings.outputPort
-    Text("App → Server  (TX) · ${outputTransportLabel(state.outputSettings.transportMode)} · ${outputEndpoint.first}:${outputEndpoint.second}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
+    val outputEndpoint=when(state.outputSettings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->state.settings.profile.host to state.settings.profile.port;NmeaOutputTransportMode.TCP_SERVER->"0.0.0.0" to state.outputSettings.outputPort;else->state.outputSettings.outputHost to state.outputSettings.outputPort}
+    Text(if(state.outputSettings.transportMode==NmeaOutputTransportMode.TCP_SERVER)"App → connected clients  (TX server) · listen ${outputEndpoint.first}:${outputEndpoint.second}" else "App → Server  (TX) · ${outputTransportLabel(state.outputSettings.transportMode)} · ${outputEndpoint.first}:${outputEndpoint.second}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
    }}
    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-    SegmentedButton(state.outputSettings.transportConfigured&&state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,{vm.setNmeaOutputEndpoint(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,host,port.toIntOrNull()?:10110)},enabled=!outputActive&&state.settings.profile.protocol==Protocol.TCP,shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Same TCP socket","同一 TCP Socket"))}
-    SegmentedButton(state.outputSettings.transportConfigured&&state.outputSettings.transportMode==NmeaOutputTransportMode.DEDICATED_TCP,{vm.setNmeaOutputEndpoint(NmeaOutputTransportMode.DEDICATED_TCP,host,port.toIntOrNull()?:10110)},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("Separate TX port","独立发送端口"))}
+    SegmentedButton(routeMode==NmeaOutputTransportMode.DEDICATED_TCP,{routeMode=NmeaOutputTransportMode.DEDICATED_TCP},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("TCP client","TCP 客户端"))}
+    SegmentedButton(routeMode==NmeaOutputTransportMode.TCP_SERVER,{routeMode=NmeaOutputTransportMode.TCP_SERVER},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("TCP server","TCP 服务器"))}
    }
    TextButton({showAdvancedTransport=!showAdvancedTransport},Modifier.align(Alignment.End)){Text(if(showAdvancedTransport)tr("Hide advanced transport","收起高级传输")else tr("Advanced transport","高级传输"))}
    if(showAdvancedTransport){
-    Text(tr("UDP is advanced and connectionless: a successful send cannot prove that the receiver consumed it.","UDP 属于高级无连接传输：发送成功不能证明接收端已经处理。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-     SegmentedButton(state.outputSettings.transportConfigured&&state.outputSettings.transportMode==NmeaOutputTransportMode.UDP_UNICAST,{vm.setNmeaOutputEndpoint(NmeaOutputTransportMode.UDP_UNICAST,host,port.toIntOrNull()?:10110)},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("UDP unicast","UDP 单播"))}
-     SegmentedButton(state.outputSettings.transportConfigured&&state.outputSettings.transportMode==NmeaOutputTransportMode.UDP_BROADCAST,{vm.setNmeaOutputEndpoint(NmeaOutputTransportMode.UDP_BROADCAST,host.ifBlank{"255.255.255.255"},port.toIntOrNull()?:10110)},enabled=!outputActive,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("UDP broadcast","UDP 广播"))}
+    Text(tr("Same-socket mode is only for explicitly bidirectional gateways. UDP is connectionless, so a successful send cannot prove receiver consumption.","同 Socket 仅适用于明确支持双向通信的网关。UDP 没有连接确认，发送成功不能证明接收端已经处理。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
+    Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
+     FilterChip(routeMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,{routeMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION},label={Text(tr("Advanced · same input TCP socket","高级 · 同一输入 TCP Socket"))},enabled=!outputActive&&state.settings.profile.protocol==Protocol.TCP,modifier=Modifier.fillMaxWidth())
+     FilterChip(routeMode==NmeaOutputTransportMode.UDP_UNICAST,{routeMode=NmeaOutputTransportMode.UDP_UNICAST},label={Text(tr("Advanced · UDP unicast","高级 · UDP 单播"))},enabled=!outputActive,modifier=Modifier.fillMaxWidth())
+     FilterChip(routeMode==NmeaOutputTransportMode.UDP_BROADCAST,{routeMode=NmeaOutputTransportMode.UDP_BROADCAST;if(host.isBlank())host="255.255.255.255"},label={Text(tr("Advanced · UDP broadcast","高级 · UDP 广播"))},enabled=!outputActive,modifier=Modifier.fillMaxWidth())
     }
    }
-   Text(when(state.outputSettings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->tr("Use only when the NMEA server explicitly supports bidirectional traffic on one TCP socket.","仅在 NMEA 服务器明确支持同一 TCP Socket 双向传输时使用。");NmeaOutputTransportMode.DEDICATED_TCP->tr("This write-only TCP client is independent from NMEA input. A TX failure never closes or restarts RX.","这个只写 TCP 客户端与 NMEA 输入完全独立；TX 失败不会关闭或重启 RX。");NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->tr("UDP output is independent from NMEA input and has no receiver acknowledgement.","UDP 输出与 NMEA 输入相互独立，并且没有接收确认。")},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   if(!state.outputSettings.transportConfigured||state.outputSettings.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(host,{host=it},Modifier.weight(1f).testTag("nmea_output_tx_host"),singleLine=true,enabled=!outputActive,label={Text(tr("TX host","发送主机"))});OutlinedTextField(port,{port=it.filter(Char::isDigit).take(5)},Modifier.width(110.dp).testTag("nmea_output_tx_port"),singleLine=true,enabled=!outputActive,label={Text(tr("Port","端口"))},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))};TextButton({host=state.settings.profile.host},enabled=!outputActive&&state.settings.profile.host.isNotBlank()){Text(tr("Use current input host","使用当前输入主机"))};val endpointMode=state.outputSettings.transportMode.takeIf{state.outputSettings.transportConfigured&&it!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION}?:NmeaOutputTransportMode.DEDICATED_TCP;Button({vm.setNmeaOutputEndpoint(endpointMode,host,port.toIntOrNull()?:0)},Modifier.fillMaxWidth(),enabled=!outputActive&&(!state.outputSettings.transportConfigured||host.trim()!=state.outputSettings.outputHost||port.toIntOrNull()!=state.outputSettings.outputPort)){Text(when(endpointMode){NmeaOutputTransportMode.DEDICATED_TCP->tr("Save dedicated TX endpoint","保存独立发送端点");NmeaOutputTransportMode.UDP_UNICAST->tr("Save UDP unicast destination","保存 UDP 单播目标");NmeaOutputTransportMode.UDP_BROADCAST->tr("Save UDP broadcast destination","保存 UDP 广播目标");else->tr("Save output destination","保存输出目标")})}}
+   Text(when(routeMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->tr("Use only when the NMEA server explicitly supports bidirectional traffic on one TCP socket.","仅在 NMEA 服务器明确支持同一 TCP Socket 双向传输时使用。");NmeaOutputTransportMode.DEDICATED_TCP->tr("The App connects to a separate server receive port. This write-only client is independent from NMEA input.","App 会连接服务器独立的接收端口。这个只写客户端与 NMEA 输入互不影响。");NmeaOutputTransportMode.TCP_SERVER->tr("The App listens on this phone; chartplotters or tablets connect as clients and receive the same canonical feed.","App 在本手机监听；海图仪或平板作为客户端连接，并接收同一份统一数据流。");NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->tr("UDP output is independent from NMEA input and has no receiver acknowledgement.","UDP 输出与 NMEA 输入相互独立，并且没有接收确认。")},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   if(routeMode==NmeaOutputTransportMode.TCP_SERVER){val parsedPort=port.toIntOrNull();val routeValid=parsedPort in 1024..65535;OutlinedTextField(port,{port=it.filter(Char::isDigit).take(5)},Modifier.fillMaxWidth().testTag("nmea_output_tx_port"),singleLine=true,enabled=!outputActive,label={Text(tr("Listening port *","监听端口 *"))},isError=!routeValid,supportingText={if(!routeValid)Text(tr("Use port 1024–65535","请输入 1024–65535"))},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number));Button({vm.setNmeaOutputEndpoint(routeMode,"",parsedPort?:0)},Modifier.fillMaxWidth(),enabled=!outputActive&&routeValid&&(routeMode!=state.outputSettings.transportMode||parsedPort!=state.outputSettings.outputPort)){Text(tr("Save output route","保存输出线路"))}}
+   else if(routeMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){val parsedPort=port.toIntOrNull();val routeValid=host.trim().isNotBlank()&&parsedPort in 1..65535;Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(host,{host=it},Modifier.weight(1f).testTag("nmea_output_tx_host"),singleLine=true,enabled=!outputActive,label={Text(tr("TX host *","发送主机 *"))},isError=host.isBlank());OutlinedTextField(port,{port=it.filter(Char::isDigit).take(5)},Modifier.width(110.dp).testTag("nmea_output_tx_port"),singleLine=true,enabled=!outputActive,label={Text(tr("TX port *","发送端口 *"))},isError=parsedPort !in 1..65535,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))};TextButton({host=state.settings.profile.host},enabled=!outputActive&&state.settings.profile.host.isNotBlank()){Text(tr("Use input host","使用输入主机"))};Button({vm.setNmeaOutputEndpoint(routeMode,host,parsedPort?:0)},Modifier.fillMaxWidth(),enabled=!outputActive&&routeValid&&(routeMode!=state.outputSettings.transportMode||host.trim()!=state.outputSettings.outputHost||parsedPort!=state.outputSettings.outputPort)){Text(tr("Save output route","保存输出线路"))}}
+   else Button({vm.setNmeaOutputEndpoint(routeMode,state.settings.profile.host,state.settings.profile.port)},Modifier.fillMaxWidth(),enabled=!outputActive&&state.settings.profile.protocol==Protocol.TCP&&(!state.outputSettings.transportConfigured||state.outputSettings.transportMode!=routeMode)){Text(tr("Use connected input socket for output","使用已连接输入 Socket 发送"))}
    Text(tr("Boat input is never forwarded. Recently transmitted sentences are quarantined if a gateway echoes them back.","船载输入绝不会原样转发；网关回显最近发送的语句时会被隔离。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    if(state.outputSettings.transportMode==NmeaOutputTransportMode.DEDICATED_TCP&&state.outputSettings.outputHost.equals(state.settings.profile.host,true)&&state.outputSettings.outputPort==state.settings.profile.port)Text(tr("TX matches the RX endpoint. Use this only when the gateway explicitly accepts a second client on that port; echoed App sentences remain quarantined.","TX 与 RX 端点相同。只有在网关明确支持该端口的第二个客户端时才应这样使用；应用发送后被回显的语句仍会被隔离。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-   Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small){Column(Modifier.fillMaxWidth().padding(10.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
-    Text("${outputTransportLabel(state.phonePositionOutputStatus.mode)} · ${state.phonePositionOutputStatus.endpointHost}:${state.phonePositionOutputStatus.endpointPort}",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
-    Text("● ${txConnectionLabel(state.phonePositionOutputStatus.connectionState)} · ${tr("last socket TX","最近 Socket 发送")} ${txAge(state.phonePositionOutputStatus.lastWriteElapsed)}",style=MaterialTheme.typography.bodySmall,color=if(state.phonePositionOutputStatus.connectionState==com.yokuli.anchorwatch.data.nmea.output.NmeaTxConnectionState.CONNECTED)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(tr("${state.phonePositionOutputStatus.writtenSentences} written / ${state.phonePositionOutputStatus.attemptedSentences} attempted · ${state.phonePositionOutputStatus.bytesWritten} bytes","${state.phonePositionOutputStatus.writtenSentences} 条写入 / ${state.phonePositionOutputStatus.attemptedSentences} 条尝试 · ${state.phonePositionOutputStatus.bytesWritten} 字节"),style=MaterialTheme.typography.labelSmall)
-   }}
-   if(state.outputSettings.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION){
-   Text(tr("Phone as Vessel Sensor","手机作为船载传感器"),style=MaterialTheme.typography.titleMedium)
-   Text(tr("App sensors keep working even when publication is Off. Backup waits for the external source to fail; Always may create duplicate sources.","即使发布关闭，App 内的手机传感器仍会工作。备用会等待外部来源失效；始终发送可能制造重复来源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   PublicationPolicyRow(tr("Phone Position (GPS)","手机船位 (GPS)"),state.outputSettings.effectivePositionPolicy,canEnable||state.outputSettings.effectivePositionPolicy!=PublicationPolicy.OFF){setPolicy("position",it)}
-   HorizontalDivider()
-   PublicationPolicyRow(tr("Phone vessel heading (HDG/HDT)","手机船体船首向 (HDG/HDT)"),state.outputSettings.effectiveHeadingPolicy,outputReady||state.outputSettings.effectiveHeadingPolicy!=PublicationPolicy.OFF){setPolicy("heading",it)}
-   if(state.outputSettings.phoneHeadingEnabled){Text(tr("Heading sentence","船首向语句"),style=MaterialTheme.typography.labelLarge);SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){PhoneHeadingOutputFormat.entries.forEachIndexed{index,format->SegmentedButton(state.outputSettings.phoneHeadingFormat==format,{vm.setPhoneHeadingOutputFormat(format)},shape=SegmentedButtonDefaults.itemShape(index,PhoneHeadingOutputFormat.entries.size)){Text(when(format){PhoneHeadingOutputFormat.HDT_TRUE->"HDT";PhoneHeadingOutputFormat.HDG_MAGNETIC->"HDG";PhoneHeadingOutputFormat.HDT_AND_HDG->"HDT+HDG"})}}}}
-   if(state.outputSettings.phoneHeadingEnabled&&!state.phoneHeading.declinationReferenceReady)Text(tr("Waiting for a valid position before publishing true heading.","正在等待有效位置；取得磁偏角参考后才会发送真船首向。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-   PublicationPolicyRow(tr("Phone vessel motion (ROT/XDR)","手机船体运动 (ROT/XDR)"),state.outputSettings.effectiveMotionPolicy,state.outputSettings.effectiveMotionPolicy!=PublicationPolicy.OFF||outputReady){setPolicy("motion",it)}
-   PublicationPolicyRow(tr("Phone pressure (BARO)","手机气压 (BARO)"),state.outputSettings.effectivePressurePolicy,state.outputSettings.effectivePressurePolicy!=PublicationPolicy.OFF||outputReady){setPolicy("pressure",it)}
-   if(state.outputSettings.effectivePressurePolicy!=PublicationPolicy.OFF&&!state.phoneSensorCapabilities.pressureAvailable)Text(tr("This phone has no pressure sensor; BARO remains in Standby without blocking other streams.","此手机没有气压传感器；BARO 会保持备用状态，不会阻塞其他数据流。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-   PublicationPolicyRow(tr("Derived true wind (TWS/TWA/TWD)","推算真风 (TWS/TWA/TWD)"),state.outputSettings.derivedWindPolicy,outputReady||state.outputSettings.derivedWindPolicy!=PublicationPolicy.OFF){setPolicy("wind",it)}
-   SettingSwitch(tr("Yokuli sensor status","Yokuli 传感器状态"),tr("Optional PYOK diagnostic sentence","可选 PYOK 诊断语句"),state.outputSettings.proprietaryStatusEnabled,outputReady||state.outputSettings.proprietaryStatusEnabled){setOutput("status",it)}
-   }else Text(tr("Canonical feed includes each fresh selected Position/SOG/COG, Heading, STW, apparent/true wind, Depth, ROT and Pressure value automatically.","统一客户端流会自动包含每项新鲜且已选中的船位/SOG/COG、船首向、对水航速、视风/真风、水深、转向率和气压。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   if(state.outputSettings.anyEnabled)Text("${localizeKnownMessage(state.phonePositionOutputStatus.message)}${state.phonePositionOutputStatus.sentenceTypes.takeIf{it.isNotEmpty()}?.joinToString(prefix=" · ").orEmpty()}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
-   state.phonePositionOutputStatus.lastError?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
    OutlinedButton({testResult=null;vm.testNmeaDeviceOutput{success->testResult=if(success)testWrittenMessage else testFailedMessage}},Modifier.fillMaxWidth(),enabled=outputReady&&!outputActive){Text(tr("Test NMEA output","测试 NMEA 输出"))}
    testResult?.let{Text(it,style=MaterialTheme.typography.bodySmall,color=if(it.contains("failed")||it.contains("失败"))MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)}
-   TextButton({showPublisherDiagnostics=!showPublisherDiagnostics},Modifier.fillMaxWidth()){
-    Icon(if(showPublisherDiagnostics)Icons.Default.ExpandLess else Icons.Default.Troubleshoot,null);Spacer(Modifier.width(6.dp));Text(if(showPublisherDiagnostics)tr("Hide stream diagnostics","收起数据流诊断")else tr("Stream diagnostics & recent TX","数据流诊断与最近发送"))
-   }
+  }}}
+  item{Card(colors=CardDefaults.cardColors(containerColor=if(outputActive)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)){Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+   Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(if(outputActive)Icons.Default.Sensors else Icons.Default.StopCircle,null,tint=if(outputActive)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(if(outputActive)tr("NMEA output is running","NMEA 输出正在运行")else tr("Ready to start output","可以启动输出"),fontWeight=FontWeight.SemiBold);Text(if(outputActive&&state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)tr("TX is sharing the input TCP socket. Stop output here before stopping RX.","TX 正与输入共用 TCP Socket；停止 RX 前请先在这里停止输出。")else if(outputActive&&state.outputSettings.transportMode==NmeaOutputTransportMode.TCP_SERVER)tr("The TCP server is publishing the canonical feed to connected clients. Stop here to close the listener.","TCP 服务器正向已连接客户端发布统一数据流；请在这里停止并关闭监听。")else if(outputActive)tr("Independent output is running separately from NMEA input. Stop it here.","独立输出与 NMEA 输入互不影响；请在这里停止。")else tr("Configure the route and usable data above. Saving never starts a socket by itself.","请先在上方配置线路和可用数据；仅保存配置绝不会自行启动 Socket。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
+   if(outputActive)Button(vm::stopNmeaOutput,Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Stop,null);Spacer(Modifier.width(6.dp));Text(tr("Stop all NMEA output","停止全部 NMEA 输出"))}
+   else Button(vm::startNmeaOutput,Modifier.fillMaxWidth(),enabled=outputReady&&motionFrameReady){Icon(Icons.Default.PlayArrow,null);Spacer(Modifier.width(6.dp));Text(tr("Start sharing vessel data","开始分享船舶数据"))}
+   if(!outputReady)Text(tr("Save a valid output route before starting.","启动前请先保存有效的输出线路。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+   if(!motionFrameReady)Text(tr("Calibration required: finish Settings → Phone vessel sensors and secure the phone in its vessel mount before output can start.","需要校准：请先完成“设置 → 手机船舶传感器”，并将手机牢固固定在船体安装位，之后才能启动输出。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+   if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_output_error"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+  }}}
+  item{Card(Modifier.testTag("nmea_output_live_status")){Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+   Text(tr("Live output status","实时输出状态"),style=MaterialTheme.typography.titleMedium)
+   Text("${outputTransportLabel(state.phonePositionOutputStatus.mode)} · ${state.phonePositionOutputStatus.endpointHost}:${state.phonePositionOutputStatus.endpointPort}",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
+   Text("● ${txConnectionLabel(state.phonePositionOutputStatus.connectionState)} · ${tr("last transport TX","最近传输发送")} ${txAge(state.phonePositionOutputStatus.lastWriteElapsed)}",style=MaterialTheme.typography.bodySmall,color=if(state.phonePositionOutputStatus.connectionState==com.yokuli.anchorwatch.data.nmea.output.NmeaTxConnectionState.CONNECTED)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(tr("${state.phonePositionOutputStatus.writtenSentences} written / ${state.phonePositionOutputStatus.attemptedSentences} attempted · ${state.phonePositionOutputStatus.bytesWritten} bytes","${state.phonePositionOutputStatus.writtenSentences} 条写入 / ${state.phonePositionOutputStatus.attemptedSentences} 条尝试 · ${state.phonePositionOutputStatus.bytesWritten} 字节"),style=MaterialTheme.typography.labelSmall)
+   if(state.outputSettings.transportMode==NmeaOutputTransportMode.TCP_SERVER){Text(tr("${state.nmeaSharing.clientCount} connected clients","${state.nmeaSharing.clientCount} 个客户端已连接"),style=MaterialTheme.typography.labelSmall);state.nmeaSharing.addresses.forEach{address->Text("tcp://${if(':' in address)"[$address]" else address}:${state.outputSettings.outputPort}",style=MaterialTheme.typography.labelSmall,fontFamily=FontFamily.Monospace)}}
+   if(state.outputSettings.anyEnabled)Text("${localizeKnownMessage(state.phonePositionOutputStatus.message)}${state.phonePositionOutputStatus.sentenceTypes.takeIf{it.isNotEmpty()}?.joinToString(prefix=" · ").orEmpty()}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
+   state.phonePositionOutputStatus.lastError?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
+   TextButton({showPublisherDiagnostics=!showPublisherDiagnostics},Modifier.fillMaxWidth()){Icon(if(showPublisherDiagnostics)Icons.Default.ExpandLess else Icons.Default.Troubleshoot,null);Spacer(Modifier.width(6.dp));Text(if(showPublisherDiagnostics)tr("Hide stream diagnostics","收起数据流诊断")else tr("Stream diagnostics","数据流诊断"))}
    if(showPublisherDiagnostics){
     state.phonePositionOutputStatus.streams.filterKeys{it in setOf("POSITION","HEADING","MOTION","PRESSURE","DERIVED_WIND","STATUS","CANONICAL_FEED")}.forEach{(stream,status)->
      Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small){Column(Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=7.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){
@@ -424,9 +357,9 @@ private fun signedDepthMeters(value:Double?)=value?.let{"${if(it>=0)"+" else ""}
       Text("${"%.1f".format(status.generatedRateHz)} Hz → ${"%.1f".format(status.socketWriteRateHz)} Hz · seq ${status.lastWrittenSequence}/${status.lastGeneratedSequence}${status.suppressionReason?.let{" · ${publisherSuppressionLabel(it)}"}.orEmpty()}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
      }}
     }
-     TextButton({confirmHeadingDiagnostic=true},Modifier.fillMaxWidth(),enabled=outputReady&&!outputActive){Text(tr("Developer diagnostic · 5 × IIHDG 123.4°","开发诊断 · 发送 5 条 IIHDG 123.4°"))}
+    TextButton({confirmHeadingDiagnostic=true},Modifier.fillMaxWidth(),enabled=outputReady&&!outputActive){Text(tr("Developer diagnostic · 5 × IIHDG 123.4°","开发诊断 · 发送 5 条 IIHDG 123.4°"))}
    }
-   Text(tr("Safety rule: Phone GPS output and NMEA Position input are mutually exclusive. NMEA depth, wind, heading, sonar and raw data continue normally.","安全规则：手机 GPS 输出与 NMEA 位置输入互斥；NMEA 水深、风、船首向、声呐和原始数据仍可正常使用。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(tr("Source selection belongs to Data → Vessel. Output owns only transport, explicit Start/Stop, status and raw TX.","数据源选择归“数据 → 船舶”管理；输出页只负责传输、明确启停、状态和原始发送。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   }}}
   item{Card(Modifier.testTag("nmea_raw_output")){Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
    Text(tr("Raw NMEA output","NMEA 原始输出"),style=MaterialTheme.typography.titleMedium)
@@ -457,26 +390,13 @@ private fun signedDepthMeters(value:Double?)=value?.let{"${if(it>=0)"+" else ""}
    }}}
    TextButton({clipboard.setText(AnnotatedString(visibleWritten.joinToString("\n")))},Modifier.align(Alignment.End),enabled=visibleWritten.isNotEmpty()){Icon(Icons.Default.ContentCopy,null);Spacer(Modifier.width(4.dp));Text(tr("Copy socket writes","复制 Socket 写入"))}
   }}}
-  item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-   Text(tr("NMEA Sharing Server","NMEA 共享服务器"),style=MaterialTheme.typography.titleMedium)
-   Text(tr("Shares the App's accepted navigation stream to other clients on port ${state.settings.nmeaSharingPort}.","通过端口 ${state.settings.nmeaSharingPort} 向其他客户端共享本应用已接受的导航数据流。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   SettingSwitch(tr("Sharing server","共享服务器"),tr("${state.nmeaSharing.clientCount} connected clients","${state.nmeaSharing.clientCount} 个客户端已连接"),state.settings.nmeaSharingEnabled){vm.setNmeaSharing(it,state.settings.nmeaSharingPort)}
-  }}}
   if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)item{Text(localizeKnownMessage(state.connectionAttempt.message),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
  }
- pendingEnable?.let{id->AlertDialog(onDismissRequest={pendingEnable=null},title={Text(if(id=="position")tr("Boat GPS is already present","已经存在船载 GPS")else tr("Boat heading is already present","已经存在船载船首向"))},text={Text(if(id=="position")tr("Sending Phone GPS may create duplicate position sources and make an MFD alternate between them.","发送手机 GPS 可能制造重复船位源，导致 MFD 在两者之间跳变。")else tr("Sending Phone heading may create duplicate heading sources and make an MFD alternate between them.","发送手机船首向可能制造重复方位源，导致 MFD 在两者之间跳变。"))},confirmButton={Button({pendingEnable=null;applyOutput(id,true)}){Text(tr("Send anyway","仍然发送"))}},dismissButton={TextButton({pendingEnable=null}){Text(tr("Cancel","取消"))}})}
  if(confirmHeadingDiagnostic)AlertDialog(onDismissRequest={confirmHeadingDiagnostic=false},title={Text(tr("Transmit diagnostic heading?","发送诊断船首向？"))},text={Text(tr("This sends five IIHDG sentences claiming 123.4°. Do not run it while an autopilot, heading-dependent display or another vessel heading source is in operational use.","这会发送 5 条声称船首向为 123.4° 的 IIHDG 语句。自动驾驶、依赖船首向的显示设备或其他船首向源正在工作时，绝对不要测试。"))},confirmButton={Button({confirmHeadingDiagnostic=false;testResult=null;vm.testKnownGoodHdgOutput{success->testResult=if(success)testWrittenMessage else testFailedMessage}}){Text(tr("Send 5 test sentences","发送 5 条测试语句"))}},dismissButton={TextButton({confirmHeadingDiagnostic=false}){Text(tr("Cancel","取消"))}})
 }
 
 @Composable private fun deviceBowAxisLabel(value:DeviceBowAxis)=when(value){DeviceBowAxis.TOP->tr("Top edge","上边");DeviceBowAxis.BOTTOM->tr("Bottom edge","下边");DeviceBowAxis.LEFT->tr("Left edge","左边");DeviceBowAxis.RIGHT->tr("Right edge","右边")}
-@Composable private fun outputTransportLabel(value:NmeaOutputTransportMode)=when(value){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->tr("Same input TCP socket","同一输入 TCP Socket");NmeaOutputTransportMode.DEDICATED_TCP->tr("Dedicated TCP","独立 TCP");NmeaOutputTransportMode.UDP_UNICAST->tr("UDP unicast","UDP 单播");NmeaOutputTransportMode.UDP_BROADCAST->tr("UDP broadcast","UDP 广播")}
-
-@Composable private fun PublicationPolicyRow(title:String,value:PublicationPolicy,enabled:Boolean,onChange:(PublicationPolicy)->Unit){
- Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(6.dp)){
-  Text(title,style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
-  SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){PublicationPolicy.entries.forEachIndexed{index,policy->SegmentedButton(value==policy,{onChange(policy)},enabled=enabled||value==policy,shape=SegmentedButtonDefaults.itemShape(index,PublicationPolicy.entries.size)){Text(when(policy){PublicationPolicy.OFF->tr("Off","关闭");PublicationPolicy.BACKUP->tr("Backup","备用");PublicationPolicy.ALWAYS->tr("Always","始终")})}}}
- }
-}
+@Composable private fun outputTransportLabel(value:NmeaOutputTransportMode)=when(value){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->tr("Same input TCP socket","同一输入 TCP Socket");NmeaOutputTransportMode.DEDICATED_TCP->tr("TCP client","TCP 客户端");NmeaOutputTransportMode.TCP_SERVER->tr("TCP server","TCP 服务器");NmeaOutputTransportMode.UDP_UNICAST->tr("UDP unicast","UDP 单播");NmeaOutputTransportMode.UDP_BROADCAST->tr("UDP broadcast","UDP 广播")}
 
 @Composable private fun txConnectionLabel(value:com.yokuli.anchorwatch.data.nmea.output.NmeaTxConnectionState)=when(value){
  com.yokuli.anchorwatch.data.nmea.output.NmeaTxConnectionState.OFF->tr("Off","关闭")

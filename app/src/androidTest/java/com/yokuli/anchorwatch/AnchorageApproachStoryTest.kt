@@ -3,7 +3,7 @@ package com.yokuli.anchorwatch
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.yokuli.anchorwatch.data.anchorage.AnchorageApproachRepository
+import com.yokuli.anchorwatch.data.anchorage.*
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
@@ -48,26 +48,23 @@ class AnchorageApproachStoryTest {
                     ),
                 )
             }
-            val approachRepository = AnchorageApproachRepository(database.anchorageDao())
+            val spatial=AnchorageSpatialIndexRepository(database,database.anchorageSpatialDao())
+            val search=AnchorageSearchRepository(database,database.anchorageSearchDao())
+            val placeRepository=AnchoragePlaceRepository(database,spatial,search)
+            val spotRepository=AnchorageSpotRepository(database,spatial,search)
+            val saver=AnchorageSaveRepository(database,placeRepository,spotRepository,AnchorageVisitRepository(database),spatial,search)
+            val approachRepository = AnchorageApproachRepository(database,placeRepository,spotRepository,saver)
             assertTrue(approachRepository.clusters.first().isEmpty())
 
             val baseLatitude = -36.8
             val baseLongitude = 175.1
             listOf(0.0, 35.0, 70.0).forEachIndexed { index, eastMeters ->
                 val coordinate = AnchorGeometry.project(baseLatitude, baseLongitude, 90.0, eastMeters)
-                database.anchorageDao().insert(
-                    SavedAnchorageEntity(
-                        name = "Little Bay ${index + 1}",
-                        latitude = coordinate.first,
-                        longitude = coordinate.second,
-                        createdAt = 100L + index,
-                        updatedAt = 100L + index,
-                        preferredAlarmRadiusMeters = 45.0 + index * 5.0,
-                        typicalWaterDepthMeters = 5.8 + index * .3,
-                        typicalRodeLengthMeters = 40.0 + index * 2.0,
-                        sourceSessionId = (index + 1).toLong(),
-                    ),
-                )
+                saver.save(AnchorageSaveRequest(
+                    com.yokuli.anchorwatch.domain.anchorage.AnchorageSaveDraft((index+1).toLong(),coordinate.first,coordinate.second,"CONFIRMED_ANCHOR",null,5.8+index*.3,40.0+index*2.0,45.0+index*5.0,"UNKNOWN"),
+                    AnchorageSavePlaceInput(displayName="Little Bay ${index + 1}"),
+                    AnchorageSaveSpotInput(name="Main spot"),
+                ))
             }
 
             val cluster = approachRepository.clusters.first { it.singleOrNull()?.savedPointCount == 3 }.single()

@@ -92,6 +92,7 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
 
     private fun publishDue(now:Long){
         val configured=settings;if(!configured.anyEnabled)return
+        outputConnection.refreshTransportState()
         val snapshot=vesselDataHub.snapshot.value
         if(configured.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED){if(now-lastCanonicalPublish>=1_000L)publishCanonical(snapshot,now);return}
         if(now-lastPositionPublish>=1_000L)publishPosition(configured,snapshot,now)

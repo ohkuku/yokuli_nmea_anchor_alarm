@@ -40,6 +40,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
     private var boatPosition=VesselObservation<VesselPosition>();private var phonePosition=VesselObservation<VesselPosition>();private var sog=VesselObservation<Double>();private var cog=VesselObservation<Double>();private var speedThroughWater=VesselObservation<Double>();private var boatHeading=VesselObservation<Double>();private var magneticHeading=VesselObservation<Double>();private var phoneHeadingValue=VesselObservation<Double>();private var phoneMagneticHeadingValue=VesselObservation<Double>();private var depthValue=VesselObservation<Double>();private var trueWindSpeed=VesselObservation<Double>();private var trueWindDirection=VesselObservation<Double>();private var trueWindAngle=VesselObservation<Double>();private var apparentWindSpeed=VesselObservation<Double>();private var apparentWindAngle=VesselObservation<Double>();private var attitudeValue=VesselObservation<VesselAttitude>();private var motionValue=VesselObservation<VesselMotion>();private var pressureValue=VesselObservation<Double>();private var rateOfTurn=VesselObservation<Double>();private var rudderAngle=VesselObservation<Double>();private var waterTemperature=VesselObservation<Double>();private var airTemperature=VesselObservation<Double>();private var currentSet=VesselObservation<Double>();private var currentDrift=VesselObservation<Double>();private var crossTrackError=VesselObservation<Double>();private var waypointBearing=VesselObservation<Double>();private var waypointDistance=VesselObservation<Double>();private var destinationWaypoint=VesselObservation<String>();private var totalLog=VesselObservation<Double>();private var tripLog=VesselObservation<Double>();private val motionAnalyzer=VesselMotionAnalyzer()
     private val arbitrator=VesselSourceArbitrator();private val trueWindHysteresis=TrueWindSourceHysteresis()
     @Volatile private var positionPreference=VesselSourcePreference.AUTO;@Volatile private var headingPreference=VesselSourcePreference.AUTO
+    @Volatile private var tripPositionPreference:VesselSourcePreference?=null
     @Volatile private var pinnedPositionSourceId:String?=null;@Volatile private var pinnedHeadingSourceId:String?=null;@Volatile private var allowPinnedFallback=false
     @Volatile private var phonePositionOutputEnabled=false
     @Volatile private var vesselDraftMeters=0.0
@@ -94,9 +95,11 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         scope.launch{while(isActive){publish(SystemClock.elapsedRealtime());delay(250)}}
     }
     @Synchronized fun hasFreshPhonePosition(now:Long)=classify(phonePosition,now,3_000,10_000).let{it.value!=null&&it.freshness==VesselDataFreshness.FRESH}
+    @Synchronized fun setTripPositionPreference(value:VesselSourcePreference?){tripPositionPreference=value?.takeUnless{it==VesselSourcePreference.DERIVED};arbitrator.reset()}
     @Synchronized private fun publish(now:Long){
-        val positionSelection=registrySelection<VesselPosition>(VesselMetricId.POSITION,positionPreference,pinnedPositionSourceId,now,excludeBoat=phonePositionOutputEnabled)
-        val selectedPosition=selectionObservation(positionSelection)?:run{val classifiedBoatPosition=classify(boatPosition,now,3_000,30_000).let{if(phonePositionOutputEnabled)it.copy(value=null,freshness=VesselDataFreshness.UNAVAILABLE,provenance="BLOCKED_BY_PHONE_POSITION_OUTPUT")else it};VesselSourceSelector.select(positionPreference,classifiedBoatPosition,classify(phonePosition,now,3_000,10_000))}
+        val effectivePositionPreference=tripPositionPreference?:positionPreference
+        val positionSelection=registrySelection<VesselPosition>(VesselMetricId.POSITION,effectivePositionPreference,pinnedPositionSourceId,now,excludeBoat=phonePositionOutputEnabled)
+        val selectedPosition=selectionObservation(positionSelection)?:run{val classifiedBoatPosition=classify(boatPosition,now,3_000,30_000).let{if(phonePositionOutputEnabled)it.copy(value=null,freshness=VesselDataFreshness.UNAVAILABLE,provenance="BLOCKED_BY_PHONE_POSITION_OUTPUT")else it};VesselSourceSelector.select(effectivePositionPreference,classifiedBoatPosition,classify(phonePosition,now,3_000,10_000))}
         val headingSelection=registrySelection<Double>(VesselMetricId.HEADING_TRUE,headingPreference,pinnedHeadingSourceId,now)
         val selectedHeading=selectionObservation(headingSelection)?:VesselSourceSelector.select(headingPreference,classify(boatHeading,now,5_000,30_000),classify(phoneHeadingValue,now,1_500,5_000))
         val freshCog=selectionObservation(registrySelection<Double>(VesselMetricId.COG,VesselSourcePreference.AUTO,null,now))?:classify(cog,now,5_000,30_000)
@@ -149,7 +152,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         val sourceSnapshot=sourceRegistry.snapshot.value
         fun selectedMetric(metric:VesselMetricId,legacy:VesselObservation<Double>,fresh:Long,held:Long)=selectionObservation(registrySelection<Double>(metric,VesselSourcePreference.AUTO,null,now))?:classify(legacy,now,fresh,held)
         val sourceSelections=sourceSnapshot.keys.associateWith{metric->
-            val preference=when(metric){VesselMetricId.POSITION->positionPreference;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->headingPreference;else->VesselSourcePreference.AUTO}
+            val preference=when(metric){VesselMetricId.POSITION->effectivePositionPreference;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->headingPreference;else->VesselSourcePreference.AUTO}
             val pin=when(metric){VesselMetricId.POSITION->pinnedPositionSourceId;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->pinnedHeadingSourceId;else->null}
             registrySelection<Any>(metric,preference,pin,now,excludeBoat=metric==VesselMetricId.POSITION&&phonePositionOutputEnabled)
         }
@@ -169,7 +172,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         return arbitrator.select(metric,candidates,MetricSourcePreference(preference,resolvedPin,allowPinnedFallback),now)
     }
     private fun <T> selectionObservation(selection:VesselSourceSelection<T>):VesselObservation<T>?=selection.selected?.let{candidate->
-        VesselObservation(value=candidate.value,source=candidate.sourceClass.toLegacySource(),observedAtUtcMillis=candidate.observedAtUtcMillis,receivedElapsedRealtime=candidate.receivedElapsedRealtime,quality=candidate.quality,freshness=VesselDataFreshness.FRESH,provenance=candidate.source.displayName,sourceIdentity=candidate.source,sourceClass=candidate.sourceClass,reference=candidate.reference,provenanceDetail=candidate.provenance,conflict=selection.conflict.takeIf{it.active},sourceHeartbeatElapsedRealtime=candidate.sourceHeartbeatElapsedRealtime)
+        VesselObservation(value=candidate.value,source=candidate.sourceClass.toLegacySource(),observedAtUtcMillis=candidate.observedAtUtcMillis,receivedElapsedRealtime=candidate.receivedElapsedRealtime,quality=candidate.quality,freshness=if(candidate.sourceHeartbeatElapsedRealtime>candidate.receivedElapsedRealtime)VesselDataFreshness.HELD else VesselDataFreshness.FRESH,provenance=candidate.source.displayName,sourceIdentity=candidate.source,sourceClass=candidate.sourceClass,reference=candidate.reference,provenanceDetail=candidate.provenance,conflict=selection.conflict.takeIf{it.active},sourceHeartbeatElapsedRealtime=candidate.sourceHeartbeatElapsedRealtime,selectionReason=selection.reason)
     }
     private fun <T> classify(value:VesselObservation<T>,now:Long,fresh:Long,held:Long)=VesselFreshnessPolicy.classify(value,now,fresh,held)
     private fun <T> observation(value:T,source:VesselDataSource,received:Long?,observed:Long?,provenance:String?,quality:VesselDataQuality=VesselDataQuality.GOOD)=VesselObservation(value,source,observed,received,quality,VesselDataFreshness.FRESH,provenance)

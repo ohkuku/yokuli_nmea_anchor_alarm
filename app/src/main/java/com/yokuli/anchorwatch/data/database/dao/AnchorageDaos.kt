@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao interface AnchorageSpotDao{
     @Query("SELECT * FROM anchorage_spots WHERE id=:id") suspend fun get(id:Long):AnchorageSpotEntity?
+    @Query("SELECT * FROM anchorage_spots ORDER BY COALESCE(lastVisitedAt,updatedAt) DESC") fun observeAll():Flow<List<AnchorageSpotEntity>>
     @Query("SELECT * FROM anchorage_spots WHERE placeId=:placeId ORDER BY COALESCE(lastVisitedAt,updatedAt) DESC") fun observeForPlace(placeId:Long):Flow<List<AnchorageSpotEntity>>
     @Query("SELECT * FROM anchorage_spots WHERE placeId=:placeId ORDER BY id") suspend fun forPlaceNow(placeId:Long):List<AnchorageSpotEntity>
     @Query("SELECT * FROM anchorage_spots ORDER BY id") suspend fun allNow():List<AnchorageSpotEntity>
@@ -55,6 +56,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao interface AnchorageVisitDao{
     @Query("SELECT * FROM anchorage_visits WHERE id=:id") suspend fun get(id:Long):AnchorageVisitEntity?
+    @Query("SELECT * FROM anchorage_visits ORDER BY startedAt DESC") fun observeAll():Flow<List<AnchorageVisitEntity>>
     @Query("SELECT * FROM anchorage_visits WHERE placeId=:placeId ORDER BY startedAt DESC") fun observeForPlace(placeId:Long):Flow<List<AnchorageVisitEntity>>
     @Query("SELECT * FROM anchorage_visits WHERE placeId=:placeId ORDER BY startedAt DESC") suspend fun forPlaceNow(placeId:Long):List<AnchorageVisitEntity>
     @Query("SELECT * FROM anchorage_visits WHERE anchorSessionId=:sessionId LIMIT 1") suspend fun bySession(sessionId:Long):AnchorageVisitEntity?
@@ -87,6 +89,7 @@ import kotlinx.coroutines.flow.Flow
     @Upsert suspend fun upsertPlaceRegions(values:List<AnchoragePlaceRegionCrossRef>)
     @Query("DELETE FROM anchorage_place_regions WHERE placeId=:placeId") suspend fun clearPlaceRegions(placeId:Long)
     @Query("SELECT * FROM anchorage_personal_ratings WHERE placeId=:placeId") suspend fun rating(placeId:Long):AnchoragePersonalRatingEntity?
+    @Query("SELECT * FROM anchorage_personal_ratings ORDER BY placeId") fun observeRatings():Flow<List<AnchoragePersonalRatingEntity>>
     @Upsert suspend fun upsertRating(value:AnchoragePersonalRatingEntity)
     @Query("SELECT * FROM anchorage_protection_sectors WHERE placeId=:placeId ORDER BY medium,sector") suspend fun protection(placeId:Long):List<AnchorageProtectionSectorEntity>
     @Upsert suspend fun upsertProtection(values:List<AnchorageProtectionSectorEntity>)

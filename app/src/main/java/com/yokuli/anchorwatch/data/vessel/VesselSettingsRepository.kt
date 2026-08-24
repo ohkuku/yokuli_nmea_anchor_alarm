@@ -75,10 +75,10 @@ data class NmeaDeviceOutputSettings(
      * starts output. This prevents a restored Service from silently resuming TX.
      */
     val publicationEnabled:Boolean=false,
-    val purpose:NmeaOutputPurpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+    val purpose:NmeaOutputPurpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
     val autoStartOutput:Boolean=false,
 )
-enum class NmeaOutputTransportMode { SAME_AS_INPUT_CONNECTION, DEDICATED_TCP, UDP_UNICAST, UDP_BROADCAST }
+enum class NmeaOutputTransportMode { SAME_AS_INPUT_CONNECTION, DEDICATED_TCP, TCP_SERVER, UDP_UNICAST, UDP_BROADCAST }
 enum class PhoneHeadingOutputFormat { HDT_TRUE, HDG_MAGNETIC, HDT_AND_HDG }
 val NmeaDeviceOutputSettings.effectivePositionPolicy get()=positionPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phonePositionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
 val NmeaDeviceOutputSettings.effectiveHeadingPolicy get()=headingPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneHeadingEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
@@ -88,7 +88,11 @@ val NmeaDeviceOutputSettings.anyStreamSelected:Boolean get()=purpose==NmeaOutput
 val NmeaDeviceOutputSettings.anyEnabled:Boolean get()=publicationEnabled&&transportConfigured&&anyStreamSelected
 val NmeaDeviceOutputSettings.phonePositionPublishing:Boolean get()=purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&publicationEnabled&&transportConfigured&&effectivePositionPolicy!=PublicationPolicy.OFF
 object NmeaOutputLeasePolicy{
-    fun shouldAutoStart(value:NmeaDeviceOutputSettings)=value.autoStartOutput&&value.transportConfigured&&value.anyStreamSelected
+    /** Output owns a socket and can displace the only reader accepted by a
+     * small marine gateway. It therefore always requires an explicit Start in
+     * the current foreground session; a persisted legacy auto-start flag is
+     * intentionally ignored. */
+    fun shouldAutoStart(@Suppress("UNUSED_PARAMETER") value:NmeaDeviceOutputSettings)=false
     fun afterRestore(value:NmeaDeviceOutputSettings)=value.copy(publicationEnabled=false,autoStartOutput=false)
 }
 fun NmeaDeviceOutputSettings.withPolicy(family:String,policy:PublicationPolicy)=when(family){
@@ -133,7 +137,7 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
         val mode=p[K.mode]?.let{runCatching{NmeaOutputTransportMode.valueOf(it)}.getOrNull()}?:NmeaOutputTransportMode.DEDICATED_TCP;val host=p[K.host].orEmpty();val port=p[K.port]?:10110;val configured=p[K.transportConfigured]?:p.contains(K.mode);val autoStart=p[K.autoStart]?:false
         val restoredDestinations=p[K.destinations]?.let{json->runCatching{gson.fromJson<List<NmeaOutputDestination>>(json,destinationType)}.getOrNull()}?.filter{it.id.isNotBlank()&&it.port in 1..65535}?.map{it.copy(enabled=false)}.orEmpty()
         val migratedDestination=NmeaOutputDestination(transport=mode.destinationTransport(),host=host,port=port,enabled=false)
-        NmeaDeviceOutputSettings(purpose=p[K.purpose]?.let{runCatching{NmeaOutputPurpose.valueOf(it)}.getOrNull()}?:NmeaOutputPurpose.BOAT_BUS_INJECTION,phonePositionEnabled=position!=PublicationPolicy.OFF,phoneHeadingEnabled=heading!=PublicationPolicy.OFF,phoneMotionEnabled=motion!=PublicationPolicy.OFF,phonePressureEnabled=pressure!=PublicationPolicy.OFF,proprietaryStatusEnabled=p[K.proprietary]?:false,transportMode=mode,outputHost=host,outputPort=port,phoneHeadingFormat=p[K.headingFormat]?.let{runCatching{PhoneHeadingOutputFormat.valueOf(it)}.getOrNull()}?:PhoneHeadingOutputFormat.HDT_TRUE,transportConfigured=configured,positionPolicy=position,headingPolicy=heading,motionPolicy=motion,pressurePolicy=pressure,derivedWindPolicy=wind,destinations=if(restoredDestinations.isNotEmpty())restoredDestinations else if(configured)listOf(migratedDestination)else emptyList(),publicationEnabled=false,autoStartOutput=autoStart)
+        NmeaDeviceOutputSettings(purpose=p[K.purpose]?.let{runCatching{NmeaOutputPurpose.valueOf(it)}.getOrNull()}?:NmeaOutputPurpose.CANONICAL_CLIENT_FEED,phonePositionEnabled=position!=PublicationPolicy.OFF,phoneHeadingEnabled=heading!=PublicationPolicy.OFF,phoneMotionEnabled=motion!=PublicationPolicy.OFF,phonePressureEnabled=pressure!=PublicationPolicy.OFF,proprietaryStatusEnabled=p[K.proprietary]?:false,transportMode=mode,outputHost=host,outputPort=port,phoneHeadingFormat=p[K.headingFormat]?.let{runCatching{PhoneHeadingOutputFormat.valueOf(it)}.getOrNull()}?:PhoneHeadingOutputFormat.HDT_TRUE,transportConfigured=configured,positionPolicy=position,headingPolicy=heading,motionPolicy=motion,pressurePolicy=pressure,derivedWindPolicy=wind,destinations=if(restoredDestinations.isNotEmpty())restoredDestinations else if(configured)listOf(migratedDestination)else emptyList(),publicationEnabled=false,autoStartOutput=autoStart)
     }
     val settings=combine(persistedSettings,outputRunning){persisted,running->persisted.copy(publicationEnabled=running)}
     suspend fun activateAutoStart(){outputRunning.value=NmeaOutputLeasePolicy.shouldAutoStart(persistedSettings.first())}
@@ -148,5 +152,5 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
             preferences[K.destinations]=gson.toJson(listOf(primary)+value.destinations.filterNot{destination->destination.id=="boat-gateway"}.map{it.copy(enabled=false)}.take(7))
         }
     }
-    private fun NmeaOutputTransportMode.destinationTransport()=when(this){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET;NmeaOutputTransportMode.DEDICATED_TCP->NmeaDestinationTransport.DEDICATED_TCP;NmeaOutputTransportMode.UDP_UNICAST->NmeaDestinationTransport.UDP_UNICAST;NmeaOutputTransportMode.UDP_BROADCAST->NmeaDestinationTransport.UDP_BROADCAST}
+    private fun NmeaOutputTransportMode.destinationTransport()=when(this){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET;NmeaOutputTransportMode.DEDICATED_TCP->NmeaDestinationTransport.DEDICATED_TCP;NmeaOutputTransportMode.TCP_SERVER->NmeaDestinationTransport.TCP_SERVER;NmeaOutputTransportMode.UDP_UNICAST->NmeaDestinationTransport.UDP_UNICAST;NmeaOutputTransportMode.UDP_BROADCAST->NmeaDestinationTransport.UDP_BROADCAST}
 }

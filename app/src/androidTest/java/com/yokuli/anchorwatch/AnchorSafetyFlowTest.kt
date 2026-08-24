@@ -85,6 +85,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -241,15 +242,11 @@ class AnchorSafetyFlowTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("map_layers").fetchSemanticsNode();true}.getOrDefault(false)}
             compose.onNodeWithTag("map_layers").performClick()
-            compose.onNodeWithTag("map_style_map").assertExists()
-            compose.onNodeWithTag("map_style_satellite").assertExists()
-            compose.onNodeWithTag("map_style_nautical").assertExists()
-            compose.onNodeWithTag("local_depth_section").assertExists()
-            compose.onNodeWithTag("local_depth_toggle").assertExists()
-            compose.onNodeWithTag("local_depth_provider").assertExists()
-            compose.onAllNodesWithTag("sonar_opacity").assertCountEquals(0)
-            compose.onAllNodesWithTag("offline_map_opacity").assertCountEquals(0)
-            compose.onAllNodesWithTag("base_map_opacity").assertCountEquals(0)
+            val requiredTags=listOf("map_style_map","map_style_satellite","map_style_nautical","local_depth_section","local_depth_toggle","local_depth_provider")
+            compose.waitUntil(5_000){requiredTags.all{tag->compose.onAllNodesWithTag(tag).fetchSemanticsNodes().size==1}}
+            assertEquals(0,compose.onAllNodesWithTag("sonar_opacity").fetchSemanticsNodes().size)
+            assertEquals(0,compose.onAllNodesWithTag("offline_map_opacity").fetchSemanticsNodes().size)
+            assertEquals(0,compose.onAllNodesWithTag("base_map_opacity").fetchSemanticsNodes().size)
             compose.onNodeWithTag("map_style_nautical").performClick()
             compose.onNodeWithText("Nautical map is a visual aid").assertExists()
             compose.onNodeWithText("I understand · Use Nautical").performClick()
@@ -334,11 +331,11 @@ class AnchorSafetyFlowTest {
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
                 compose.onNodeWithText("Data").performClick()
                 compose.onNodeWithTag("data_tab_input").performClick()
-                compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
-                compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
+                compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_connect_input").fetchSemanticsNodes().isNotEmpty()}
+                compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("nmea_connect_input").assertIsEnabled();true}.getOrDefault(false)}
                 compose.onNodeWithText("127.0.0.1").assertExists()
                 compose.onNodeWithText(server.port.toString()).assertExists()
-                compose.onNodeWithText("Test, save & connect").performScrollTo().performClick()
+                compose.onNodeWithTag("nmea_connect_input").performScrollTo().performClick()
                 val selected=withTimeoutOrNull(15_000){preferences.settings.first{it.gpsDataSource==GpsDataSource.NMEA}}
                 val attemptNode=compose.onAllNodesWithTag("nmea_connection_attempt",useUnmergedTree=true).fetchSemanticsNodes().firstOrNull()
                 val attemptText=attemptNode?.let{node->runCatching{node.config[SemanticsProperties.Text].joinToString()}.getOrNull()}
@@ -351,7 +348,7 @@ class AnchorSafetyFlowTest {
                 requireNotNull(selected)
                 assertEquals(GpsDataSource.NMEA,selected.gpsDataSource)
                 assertTrue(!selected.demoMode)
-                assertEquals("Save/connect must validate and retain one live RX socket, not open a disposable preflight client",1,server.accepted.get())
+                assertEquals("Save/connect must retain one formal RX socket, not open a disposable preflight client",1,server.accepted.get())
                 compose.onNodeWithText("Settings").performClick()
                 compose.onNodeWithTag("settings_list").performScrollToIndex(3)
                 compose.onNodeWithTag("settings_positioning").performClick()
@@ -616,18 +613,18 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun disablingHeadingAssistKeepsAuditHistoryButExcludesPriorHeadingEvidence() = runBlocking<Unit> {
+    @Test fun legacyDisabledHeadingFieldsUpgradeToAutomaticEvidenceWithoutChangingHistory() = runBlocking<Unit> {
         val sessionId=seedPhoneHeadingLearningWatch()
+        dao.updateSession(requireNotNull(dao.session(sessionId)).copy(usePhoneHeading=false,headingEvidenceEnabled=false,headingEvidenceEpoch=0,headingEvidenceEnabledAt=null))
         dao.insertPoint(com.yokuli.anchorwatch.data.database.TrackPointEntity(sessionId=sessionId,timestamp=System.currentTimeMillis(),latitude=-36.8485,longitude=174.7633,distanceFromAnchor=0.0,sog=0.1,cog=180.0,heading=123.0,hdop=1.0,headingMeasured=true,headingSampleSequence=17,positionSource=GpsDataSource.NMEA.name,headingSource=HeadingSource.PHONE.name,headingQuality=HeadingQuality.STABLE.name,headingEpoch=4))
         startServiceForRestore()
-        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_PHONE_HEADING).putExtra("enabled",false))
-        withTimeout(5_000){dao.sessions().first{sessions->sessions.firstOrNull{it.id==sessionId}?.usePhoneHeading==false}}
+        withTimeout(5_000){dao.sessions().first{sessions->sessions.firstOrNull{it.id==sessionId}?.let{it.usePhoneHeading&&it.headingEvidenceEnabled&&it.headingEvidenceEpoch>=1}==true}}
         val historical=dao.points(sessionId).first().single()
-        // Track history remains immutable for audit/export; the runtime's new
-        // heading evidence epoch excludes this value from estimator input.
+        // Compatibility upgrade changes only the legacy gate fields. Track
+        // history remains immutable for audit/export and the centre is not moved.
         assertEquals(123.0,historical.heading?:Double.NaN,0.0)
         assertEquals(HeadingSource.PHONE.name,historical.headingSource)
-        withTimeout(5_000){dao.events(sessionId).first{events->events.any{it.type=="ANCHOR_HEADING_EVIDENCE_DISABLED"&&it.detail.contains("PRIOR_HEADING_EXCLUDED")&&it.detail.contains("GPS_WIND_COG_RETAINED")}}}
+        assertFalse(dao.events(sessionId).first().any{it.type=="ANCHOR_HEADING_EVIDENCE_DISABLED"})
     }
 
     @Test fun passiveLossKeepsWatchArmedAndRecordsImmediateAndTimedAlarms() = runBlocking<Unit> {
@@ -1054,8 +1051,8 @@ class AnchorSafetyFlowTest {
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Data").performClick()
         compose.onNodeWithTag("data_tab_input").performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Disconnect").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Disconnect").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("nmea_stop_input").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("nmea_stop_input").performScrollTo().performClick()
     }
 
     private fun liveProfile(server: TestNmeaServer, autoReconnect: Boolean) = ConnectionProfile(

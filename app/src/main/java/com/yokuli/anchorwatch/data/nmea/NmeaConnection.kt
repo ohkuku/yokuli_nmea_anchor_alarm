@@ -8,7 +8,7 @@ import java.io.EOFException
 import java.net.*
 
 enum class Protocol { TCP, UDP }
-data class ConnectionProfile(val name:String="Boat",val protocol:Protocol=Protocol.TCP,val host:String="192.168.1.100",val port:Int=10110,val requireChecksum:Boolean=true,val autoReconnect:Boolean=true,val connectAutomatically:Boolean=false,val noDataTimeoutSeconds:Int=10,val stableId:String="boat-primary")
+data class ConnectionProfile(val name:String="Boat",val protocol:Protocol=Protocol.TCP,val host:String="",val port:Int=0,val requireChecksum:Boolean=true,val autoReconnect:Boolean=true,val connectAutomatically:Boolean=false,val noDataTimeoutSeconds:Int=10,val stableId:String="boat-primary")
 
 data class NmeaTransportDiagnostics(
  val connectionGeneration:Long=0,

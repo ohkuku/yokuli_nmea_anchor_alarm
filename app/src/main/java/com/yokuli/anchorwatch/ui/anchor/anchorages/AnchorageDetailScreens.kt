@@ -36,7 +36,9 @@ internal fun AnchoragePlaceDetailDialog(
     toggleCollection:(Long)->Unit,
     cycleProtection:(AnchorageProtectionMedium,AnchorageCompassSector)->Unit,
 ) {
-    var tab by remember { mutableIntStateOf(0) }
+    // A saved-place selection opens directly on its actionable Spot card(s).
+    // Overview remains one tap away, but there is no duplicate preview page.
+    var tab by remember(bundle.place.id) { mutableIntStateOf(1) }
     AlertDialog(
         onDismissRequest = dismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -108,7 +110,7 @@ private fun AnchorageSpots(bundle: AnchoragePlaceBundle, approach: (Long) -> Uni
         items(bundle.spots, key = { it.id }) { spot ->
             Card {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(spot.name, fontWeight = FontWeight.SemiBold)
+                    Text(if(spot.name.equals("Main spot",true))tr("Primary anchoring spot","主要锚泊点")else spot.name, fontWeight = FontWeight.SemiBold)
                     Text(
                         listOfNotNull(
                             spot.typicalWaterDepthMeters?.let { "%.1f m depth".format(it) },
@@ -116,9 +118,9 @@ private fun AnchorageSpots(bundle: AnchoragePlaceBundle, approach: (Long) -> Uni
                             spot.preferredAlarmRadiusMeters?.let { "${it.toInt()} m radius" },
                         ).joinToString(" · ").ifBlank { "—" },
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button({ approach(spot.id) }) { Text(tr("Approach", "接近")) }
-                        OutlinedButton({ openMap(spot.latitude, spot.longitude) }) { Text(tr("Map", "地图")) }
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button({ approach(spot.id) },Modifier.weight(1f).testTag("anchorage_spot_approach_${spot.id}")) { Text(tr("Approach", "接近")) }
+                        OutlinedButton({ openMap(spot.latitude, spot.longitude) },Modifier.weight(1f)) { Text(tr("Google Maps", "Google 地图")) }
                     }
                     TextButton({share(spot.id)},Modifier.fillMaxWidth()){Text(tr("Share this Spot as QR v2","以 QR v2 分享此锚点"))}
                 }

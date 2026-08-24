@@ -35,6 +35,7 @@ data class AcceptedPositionState(
     val lastAcceptedElapsedRealtime: Long? = null,
     val integrityLastDurationMicros: Long = 0,
     val integrityMaxDurationMicros: Long = 0,
+    val headingEvidence:AnchorHeadingEvidence=AnchorHeadingEvidence(reason="NOT_EVALUATED"),
 )
 
 data class AcceptedPositionEvent(
@@ -64,13 +65,13 @@ class AcceptedPositionRepository @Inject constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val accepted = _accepted.asSharedFlow()
-    private var phoneHeadingEvidenceEnabled = false
     @Volatile private var headingPreference=VesselSourcePreference.AUTO
+    @Volatile private var headingSourceExplicitlyPinned=false
     @Volatile private var phoneMountState=PhoneVesselMountState.UNCALIBRATED
     private var lastSubmissionKey: Triple<GpsDataSource, Long, String>? = null
 
     init{
-        scope.launch{vesselSettings.settings.collect{headingPreference=it.headingPreference}}
+        scope.launch{vesselSettings.settings.collect{headingPreference=it.headingPreference;headingSourceExplicitlyPinned=!it.boatHeadingSourceId.isNullOrBlank()}}
         scope.launch{vesselAttitude.mountState.collect{phoneMountState=it}}
     }
 
@@ -109,11 +110,6 @@ class AcceptedPositionRepository @Inject constructor(
     }
 
     @Synchronized
-    fun setPhoneHeadingEvidenceEnabled(enabled: Boolean) {
-        phoneHeadingEvidenceEnabled = enabled
-    }
-
-    @Synchronized
     fun seed(source: GpsDataSource, fix: NavigationFix, sessionId: Long? = null) {
         if (sessionId != null) lockSource(sessionId, source) else changeSourceIfNeeded(source)
         filter.seed(fix)
@@ -147,7 +143,8 @@ class AcceptedPositionRepository @Inject constructor(
             headingTrueDegrees=rawFix.headingTrueDegrees.takeIf{rawFix.headingReceivedElapsedRealtime.isFreshAt(now)},
             headingMagneticDegrees=rawFix.headingMagneticDegrees.takeIf{rawFix.headingMagneticReceivedElapsedRealtime.isFreshAt(now)},
         ) else rawFix
-        val evidence=AnchorHeadingEvidenceRouter.routeSelected(phoneHeadingEvidenceEnabled,headingPreference,vesselDataHub.snapshot.value.headingTrueDegrees,phone,phoneMountState)
+        val vesselSnapshot=vesselDataHub.snapshot.value
+        val evidence=AnchorHeadingEvidenceRouter.routeSelected(headingPreference,vesselSnapshot.headingTrueDegrees,vesselSnapshot.conflicts[com.yokuli.anchorwatch.domain.vessel.VesselMetricId.HEADING_TRUE]?:vesselSnapshot.headingTrueDegrees.conflict,headingSourceExplicitlyPinned,phone,phoneMountState)
         val fix=safetyFix.copy(
             headingTrueDegrees=evidence.trueDegrees,
             headingReceivedElapsedRealtime=when(evidence.source){HeadingSource.PHONE->phone.receivedElapsedRealtime;HeadingSource.NMEA_PHYSICAL->safetyFix.headingReceivedElapsedRealtime;else->null},
@@ -170,6 +167,7 @@ class AcceptedPositionRepository @Inject constructor(
                         lastAcceptedElapsedRealtime = accepted.fix.receivedElapsedRealtime,
                         integrityLastDurationMicros = integrityMicros,
                         integrityMaxDurationMicros = integrityMaxMicros,
+                        headingEvidence = evidence,
                     )
                     _accepted.tryEmit(AcceptedPositionEvent(source, accepted,evidence))
                 }
@@ -182,6 +180,7 @@ class AcceptedPositionRepository @Inject constructor(
                     reason = result.reason,
                     integrityLastDurationMicros = integrityMicros,
                     integrityMaxDurationMicros = integrityMaxMicros,
+                    headingEvidence = evidence,
                 )
             }
             is PositionIntegrityResult.Rejected -> {
@@ -192,6 +191,7 @@ class AcceptedPositionRepository @Inject constructor(
                     reason = result.reason,
                     integrityLastDurationMicros = integrityMicros,
                     integrityMaxDurationMicros = integrityMaxMicros,
+                    headingEvidence = evidence,
                 )
             }
         }

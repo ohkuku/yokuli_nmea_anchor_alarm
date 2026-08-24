@@ -43,10 +43,10 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(value.phonePositionPublishing)
     }
 
-    @Test fun processRestartNeverResumesRuntimeLeaseUnlessExplicitAutoStartIsReady(){
+    @Test fun processRestartNeverResumesRuntimeLeaseEvenForLegacyAutoStartConfiguration(){
         val configured=NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true)
         assertFalse(NmeaOutputLeasePolicy.shouldAutoStart(configured))
-        assertTrue(NmeaOutputLeasePolicy.shouldAutoStart(configured.copy(publicationEnabled=false,autoStartOutput=true)))
+        assertFalse(NmeaOutputLeasePolicy.shouldAutoStart(configured.copy(publicationEnabled=false,autoStartOutput=true)))
         assertFalse(NmeaOutputLeasePolicy.shouldAutoStart(configured.copy(autoStartOutput=true,transportConfigured=false)))
     }
 
@@ -65,6 +65,14 @@ class NmeaDeviceOutputPolicyTest{
     @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(),input))
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port),input))
+    }
+
+    @Test fun tcpServerIsOneCanonicalOutputTransportAndDoesNotReuseInput(){
+        val server=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.TCP_SERVER,outputPort=10111,transportConfigured=true)
+        assertTrue(NmeaOutputEndpointPolicy.isValid(server,input))
+        assertFalse(NmeaOutputEndpointPolicy.needsInputTransport(server))
+        assertFalse(NmeaOutputEndpointPolicy.duplicateEndpointRisk(server,input))
+        assertEquals("0.0.0.0" to 10111,NmeaOutputEndpointPolicy.resolved(server,input))
     }
 
     @Test fun echoedOutboundSentenceIsQuarantinedOnlyForTheShortWindow(){

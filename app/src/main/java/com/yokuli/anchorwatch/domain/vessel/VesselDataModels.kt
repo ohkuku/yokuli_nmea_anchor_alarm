@@ -95,6 +95,7 @@ data class VesselObservation<T>(
     val provenanceDetail:VesselProvenance?=null,
     val conflict:VesselSourceConflict?=null,
     val sourceHeartbeatElapsedRealtime:Long?=receivedElapsedRealtime,
+    val selectionReason:String?=null,
 )
 
 data class VesselDataSnapshot(

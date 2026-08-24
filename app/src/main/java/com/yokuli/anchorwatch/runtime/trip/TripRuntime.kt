@@ -15,6 +15,7 @@ import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.vessel.*
 import com.yokuli.anchorwatch.domain.trip.TripSessionTiming
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import com.yokuli.anchorwatch.runtime.*
 import com.yokuli.anchorwatch.runtime.nmea.NmeaRuntime
@@ -76,7 +77,13 @@ class TripRuntime @Inject constructor(
     fun activeSession()=active
 
     suspend fun restore():TripSessionEntity?=mutex.withLock{
-        val existing=dao.active()?:return@withLock null
+        val existing=dao.active()?:run{
+            // A per-trip override must never leak into a new session after a
+            // clean process restore with no durable active Trip.
+            hub.setTripPositionPreference(null)
+            return@withLock null
+        }
+        hub.setTripPositionPreference(runCatching{VesselSourcePreference.valueOf(existing.positionPreference)}.getOrDefault(VesselSourcePreference.AUTO))
         val restored=existing.copy(restoredAfterProcessDeath=true,eventCount=existing.eventCount+1)
         // Rebuild the per-field expectation memory from durable samples. A
         // process restart must not turn a later missing field into "never
@@ -103,28 +110,40 @@ class TripRuntime @Inject constructor(
         active
     }
 
-    suspend fun start(name:String,nmeaState:NmeaConnectionState,phoneMotionRequested:Boolean=true):TripRuntimeResult=mutex.withLock{
+    suspend fun start(name:String,nmeaState:NmeaConnectionState,phoneMotionRequested:Boolean=true,positionPreference:VesselSourcePreference=VesselSourcePreference.AUTO):TripRuntimeResult=mutex.withLock{
         if(active!=null)return@withLock TripRuntimeResult(false,"A Trip Watch session is already open.",active)
         val app=appSettings.settings.first()
         val vessel=vesselSettings.settings.first()
         val calibration=mountCalibration.calibration.first()
-        val motionEnabled=TripStartSensorPolicy.phoneMotionEnabled(phoneMotionRequested,vesselAttitude.capabilities.attitudeAvailable,calibration.calibratedAt)
+        val motionEnabled=TripStartSensorPolicy.phoneMotionEnabled(phoneMotionRequested,vesselAttitude.capabilities.attitudeAvailable,calibration.calibratedAt)&&vesselAttitude.mountState.value==PhoneVesselMountState.VESSEL_MOUNTED
         val now=System.currentTimeMillis()
+        val safePositionPreference=positionPreference.takeUnless{it==VesselSourcePreference.DERIVED}?:VesselSourcePreference.AUTO
         val value=TripSessionEntity(
             name=name.trim().ifBlank{"Trip · ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(now))}"},
             startedAt=now,
             boatLengthMeters=app.boatLengthMeters,
             draftMeters=vessel.draftMeters,
-            positionPreference=vessel.positionPreference.name,
+            positionPreference=safePositionPreference.name,
             headingPreference=vessel.headingPreference.name,
             phoneMotionEnabled=motionEnabled,
             mountCalibrationVersion=calibration.version.takeIf{motionEnabled},
             motionAlgorithmVersion=VesselMotionAnalyzer.ALGORITHM_VERSION,
             nmeaWasActiveAtStart=nmeaState.hasRecentNmeaTraffic(),
         )
-        try{ownResources(value)}catch(error:Exception){releaseOwnedResources();throw error}
+        hub.setTripPositionPreference(safePositionPreference)
+        try{ownResources(value)}catch(error:Exception){hub.setTripPositionPreference(null);releaseOwnedResources();throw error}
+        val readyPosition=withTimeoutOrNull(12_000L){hub.snapshot.first{snapshot->
+            val position=snapshot.position
+            position.value!=null&&position.freshness==VesselDataFreshness.FRESH&&when(safePositionPreference){
+                VesselSourcePreference.AUTO->true
+                VesselSourcePreference.BOAT->position.source==VesselDataSource.BOAT_NMEA
+                VesselSourcePreference.PHONE->position.source==VesselDataSource.PHONE_GNSS
+                VesselSourcePreference.DERIVED->false
+            }
+        }}
+        if(readyPosition==null){hub.setTripPositionPreference(null);releaseOwnedResources();return@withLock TripRuntimeResult(false,"The selected ${if(safePositionPreference==VesselSourcePreference.BOAT)"Boat NMEA" else if(safePositionPreference==VesselSourcePreference.PHONE)"Phone GPS" else "automatic"} position did not become fresh within 12 seconds. No Trip session was created.")}
         val id=try{dao.insertSessionAndEvent(value,TripEventEntity(tripId=0,timestamp=now,type="TRIP_STARTED",severity="INFO",detailJson="{\"phoneMotionRequested\":$phoneMotionRequested,\"phoneMotionEnabled\":$motionEnabled,\"mountCalibrationVersion\":${calibration.version.takeIf{motionEnabled}?:"null"}}"))}
-        catch(error:Exception){releaseOwnedResources();throw error}
+        catch(error:Exception){hub.setTripPositionPreference(null);releaseOwnedResources();throw error}
         active=value.copy(id=id,eventCount=1)
         nmeaExpected=value.nmeaWasActiveAtStart
         manualNmeaDisconnected=false
@@ -164,6 +183,7 @@ class TripRuntime @Inject constructor(
             accumulatedPausedMillis=current.accumulatedPausedMillis+(current.pausedAt?.let{now-it}?:0),
             eventCount=current.eventCount+1,
         )
+        hub.setTripPositionPreference(runCatching{VesselSourcePreference.valueOf(updated.positionPreference)}.getOrDefault(VesselSourcePreference.AUTO))
         try{ownResources(updated);dao.updateSessionAndInsertEvent(updated,TripEventEntity(tripId=current.id,timestamp=now,type="TRIP_RESUMED",severity="INFO"))}
         catch(error:Exception){releaseOwnedResources();throw error}
         active=updated
@@ -185,6 +205,7 @@ class TripRuntime @Inject constructor(
             try{dao.updateSessionAndInsertEvent(ended,TripEventEntity(tripId=current.id,timestamp=now,type="TRIP_ENDED",severity="INFO"))}
             catch(error:Exception){if(!current.paused)startTicker();throw error}
             active=null
+            hub.setTripPositionPreference(null)
             releaseOwnedResources()
             eventTransitions.reset()
             nmeaExpected=false;depthExpected=false;windExpected=false
@@ -208,6 +229,7 @@ class TripRuntime @Inject constructor(
     fun shutdown(){
         stopTicker()
         runBlocking(Dispatchers.IO){withTimeoutOrNull(2_000){mutex.withLock{flushLocked()}}}
+        hub.setTripPositionPreference(null)
         releaseOwnedResources()
     }
 
@@ -219,7 +241,7 @@ class TripRuntime @Inject constructor(
         val persistedCurrent=active?:current
         manualNmeaDisconnected=true;nmeaTransportOwned=false
         setResourceRequirement(false);nmeaRuntime.releaseIfUnowned()
-        val vessel=vesselSettings.settings.first();if(vessel.positionPreference!=VesselSourcePreference.PHONE)vesselSettings.save(vessel.copy(positionPreference=VesselSourcePreference.PHONE))
+        hub.setTripPositionPreference(VesselSourcePreference.PHONE)
         val now=System.currentTimeMillis();val updated=persistedCurrent.copy(positionPreference=VesselSourcePreference.PHONE.name,eventCount=persistedCurrent.eventCount+2)
         dao.updateSessionAndInsertEvent(updated,TripEventEntity(tripId=persistedCurrent.id,timestamp=now,type="NMEA_DISCONNECTED_BY_USER",severity="WARNING",detailJson="{\"tripContinuesWith\":\"PHONE_GNSS\"}"))
         dao.insertEvent(TripEventEntity(tripId=persistedCurrent.id,timestamp=now,type="INSTRUMENT_GAP_STARTED",severity="WARNING",detailJson="{\"reason\":\"USER_DISCONNECTED_NMEA\"}"))

@@ -1,5 +1,6 @@
 package com.yokuli.anchorwatch.ui.anchor.anchorages
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,7 +26,7 @@ import com.yokuli.anchorwatch.BuildConfig
 import com.yokuli.anchorwatch.PageHeader
 import com.yokuli.anchorwatch.data.anchorage.AnchoragePlaceBundle
 import com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity
-import com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity
+import com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity
 import com.yokuli.anchorwatch.domain.anchorage.*
 import com.yokuli.anchorwatch.tr
 import kotlinx.coroutines.FlowPreview
@@ -44,7 +45,6 @@ fun AnchorageLibraryScreen(
     val planningPoint by vm.planningPoint.collectAsState()
     var showFilters by remember { mutableStateOf(false) }
     var showRegions by remember { mutableStateOf(false) }
-    var showDetails by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let(vm::importPhoto)}
 
@@ -68,8 +68,11 @@ fun AnchorageLibraryScreen(
                 Icon(Icons.Default.Public, contentDescription = null)
                 Spacer(Modifier.width(5.dp))
                 Text(
-                    if (state.selectedRegionId == null) tr("All regions", "全部区域")
-                    else tr("Selected region", "已选区域"),
+                    when(state.selectedRegionId){
+                        null->tr("All regions", "全部区域")
+                        UNASSIGNED_REGION_ID->tr("Unassigned places","未归类地点")
+                        else->state.regions.firstOrNull{it.id==state.selectedRegionId}?.displayName?:tr("Selected region", "已选区域")
+                    },
                     maxLines = 1,
                 )
             }
@@ -93,23 +96,19 @@ fun AnchorageLibraryScreen(
                 }
             },
         )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            SegmentedButton(
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            FilterChip(
                 selected = state.displayMode == AnchorageDisplayMode.MAP,
                 onClick = { vm.setMode(AnchorageDisplayMode.MAP) },
-                shape = SegmentedButtonDefaults.itemShape(0, 2),
-                modifier = Modifier.testTag("anchorage_mode_map"),
-            ) {
-                Icon(Icons.Default.Map, null); Spacer(Modifier.width(4.dp)); Text(tr("Map", "地图"))
-            }
-            SegmentedButton(
+                label={Text(tr("Map", "地图"),maxLines=1)},
+                modifier = Modifier.weight(1f).testTag("anchorage_mode_map"),
+            )
+            FilterChip(
                 selected = state.displayMode == AnchorageDisplayMode.LIST,
                 onClick = { vm.setMode(AnchorageDisplayMode.LIST) },
-                shape = SegmentedButtonDefaults.itemShape(1, 2),
-                modifier = Modifier.testTag("anchorage_mode_list"),
-            ) {
-                Icon(Icons.Default.List, null); Spacer(Modifier.width(4.dp)); Text(tr("List", "列表"))
-            }
+                label={Text(tr("List", "列表"),maxLines=1)},
+                modifier = Modifier.weight(1f).testTag("anchorage_mode_list"),
+            )
         }
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -120,22 +119,21 @@ fun AnchorageLibraryScreen(
     }
 
     state.selectedPlace?.let { bundle ->
-        AnchoragePlacePreviewSheet(
-            bundle = bundle,
-            dismiss = { vm.selectPlace(null) },
-            details = { showDetails = true },
-            approach = { bundle.spots.singleOrNull()?.let { approachSpot(it.id) } },
-            openMap = { openGoogleMaps(it.latitude, it.longitude) },
+        // One selection opens one complete surface. The former preview ->
+        // details double-hop duplicated the same Place and made Approach look
+        // as though it started in a hidden second page.
+        AnchoragePlaceDetailDialog(
+            bundle,state.collections,{vm.selectPlace(null)},
+            {spotId->vm.selectPlace(null);approachSpot(spotId)},
+            openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,
+            vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection,
         )
-    }
-    if (showDetails) state.selectedPlace?.let { bundle ->
-        AnchoragePlaceDetailDialog(bundle,state.collections,{ showDetails = false }, approachSpot, openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection)
     }
     if (showFilters) AnchorageFiltersSheet(state.filters, { showFilters = false }) {
         vm.setFilters(it); showFilters = false
     }
     if (showRegions) RegionSelectorDialog(
-        state.allPlaces.mapNotNull { it.primaryRegionId }.distinct(), state.selectedRegionId,
+        state.regions, state.selectedRegionId,state.allPlaces.any{it.primaryRegionId==null},
         { showRegions = false }, { vm.setRegion(it); showRegions = false },
     )
     if (showQrScanner) Dialog(
@@ -248,36 +246,6 @@ private fun AnchoragePlaceList(values: List<AnchoragePlaceEntity>, open: (Long) 
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AnchoragePlacePreviewSheet(
-    bundle: AnchoragePlaceBundle,
-    dismiss: () -> Unit,
-    details: () -> Unit,
-    approach: () -> Unit,
-    openMap: (AnchorageSpotEntity) -> Unit,
-) {
-    ModalBottomSheet(onDismissRequest = dismiss) {
-        Column(Modifier.padding(18.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(bundle.place.displayName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(
-                tr("${bundle.spots.size} spots · ${bundle.place.visitCountCached + bundle.place.legacyVisitCount} visits", "${bundle.spots.size} 个锚点 · ${bundle.place.visitCountCached + bundle.place.legacyVisitCount} 次访问"),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            bundle.spots.take(3).forEach { spot ->
-                Text("• ${spot.name} · ${spot.typicalWaterDepthMeters?.let { "%.1f m".format(it) } ?: "—"}")
-            }
-            Button(details, Modifier.fillMaxWidth()) { Text(tr("Open place details", "打开地点详情")) }
-            if (bundle.spots.size == 1) OutlinedButton(approach, Modifier.fillMaxWidth()) {
-                Text(tr("Approach ${bundle.spots.single().name}", "接近 ${bundle.spots.single().name}"))
-            }
-            bundle.spots.firstOrNull()?.let { spot ->
-                TextButton({ openMap(spot) }, Modifier.fillMaxWidth()) { Text(tr("Open spot in Google Maps", "在 Google 地图打开锚点")) }
-            }
-        }
-    }
-}
-
 @Composable
 private fun AnchorageFiltersSheet(value: AnchorageFilterState, dismiss: () -> Unit, save: (AnchorageFilterState) -> Unit) {
     var draft by remember(value) { mutableStateOf(value) }
@@ -305,7 +273,7 @@ private fun AnchorageFiltersSheet(value: AnchorageFilterState, dismiss: () -> Un
 }
 
 @Composable
-private fun RegionSelectorDialog(ids: List<Long>, selected: Long?, dismiss: () -> Unit, select: (Long?) -> Unit) {
+private fun RegionSelectorDialog(regions: List<AnchorageRegionEntity>, selected: Long?, hasUnassigned:Boolean, dismiss: () -> Unit, select: (Long?) -> Unit) {
     AlertDialog(
         onDismissRequest = dismiss,
         title = { Text(tr("Browse region", "浏览区域")) },
@@ -317,10 +285,20 @@ private fun RegionSelectorDialog(ids: List<Long>, selected: Long?, dismiss: () -
                         leadingContent = { RadioButton(selected == null, { select(null) }) },
                     )
                 }
-                items(ids) { id ->
+                items(regions,key={it.id}) { region ->
                     ListItem(
-                        headlineContent = { Text(tr("Saved region #$id", "已保存区域 #$id")) },
-                        leadingContent = { RadioButton(selected == id, { select(id) }) },
+                        headlineContent = { Text(region.displayName) },
+                        supportingContent={Text("${region.featureType.lowercase().replace('_',' ')} · ${if(region.official)tr("official LINZ", "LINZ 官方")else tr("personal", "个人")}")},
+                        leadingContent = { RadioButton(selected == region.id, { select(region.id) }) },
+                        modifier=Modifier.clickable{select(region.id)},
+                    )
+                }
+                if(hasUnassigned)item{
+                    ListItem(
+                        headlineContent={Text(tr("Unassigned places","未归类地点"))},
+                        supportingContent={Text(tr("Saved or imported places that have not been matched to a region yet.","尚未匹配到区域的收藏或导入地点。"))},
+                        leadingContent={RadioButton(selected==UNASSIGNED_REGION_ID,{select(UNASSIGNED_REGION_ID)})},
+                        modifier=Modifier.clickable{select(UNASSIGNED_REGION_ID)}.testTag("anchorage_region_unassigned"),
                     )
                 }
             }

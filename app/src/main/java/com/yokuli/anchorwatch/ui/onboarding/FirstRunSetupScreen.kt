@@ -17,14 +17,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.yokuli.anchorwatch.tr
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
-import com.yokuli.anchorwatch.data.vessel.effectivePositionPolicy
-import com.yokuli.anchorwatch.data.vessel.effectiveHeadingPolicy
-import com.yokuli.anchorwatch.data.vessel.effectiveMotionPolicy
-import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
 import com.yokuli.anchorwatch.domain.model.AlarmState
 import com.yokuli.anchorwatch.domain.model.AlarmType
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
-import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 
@@ -76,9 +71,15 @@ fun FirstRunSetupScreen(
                 2->{SetupStatusCard(Icons.Default.Smartphone,tr("Phone mount","手机安装"),when{!mountCalibrated->tr("Not calibrated — handheld device navigation remains available","尚未校准；手持设备导航仍然可用");mountState==PhoneVesselMountState.VESSEL_MOUNTED->tr("Calibrated and fixed to the vessel","已校准并固定在船体");else->tr("Calibrated, currently handheld","已校准，当前为手持模式")},mountState==PhoneVesselMountState.VESSEL_MOUNTED);Text(tr("Only calibrate after the phone is physically secured. Vessel heading and motion publication remain suppressed while handheld.","只有手机牢固固定后才应校准。手持状态下，船艏向与船体运动发布会保持抑制。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 3->{SetupStatusCard(Icons.Default.Hub,tr("Automatic source routing","自动来源路由"),tr("Position: ${preferenceLabel(positionPreference)} · Heading: ${preferenceLabel(headingPreference)}","位置：${preferenceLabel(positionPreference)} · 船艏向：${preferenceLabel(headingPreference)}"),true);Text(tr("Auto preserves every candidate, prefers healthy boat instruments, and falls back only after freshness and recovery checks. You can inspect or pin a source in Data → Vessel.","自动模式会保留所有候选来源，优先选择健康的船载仪表，并只在新鲜度与恢复检查后回退。可在“数据 → 船舶”查看或固定来源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 4->{
-                    val active=listOf(output.effectivePositionPolicy,output.effectiveHeadingPolicy,output.effectiveMotionPolicy,output.effectivePressurePolicy,output.derivedWindPolicy).any{it!=PublicationPolicy.OFF}
-                    SetupStatusCard(Icons.Default.Output,"NMEA Output",if(!output.transportConfigured)tr("Not configured — nothing will be transmitted","尚未配置，不会发送任何数据")else if(active)tr("A destination and at least one publication policy are configured","已配置发送目标及至少一项发布策略")else tr("Destination saved; every publication policy is Off","已保存发送目标；全部发布策略均为关闭"),output.transportConfigured&&active)
-                    Text(tr("Output is optional and separate from input. Configure Boat Gateway and Off / Backup / Always policies later in Data → NMEA Output.","输出是可选功能，并与输入完全分离。可稍后在“数据 → NMEA 输出”配置船载网关和关闭 / 备用 / 始终策略。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    val calibratedAndMounted=mountCalibrated&&mountState==PhoneVesselMountState.VESSEL_MOUNTED
+                    val body=when{
+                        !output.transportConfigured->tr("Not configured — no output socket can start","尚未配置；不会启动任何输出 Socket")
+                        !calibratedAndMounted->tr("Route saved — Phone vessel-sensor calibration and a secure mount are still required","线路已保存；仍需完成手机船舶传感器校准并确认牢固安装")
+                        output.publicationEnabled->tr("Canonical vessel-data sharing is running","统一船舶数据共享正在运行")
+                        else->tr("Route and calibration are ready — output waits for an explicit Start","线路和校准已就绪；输出正在等待用户明确启动")
+                    }
+                    SetupStatusCard(Icons.Default.Output,"NMEA Output",body,output.publicationEnabled)
+                    Text(tr("Output is optional and separate from input. Data → NMEA Output owns only the TX route, diagnostics and explicit Start/Stop. Metric sources are selected once in Data → Vessel; the shared feed does not send null or losing-source values.","输出是可选功能，并与输入完全分离。“数据 → NMEA 输出”只负责 TX 线路、诊断和明确启停；每项数据的来源只在“数据 → 船舶”选择一次，共享流不会发送 null 或落选来源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 else->{
                     SetupStatusCard(Icons.Default.NotificationsActive,tr("Audible safety check","可听见的安全检查"),if(alarmTesting)tr("Alarm test is sounding","警报测试正在响")else tr("Use the real global alarm path before relying on Anchor Watch","依赖 Anchor Watch 前，请通过真实全局警报链路完成试听"),alarmTesting)

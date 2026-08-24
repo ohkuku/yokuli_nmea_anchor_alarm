@@ -181,7 +181,14 @@ class YokuliRuntimeCoordinator @Inject constructor(
   // configureSharing(false) may legitimately call releaseIfIdle(). Never let
   // that initial DataStore emission stop a service whose active watch is still
   // being restored on the sibling coroutine.
-  scope.launch{startupReady.await();preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->configureSharing(enabled,port,source)}}
+  scope.launch{startupReady.await();preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->
+   // Legacy Sharing Server is now the TCP server transport of the one
+   // canonical NMEA Output product. Never restore the old parallel publisher;
+   // keep its port as migration evidence and require an explicit calibrated
+   // Start from Data -> Output.
+   if(enabled){val current=preferences.settings.first();preferences.save(current.copy(nmeaSharingEnabled=false));configureSharing(false,port,source)}
+   else configureSharing(false,port,source)
+  }}
   scope.launch{startupReady.await();outputSettings.activateAutoStart();combine(outputSettings.settings,preferences.settings,dao.sessions()){output,settings,sessions->Triple(output,settings,sessions.firstOrNull{it.active})}.distinctUntilChanged().collect{(output,settings,active)->configurePhoneOutput(output,settings.gpsDataSource,active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()})}}
   scope.launch{navigation.validRawSentences.collect(sharingRuntime::onBoatSentence)}
   scope.launch{
@@ -254,7 +261,6 @@ class YokuliRuntimeCoordinator @Inject constructor(
    is RuntimeCommand.Candidate->launchCommand{anchorActor.execute{when(command.action){CandidateAction.ACCEPT->acceptCandidate(command.sessionId,command.candidateId);CandidateAction.KEEP_CURRENT->keepCurrentCenter(command.sessionId,command.candidateId);CandidateAction.CONTINUE_ESTIMATING->continueEstimating(command.sessionId,command.candidateId)}}}
    is RuntimeCommand.ResetCentreAnalysis->launchCommand{anchorActor.execute{resetCentreAnalysis(command.sessionId)}}
    is RuntimeCommand.ApplyRecalculatedCentre->launchCommand{anchorActor.execute{applyRecalculatedCentre(command.sessionId,command.expectedCurrentLatitude,command.expectedCurrentLongitude,command.latitude,command.longitude,command.uncertaintyMeters,command.trackDiameterMeters,command.fitRadiusMeters,command.shiftMeters)}}
-   is RuntimeCommand.UpdatePhoneHeading->launchCommand{anchorActor.execute{updatePhoneHeading(command.enabled,command.forceNewEpoch)}}
    is RuntimeCommand.UpdateConditionGuards->launchCommand{anchorActor.execute{
     val active=anchorRuntime.activeSession();val current=conditionRuntime.state.value.config
     if(active==null){notifySeparate("Condition alerts not changed","Start an Anchor Watch session before configuring its environmental alerts.",false);return@execute}
@@ -288,12 +294,11 @@ class YokuliRuntimeCoordinator @Inject constructor(
    RuntimeCommand.TestAlarm->{val generation=alarmTestGeneration.incrementAndGet();launchCommand{testAlarm(generation)}}
    RuntimeCommand.StopAlarmTest->{alarmTestGeneration.incrementAndGet();setAlarmSource(ConditionAlarmSource.ALARM_TEST,false);launchCommand{stopAlarmTest()}}
    is RuntimeCommand.SetSharing->launchCommand{configureSharing(command.enabled,command.port,preferences.settings.first().gpsDataSource)}
-   is RuntimeCommand.SetPhonePositionOutput->launchCommand{val settings=preferences.settings.first();val output=outputSettings.settings.first().withPolicy("position",if(command.enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF);outputSettings.save(output);configurePhoneOutput(output,settings.gpsDataSource,anchorRuntime.activeSession()?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()})}
    RuntimeCommand.RefreshPhoneSensorOutput->launchCommand{val settings=preferences.settings.first();configurePhoneOutput(outputSettings.settings.first(),settings.gpsDataSource,anchorRuntime.activeSession()?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()})}
    is RuntimeCommand.StartTrip->launchCommand{
     if(preferences.settings.first().demoMode)notifySeparate("Trip Watch not started","Developer Demo mode simulates Anchor Watch only. Disable Demo mode before recording a real Trip.",true)
     else if(anchorRuntime.activeSession()!=null)notifySeparate("Trip Watch not started","Lift the current anchor before starting Trip Watch.",true)
-    else{ensureLocationForeground("Starting Trip Watch…");val result=tripRuntime.start(command.name,navigation.connectionState.value,command.phoneMotionEnabled);if(!result.success)notifySeparate("Trip Watch not started",result.message,true);refreshNotification()}
+    else{ensureLocationForeground("Starting Trip Watch…");val result=tripRuntime.start(command.name,navigation.connectionState.value,command.phoneMotionEnabled,command.positionPreference);if(!result.success)notifySeparate("Trip Watch not started",result.message,true);refreshNotification()}
    }
    RuntimeCommand.PauseTrip->launchCommand{tripRuntime.pause().also{if(!it.success)notifySeparate("Trip Watch",it.message,true)};refreshNotification()}
    RuntimeCommand.ResumeTrip->launchCommand{ensureLocationForeground("Resuming Trip Watch…");tripRuntime.resume().also{if(!it.success)notifySeparate("Trip Watch",it.message,true)};refreshNotification()}
@@ -528,7 +533,11 @@ class YokuliRuntimeCoordinator @Inject constructor(
   idleStopJob?.cancel();idleStopJob=null
   return started&&host.startForeground(notification(l("Processing safety action…","正在处理安全操作…"),false),location=false)
  }
- private fun notifySeparate(title:String,text:String,high:Boolean)=notificationCoordinator.publishEvent(serviceMessage(title),serviceMessage(text),high)
+ private fun notifySeparate(title:String,text:String,high:Boolean){
+  val visibleTitle=serviceMessage(title);val visibleText=serviceMessage(text)
+  diagnostics.recordUserFeedback(visibleTitle,visibleText,high)
+  notificationCoordinator.publishEvent(visibleTitle,visibleText,high)
+ }
 
  private fun setAlarmSource(source:ConditionAlarmSource,active:Boolean):com.yokuli.anchorwatch.runtime.notification.AlarmPlayback{audioArbiter.setActive(source,active);return reconcileAudio()}
  private fun reconcileAudio():com.yokuli.anchorwatch.runtime.notification.AlarmPlayback=if(audioArbiter.snapshot(wallClock.currentTimeMillis()).shouldSound)alarmAudio.start(selectedAlarmSound,customAlarmSoundUri)else{alarmAudio.stop();com.yokuli.anchorwatch.runtime.notification.AlarmPlayback(false,0)}
@@ -558,7 +567,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
   val allowed=PositionSourceConflictPolicy.canEnablePhonePositionOutput(PositionSourceConflictState(phonePositionPublishing,selected,activeSource))
   if(phonePositionPublishing&&!allowed){effective=effective.withPolicy("position",PublicationPolicy.OFF);outputSettings.save(effective);notifySeparate("Phone GPS output blocked","NMEA Position is the App GPS source. Other enabled phone vessel sensors may continue.",true)}
   if(effective.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
-   if(effective.outputHost.isBlank()||effective.outputPort !in 1..65535){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("NMEA output needs an endpoint","Enter a valid dedicated TCP host and port.",true);return}
+   val destinationValid=if(effective.transportMode==NmeaOutputTransportMode.TCP_SERVER)effective.outputPort in 1024..65535 else effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
+   if(!destinationValid){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("NMEA output needs an endpoint",if(effective.transportMode==NmeaOutputTransportMode.TCP_SERVER)"Enter a TCP server listening port from 1024 to 65535." else "Enter a valid dedicated output host and port.",true);return}
    // Dedicated TX is write-only. It must never claim RX ownership or inherit
    // the receiver's no-data timeout/state machine.
    phonePositionOutput.configure(effective,appSettings.profile)

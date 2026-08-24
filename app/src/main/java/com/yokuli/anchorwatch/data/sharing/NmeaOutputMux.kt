@@ -85,24 +85,28 @@ class NmeaOutputMux @Inject constructor() {
      * Every value comes from VesselDataHub's selected canonical observation;
      * candidates that lost arbitration are never re-published here. */
     fun canonicalFeed(snapshot:VesselDataSnapshot,nowElapsed:Long,wallUtcMillis:Long=System.currentTimeMillis()):List<String>{
-        fun fresh(received:Long?,freshness:VesselDataFreshness)=received!=null&&freshness==VesselDataFreshness.FRESH&&nowElapsed-received in 0L..30_000L
+        // A measurement and its publication heartbeat are different clocks.
+        // Re-publish a Hub-held value at the fixed output heartbeat until the
+        // metric's own hold policy marks it stale. Never turn an omitted/null
+        // update into an empty sentence or a momentary "no heading" source.
+        fun usable(received:Long?,freshness:VesselDataFreshness)=received!=null&&freshness in setOf(VesselDataFreshness.FRESH,VesselDataFreshness.HELD)&&nowElapsed>=received
         val result=mutableListOf<String>()
-        snapshot.position.value?.takeIf{fresh(snapshot.position.receivedElapsedRealtime,snapshot.position.freshness)}?.let{position->
+        snapshot.position.value?.takeIf{usable(snapshot.position.receivedElapsedRealtime,snapshot.position.freshness)}?.let{position->
             val provider=when(snapshot.position.source){VesselDataSource.PHONE_GNSS->PositionProvider.ANDROID_GNSS;VesselDataSource.DEMO->PositionProvider.DEMO;else->PositionProvider.NMEA}
             result+=acceptedPosition(NavigationFix(position.latitude,position.longitude,snapshot.position.observedAtUtcMillis?:wallUtcMillis,snapshot.position.receivedElapsedRealtime?:nowElapsed,sogKnots=snapshot.sogKnots.value,cogTrueDegrees=snapshot.cogTrueDegrees.value,hdop=position.hdop,satellites=position.satellites,altitudeMeters=position.altitudeMeters,horizontalAccuracyMeters=position.horizontalAccuracyMeters,positionProvider=provider,sourceSentence="CANONICAL",valid=true),nowElapsed,30_000L)
         }
-        snapshot.headingTrueDegrees.value?.takeIf{fresh(snapshot.headingTrueDegrees.receivedElapsedRealtime,snapshot.headingTrueDegrees.freshness)}?.let{result+=phoneHeading(it)}
-        snapshot.speedThroughWaterKnots.value?.takeIf{fresh(snapshot.speedThroughWaterKnots.receivedElapsedRealtime,snapshot.speedThroughWaterKnots.freshness)}?.let{stw->
-            val heading=snapshot.headingTrueDegrees.value?.takeIf{fresh(snapshot.headingTrueDegrees.receivedElapsedRealtime,snapshot.headingTrueDegrees.freshness)}
+        snapshot.headingTrueDegrees.value?.takeIf{usable(snapshot.headingTrueDegrees.receivedElapsedRealtime,snapshot.headingTrueDegrees.freshness)}?.let{result+=phoneHeading(it)}
+        snapshot.speedThroughWaterKnots.value?.takeIf{usable(snapshot.speedThroughWaterKnots.receivedElapsedRealtime,snapshot.speedThroughWaterKnots.freshness)}?.let{stw->
+            val heading=snapshot.headingTrueDegrees.value?.takeIf{usable(snapshot.headingTrueDegrees.receivedElapsedRealtime,snapshot.headingTrueDegrees.freshness)}
             result+=sentence("IIVHW,${heading?.let{f(it,2)}.orEmpty()},T,,M,${f(stw,2)},N,${f(stw*1.852,2)},K")
         }
         val aws=snapshot.apparentWind.speedKnots;val awa=snapshot.apparentWind.angleDegrees
-        if(aws.value!=null&&awa.value!=null&&fresh(aws.receivedElapsedRealtime,aws.freshness)&&fresh(awa.receivedElapsedRealtime,awa.freshness))result+=sentence("WIMWV,${f(normalizeDegrees(awa.value!!),2)},R,${f(aws.value!!,2)},N,A")
+        if(aws.value!=null&&awa.value!=null&&usable(aws.receivedElapsedRealtime,aws.freshness)&&usable(awa.receivedElapsedRealtime,awa.freshness))result+=sentence("WIMWV,${f(normalizeDegrees(awa.value!!),2)},R,${f(aws.value!!,2)},N,A")
         val tws=snapshot.trueWind.speedKnots;val twd=snapshot.trueWind.directionDegrees;val twa=snapshot.trueWind.angleDegrees
-        if(tws.value!=null&&twd.value!=null&&twa.value!=null&&fresh(tws.receivedElapsedRealtime,tws.freshness)&&fresh(twd.receivedElapsedRealtime,twd.freshness)&&fresh(twa.receivedElapsedRealtime,twa.freshness))result+=derivedTrueWind(tws.value!!,twd.value!!,twa.value!!)
-        snapshot.depthMeters.value?.takeIf{fresh(snapshot.depthMeters.receivedElapsedRealtime,snapshot.depthMeters.freshness)}?.let{result+=sentence("SDDBT,,f,${f(it,2)},M,,F")}
-        snapshot.rateOfTurnDegreesPerMinute.value?.takeIf{fresh(snapshot.rateOfTurnDegreesPerMinute.receivedElapsedRealtime,snapshot.rateOfTurnDegreesPerMinute.freshness)}?.let{result+=phoneRateOfTurn(it)}
-        snapshot.pressureHpa.value?.takeIf{fresh(snapshot.pressureHpa.receivedElapsedRealtime,snapshot.pressureHpa.freshness)}?.let{phoneXdr(null,it)?.let(result::add)}
+        if(tws.value!=null&&twd.value!=null&&twa.value!=null&&usable(tws.receivedElapsedRealtime,tws.freshness)&&usable(twd.receivedElapsedRealtime,twd.freshness)&&usable(twa.receivedElapsedRealtime,twa.freshness))result+=derivedTrueWind(tws.value!!,twd.value!!,twa.value!!)
+        snapshot.depthMeters.value?.takeIf{usable(snapshot.depthMeters.receivedElapsedRealtime,snapshot.depthMeters.freshness)}?.let{result+=sentence("SDDBT,,f,${f(it,2)},M,,F")}
+        snapshot.rateOfTurnDegreesPerMinute.value?.takeIf{usable(snapshot.rateOfTurnDegreesPerMinute.receivedElapsedRealtime,snapshot.rateOfTurnDegreesPerMinute.freshness)}?.let{result+=phoneRateOfTurn(it)}
+        snapshot.pressureHpa.value?.takeIf{usable(snapshot.pressureHpa.receivedElapsedRealtime,snapshot.pressureHpa.freshness)}?.let{phoneXdr(null,it)?.let(result::add)}
         return result.distinct()
     }
     fun diagnostic():String=sentence("PYOK,TEST,ANCHOR_WATCH,1")

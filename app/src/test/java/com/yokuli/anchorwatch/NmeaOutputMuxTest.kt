@@ -139,4 +139,11 @@ class NmeaOutputMuxTest {
         val stale=VesselObservation(123.0,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.STALE)
         assertTrue(mux.canonicalFeed(VesselDataSnapshot(headingTrueDegrees=stale),10_000).isEmpty())
     }
+
+    @Test fun canonicalFeedHeartbeatsAHeldMeasurementWithoutPublishingNull(){
+        val held=VesselObservation(123.0,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.HELD)
+        val output=mux.canonicalFeed(VesselDataSnapshot(headingTrueDegrees=held),10_000)
+        assertEquals(listOf("HDT"),output.mapNotNull(mux::sentenceType))
+        assertTrue(output.single().contains("123.00"))
+    }
 }

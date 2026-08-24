@@ -17,6 +17,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
+
+data class RuntimeUserFeedback(
+    val id:Long,
+    val title:String,
+    val message:String,
+    val highPriority:Boolean,
+    val receivedElapsedRealtime:Long,
+)
 
 data class RuntimeDiagnostics(
     val acceptedFixCount:Long=0,
@@ -50,6 +59,7 @@ data class RuntimeDiagnostics(
     val restoredSessionId:Long?=null,
     val restoreStage:String="IDLE",
     val restoreError:String?=null,
+    val lastUserFeedback:RuntimeUserFeedback?=null,
 )
 
 /**
@@ -67,6 +77,7 @@ class RuntimeDiagnosticsRepository @Inject constructor(
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     private val _state=MutableStateFlow(RuntimeDiagnostics())
     val state=_state.asStateFlow()
+    private val feedbackIds=AtomicLong(0L)
 
     init{
         scope.launch(start=CoroutineStart.UNDISPATCHED){acceptedPosition.accepted.collect{_state.update{it.copy(acceptedFixCount=it.acceptedFixCount+1)}}}
@@ -110,4 +121,17 @@ class RuntimeDiagnosticsRepository @Inject constructor(
     fun restoreFailed(stage:String,error:Throwable){_state.update{it.copy(serviceReady=false,restoreStage=stage,restoreError="${error.javaClass.simpleName}: ${error.message.orEmpty()}".trim())}}
     fun serviceReady(restoredSessionId:Long?){_state.update{it.copy(serviceReady=true,restoredSessionId=restoredSessionId,restoreStage="READY",restoreError=null)}}
     fun serviceStopped(){_state.update{it.copy(serviceReady=false,restoredSessionId=null,restoreStage="STOPPED")}}
+
+    /** Mirrors a Service command result into the foreground UI. A safety
+     * action must never be observable only through the notification shade. */
+    fun recordUserFeedback(title:String,message:String,highPriority:Boolean){
+        val feedback=RuntimeUserFeedback(
+            id=feedbackIds.incrementAndGet(),
+            title=title,
+            message=message,
+            highPriority=highPriority,
+            receivedElapsedRealtime=android.os.SystemClock.elapsedRealtime(),
+        )
+        _state.update{it.copy(lastUserFeedback=feedback)}
+    }
 }

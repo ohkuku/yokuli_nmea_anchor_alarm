@@ -7,6 +7,9 @@ import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.domain.vessel.VesselObservation
 import com.yokuli.anchorwatch.domain.vessel.VesselSourceClass
 import com.yokuli.anchorwatch.domain.vessel.VesselDataQuality
+import com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness
+import com.yokuli.anchorwatch.domain.vessel.VesselReference
+import com.yokuli.anchorwatch.domain.vessel.VesselSourceConflict
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 
 data class AnchorHeadingEvidence(
@@ -24,10 +27,15 @@ data class AnchorHeadingEvidence(
 object AnchorHeadingEvidenceRouter{
     /** Uses the VesselDataHub-selected boat candidate, while retaining the
      * stricter integrity-gated phone channel for anchor evidence. */
-    fun routeSelected(enabled:Boolean,preference:VesselSourcePreference,selected:VesselObservation<Double>,phone:PhoneHeadingSample,mountState:PhoneVesselMountState=PhoneVesselMountState.HANDHELD):AnchorHeadingEvidence{
-        if(!enabled)return AnchorHeadingEvidence(reason="HEADING_ASSIST_DISABLED")
-        val boat=selected.value?.takeIf{selected.sourceClass==VesselSourceClass.BOAT_NMEA}?.let{value->
-            AnchorHeadingEvidence(value,HeadingSource.NMEA_PHYSICAL,if(selected.quality==VesselDataQuality.GOOD)HeadingQuality.STABLE else HeadingQuality.DISTURBED,null,selected.receivedElapsedRealtime,"VESSEL_ROUTING_BOAT_HEADING",selected.sourceIdentity?.id)
+    fun routeSelected(preference:VesselSourcePreference,selected:VesselObservation<Double>,selectionConflict:VesselSourceConflict?,preferenceWasExplicitlyPinned:Boolean,phone:PhoneHeadingSample,mountState:PhoneVesselMountState=PhoneVesselMountState.HANDHELD):AnchorHeadingEvidence{
+        if(preference==VesselSourcePreference.AUTO&&selectionConflict?.active==true&&!preferenceWasExplicitlyPinned)return AnchorHeadingEvidence(reason="AUTO_SOURCE_CONFLICT")
+        val boat=selected.value?.takeIf{
+            selected.sourceClass==VesselSourceClass.BOAT_NMEA&&
+                selected.reference==VesselReference.TrueNorth&&
+                selected.freshness==VesselDataFreshness.FRESH&&
+                selected.quality==VesselDataQuality.GOOD
+        }?.let{value->
+            AnchorHeadingEvidence(value,HeadingSource.NMEA_PHYSICAL,HeadingQuality.STABLE,null,selected.receivedElapsedRealtime,"VESSEL_ROUTING_BOAT_PHYSICAL_TRUE_HEADING",selected.sourceIdentity?.id)
         }
         val phoneEvidence=phone.trueHeadingDegrees?.takeIf{phone.quality==HeadingQuality.STABLE&&mountState==PhoneVesselMountState.VESSEL_MOUNTED}?.let{AnchorHeadingEvidence(it,HeadingSource.PHONE,phone.quality,phone.epoch,phone.sequence,"PHONE_MOUNTED_INTEGRITY_ACCEPTED","phone:vessel-heading")}
         return when(preference){
@@ -38,8 +46,7 @@ object AnchorHeadingEvidenceRouter{
         }
     }
 
-    fun route(enabled:Boolean,preference:VesselSourcePreference,boatFix:NavigationFix,phone:PhoneHeadingSample,mountState:PhoneVesselMountState=PhoneVesselMountState.HANDHELD):AnchorHeadingEvidence{
-        if(!enabled)return AnchorHeadingEvidence(reason="HEADING_ASSIST_DISABLED")
+    fun route(preference:VesselSourcePreference,boatFix:NavigationFix,phone:PhoneHeadingSample,mountState:PhoneVesselMountState=PhoneVesselMountState.HANDHELD):AnchorHeadingEvidence{
         val boat=boatFix.headingTrueDegrees?.takeIf{boatFix.headingSource==HeadingSource.NMEA_PHYSICAL}?.let{AnchorHeadingEvidence(it,HeadingSource.NMEA_PHYSICAL,boatFix.headingQuality,boatFix.headingEpoch,boatFix.headingSampleSequence,"BOAT_PHYSICAL_HEADING",boatFix.sourceSentence)}
         val phoneEvidence=phone.trueHeadingDegrees?.takeIf{phone.quality==HeadingQuality.STABLE&&mountState==PhoneVesselMountState.VESSEL_MOUNTED}?.let{AnchorHeadingEvidence(it,HeadingSource.PHONE,phone.quality,phone.epoch,phone.sequence,"PHONE_MOUNTED_INTEGRITY_ACCEPTED","phone:vessel-heading")}
         return when(preference){

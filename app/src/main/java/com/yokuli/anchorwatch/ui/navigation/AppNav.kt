@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Sailing
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -74,9 +75,25 @@ fun AnchorApp(vm:MainViewModel){
             Box(Modifier.fillMaxSize().padding(padding)){
                 when(state.page){0->AnchorRootPage(state,vm);1->SailRootPage(state,vm);2->DataPage(state,vm);else->SettingsScreen(state,vm)}
                 AlarmTestBanner(state,vm,Modifier.align(Alignment.TopCenter))
+                if(state.alarmSnapshot.type!=AlarmType.ALARM_TEST)RuntimeFeedbackBanner(state,vm,Modifier.align(Alignment.TopCenter))
             }
         }
         AnchorDragAlarmDialog(state,vm)
+    }
+}
+
+@Composable
+private fun RuntimeFeedbackBanner(state:MainUiState,vm:MainViewModel,modifier:Modifier=Modifier){
+    val feedback=state.runtimeDiagnostics.lastUserFeedback?:return
+    if(!feedback.highPriority||feedback.id<=state.dismissedRuntimeFeedbackId)return
+    ElevatedCard(modifier.padding(12.dp).fillMaxWidth().testTag("runtime_command_feedback")){
+        Row(Modifier.padding(start=14.dp,top=10.dp,bottom=10.dp,end=6.dp),verticalAlignment=Alignment.Top){
+            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                Text(feedback.title,style=MaterialTheme.typography.titleSmall,color=MaterialTheme.colorScheme.error)
+                Text(feedback.message,style=MaterialTheme.typography.bodySmall)
+            }
+            IconButton(vm::dismissRuntimeFeedback,Modifier.testTag("dismiss_runtime_feedback")){Icon(Icons.Default.Close,tr("Dismiss","关闭"))}
+        }
     }
 }
 

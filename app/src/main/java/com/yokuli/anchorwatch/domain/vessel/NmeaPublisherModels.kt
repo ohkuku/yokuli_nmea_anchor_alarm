@@ -25,7 +25,7 @@ data class NmeaPublishedStreamStatus(
     val lastWrittenSequence:Long=0,
 )
 
-enum class NmeaDestinationTransport{DEDICATED_TCP,SAME_AS_INPUT_TCP_SOCKET,UDP_UNICAST,UDP_BROADCAST}
+enum class NmeaDestinationTransport{DEDICATED_TCP,TCP_SERVER,SAME_AS_INPUT_TCP_SOCKET,UDP_UNICAST,UDP_BROADCAST}
 data class NmeaRetryPolicy(val delaysMillis:List<Long> = listOf(1_000,2_000,5_000,10_000,15_000))
 data class NmeaOutputDestination(
     val id:String="boat-gateway",

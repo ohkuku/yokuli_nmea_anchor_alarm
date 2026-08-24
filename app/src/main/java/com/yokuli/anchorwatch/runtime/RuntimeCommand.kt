@@ -10,6 +10,7 @@ import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.anchor.AnchorDepthSource
 import com.yokuli.anchorwatch.domain.sonar.TideMode
 import com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig
+import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 
 sealed interface RuntimeCommand {
@@ -37,7 +38,6 @@ sealed interface RuntimeCommand {
     data class Candidate(val action:CandidateAction,val sessionId:Long,val candidateId:Long):RuntimeCommand
     data class ResetCentreAnalysis(val sessionId:Long):RuntimeCommand
     data class ApplyRecalculatedCentre(val sessionId:Long,val expectedCurrentLatitude:Double,val expectedCurrentLongitude:Double,val latitude:Double,val longitude:Double,val uncertaintyMeters:Double,val trackDiameterMeters:Double,val fitRadiusMeters:Double?,val shiftMeters:Double):RuntimeCommand
-    data class UpdatePhoneHeading(val enabled:Boolean,val forceNewEpoch:Boolean=false):RuntimeCommand
     data class UpdateConditionGuards(val config:ConditionGuardConfig):RuntimeCommand
     data object ResetWindBaseline:RuntimeCommand
     data object StartProxy:RuntimeCommand
@@ -45,9 +45,8 @@ sealed interface RuntimeCommand {
     data object TestAlarm:RuntimeCommand
     data object StopAlarmTest:RuntimeCommand
     data class SetSharing(val enabled:Boolean,val port:Int):RuntimeCommand
-    data class SetPhonePositionOutput(val enabled:Boolean):RuntimeCommand
     data object RefreshPhoneSensorOutput:RuntimeCommand
-    data class StartTrip(val name:String,val phoneMotionEnabled:Boolean=true):RuntimeCommand
+    data class StartTrip(val name:String,val phoneMotionEnabled:Boolean=true,val positionPreference:VesselSourcePreference=VesselSourcePreference.AUTO):RuntimeCommand
     data object PauseTrip:RuntimeCommand
     data object ResumeTrip:RuntimeCommand
     data object EndTrip:RuntimeCommand
@@ -92,7 +91,6 @@ object RuntimeCommandParser {
             AnchorForegroundService.CONTINUE_ESTIMATING_CENTER->candidate(intent,CandidateAction.CONTINUE_ESTIMATING)
             AnchorForegroundService.RESET_CENTRE_ANALYSIS->RuntimeCommand.ResetCentreAnalysis(intent.getLongExtra("sessionId",-1))
             AnchorForegroundService.APPLY_RECALCULATED_CENTRE->RuntimeCommand.ApplyRecalculatedCentre(intent.getLongExtra("sessionId",-1),intent.getDoubleExtra("expectedCurrentLatitude",Double.NaN),intent.getDoubleExtra("expectedCurrentLongitude",Double.NaN),intent.getDoubleExtra("latitude",Double.NaN),intent.getDoubleExtra("longitude",Double.NaN),intent.getDoubleExtra("uncertainty",Double.NaN),intent.getDoubleExtra("trackDiameter",Double.NaN),intent.getDoubleExtra("fitRadius",Double.NaN).takeUnless(Double::isNaN),intent.getDoubleExtra("shift",Double.NaN))
-            AnchorForegroundService.UPDATE_PHONE_HEADING->RuntimeCommand.UpdatePhoneHeading(intent.getBooleanExtra("enabled",false),intent.getBooleanExtra("forceNewEpoch",false))
             AnchorForegroundService.UPDATE_CONDITION_GUARDS->RuntimeCommand.UpdateConditionGuards(ConditionGuardConfig(
                 depthGuardEnabled=intent.getBooleanExtra("depthGuard",false),shallowDepthAlarmMeters=intent.getDoubleExtra("shallowDepth",Double.NaN).takeUnless(Double::isNaN),deepDepthAlarmMeters=intent.getDoubleExtra("deepDepth",Double.NaN).takeUnless(Double::isNaN),windGuardEnabled=intent.getBooleanExtra("windGuard",false),windWarningKnots=intent.getDoubleExtra("windWarning",Double.NaN).takeUnless(Double::isNaN),windAlarmKnots=intent.getDoubleExtra("windAlarm",Double.NaN).takeUnless(Double::isNaN),windShiftEnabled=intent.getBooleanExtra("windShift",false),windShiftThresholdDegrees=intent.getDoubleExtra("windShiftDegrees",Double.NaN).takeUnless(Double::isNaN),windAllowApparentFallback=intent.getBooleanExtra("apparentFallback",true),
             ).validated())
@@ -102,9 +100,8 @@ object RuntimeCommandParser {
             AnchorForegroundService.TEST_ALARM->RuntimeCommand.TestAlarm
             AnchorForegroundService.STOP_ALARM_TEST->RuntimeCommand.StopAlarmTest
             AnchorForegroundService.SET_NMEA_SHARING->RuntimeCommand.SetSharing(intent.getBooleanExtra("enabled",false),intent.getIntExtra("port",10111))
-            AnchorForegroundService.SET_PHONE_POSITION_OUTPUT->RuntimeCommand.SetPhonePositionOutput(intent.getBooleanExtra("enabled",false))
             AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT->RuntimeCommand.RefreshPhoneSensorOutput
-            AnchorForegroundService.START_TRIP->RuntimeCommand.StartTrip(intent.getStringExtra("name").orEmpty(),intent.getBooleanExtra("phoneMotionEnabled",true))
+            AnchorForegroundService.START_TRIP->RuntimeCommand.StartTrip(intent.getStringExtra("name").orEmpty(),intent.getBooleanExtra("phoneMotionEnabled",true),enum(intent,"positionPreference",VesselSourcePreference.AUTO))
             AnchorForegroundService.PAUSE_TRIP->RuntimeCommand.PauseTrip
             AnchorForegroundService.RESUME_TRIP->RuntimeCommand.ResumeTrip
             AnchorForegroundService.END_TRIP->RuntimeCommand.EndTrip

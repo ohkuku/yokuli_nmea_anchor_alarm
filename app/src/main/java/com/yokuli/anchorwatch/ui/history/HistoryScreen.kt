@@ -53,6 +53,8 @@ import com.yokuli.anchorwatch.data.trip.TripReplayData
 import com.yokuli.anchorwatch.localization.usesChinese
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
@@ -139,7 +141,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel,fixedTab:Int?=null){
                     }
                     Text(tr("${"%.2f".format(trip.distanceMeters/1000.0)} km · ${trip.sampleCount} samples · ${trip.waypointCount} waypoints","${"%.2f".format(trip.distanceMeters/1000.0)} 公里 · ${trip.sampleCount} 个样本 · ${trip.waypointCount} 个航点"),style=MaterialTheme.typography.bodyMedium)
                     Text(listOfNotNull(trip.maxSogKnots?.let{tr("Max SOG ${"%.1f".format(it)} kn","最大对地航速 ${"%.1f".format(it)} 节")},trip.maxAbsHeelDegrees?.let{tr("Max heel ${"%.1f".format(it)}°","最大横倾 ${"%.1f".format(it)}°")},trip.minDepthMeters?.let{tr("Min depth ${"%.1f".format(it)} m","最小水深 ${"%.1f".format(it)} 米")}).joinToString(" · ").ifBlank{tr("No summary metrics yet","暂无汇总指标")},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(!trip.active){Button({expandedTrip=if(expandedTrip==trip.id)null else trip.id},Modifier.fillMaxWidth()){Text(if(expandedTrip==trip.id)tr("Close details","收起详情")else tr("Open","打开"))};if(expandedTrip==trip.id){HorizontalDivider();Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({reportTrip=trip},Modifier.weight(1f)){Text(tr("Report","报告"))};OutlinedButton({replayTrip=trip},Modifier.weight(1f)){Text(tr("Replay","回放"))}};Text(tr("Export","导出"),style=MaterialTheme.typography.labelLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({vm.exportTripCsv(trip)},Modifier.weight(1f)){Text("CSV")};OutlinedButton({vm.exportTripGpx(trip)},Modifier.weight(1f)){Text("GPX")};OutlinedButton({vm.exportTripKml(trip)},Modifier.weight(1f)){Text("KML")};OutlinedButton({vm.exportTripKmz(trip)},Modifier.weight(1f)){Text("KMZ")}};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){TextButton({vm.shareTripReportSnapshot(trip)},Modifier.weight(1f)){Text(tr("Image","图片"))};TextButton({vm.exportTripEvents(trip)},Modifier.weight(1f)){Text(tr("Events","事件"))};TextButton({vm.exportTripWaypoints(trip)},Modifier.weight(1f)){Text(tr("Waypoints","航点"))}};TextButton({pendingAiTrip=trip},Modifier.fillMaxWidth()){Text(tr("AI source ZIP","AI 源数据 ZIP"))}}}
+                    if(!trip.active){Button({expandedTrip=if(expandedTrip==trip.id)null else trip.id},Modifier.fillMaxWidth()){Text(if(expandedTrip==trip.id)tr("Close details","收起详情")else tr("Open","打开"))};if(expandedTrip==trip.id){HorizontalDivider();TripHistoryRoutePreview(trip,vm);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({reportTrip=trip},Modifier.weight(1f)){Text(tr("Report","报告"))};OutlinedButton({replayTrip=trip},Modifier.weight(1f)){Text(tr("Replay","回放"))}};Text(tr("Export","导出"),style=MaterialTheme.typography.labelLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({vm.exportTripCsv(trip)},Modifier.weight(1f)){Text("CSV")};OutlinedButton({vm.exportTripGpx(trip)},Modifier.weight(1f)){Text("GPX")};OutlinedButton({vm.exportTripKml(trip)},Modifier.weight(1f)){Text("KML")};OutlinedButton({vm.exportTripKmz(trip)},Modifier.weight(1f)){Text("KMZ")}};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){TextButton({vm.shareTripReportSnapshot(trip)},Modifier.weight(1f)){Text(tr("Image","图片"))};TextButton({vm.exportTripEvents(trip)},Modifier.weight(1f)){Text(tr("Events","事件"))};TextButton({vm.exportTripWaypoints(trip)},Modifier.weight(1f)){Text(tr("Waypoints","航点"))}};TextButton({pendingAiTrip=trip},Modifier.fillMaxWidth()){Text(tr("AI source ZIP","AI 源数据 ZIP"))}}}
                     if(trip.active)OutlinedButton({vm.page(1)},Modifier.fillMaxWidth()){Text(tr("Open Sail Live","打开实时航行"))}
                 }
             }
@@ -268,11 +270,24 @@ private fun TripReportDialog(session:TripSessionEntity,vm:MainViewModel,dismiss:
 private fun durationText(value:Long)="${value/3_600_000}h ${(value/60_000)%60}m"
 private fun coordinatePair(startLat:Double?,startLon:Double?,endLat:Double?,endLon:Double?)=if(startLat!=null&&startLon!=null&&endLat!=null&&endLon!=null)"%.4f, %.4f → %.4f, %.4f".format(startLat,startLon,endLat,endLon)else"—"
 
+@Composable private fun TripHistoryRoutePreview(session:TripSessionEntity,vm:MainViewModel){
+    val replay by produceState<TripReplayData?>(null,session.id){value=vm.tripReplay(session.id)}
+    Column(Modifier.fillMaxWidth().testTag("trip_history_route_${session.id}"),verticalArrangement=Arrangement.spacedBy(5.dp)){
+        Text(tr("Recorded route","已记录航迹"),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
+        TripReportRouteMap(replay)
+    }
+}
+
 @Composable private fun TripReportRouteMap(data:TripReplayData?){
     val route=data?.points.orEmpty().mapNotNull{point->if(point.latitude!=null&&point.longitude!=null)LatLng(point.latitude,point.longitude)else null}
-    if(route.isEmpty()||!BuildConfig.MAPS_CONFIGURED)return
+    if(data==null){Box(Modifier.fillMaxWidth().height(120.dp).testTag("trip_route_loading"),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
+    if(route.isEmpty()){Card(Modifier.fillMaxWidth().testTag("trip_route_empty")){Text(tr("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.","本次航程没有记录到可用坐标；仪表样本与事件仍可在下方查看。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};return}
+    if(!BuildConfig.MAPS_CONFIGURED){Card(Modifier.fillMaxWidth().testTag("trip_route_map_unavailable")){Text(tr("The route has ${route.size} coordinate samples, but the map is unavailable in this build. Replay and GPX/KML export still work.","航迹包含 ${route.size} 个坐标样本，但当前构建无法显示地图；回放与 GPX / KML 导出仍可使用。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};return}
     val first=route.first();val last=route.last();val camera=rememberCameraPositionState{position=CameraPosition.fromLatLngZoom(first,11f)}
-    GoogleMap(Modifier.fillMaxWidth().height(180.dp),cameraPositionState=camera,uiSettings=MapUiSettings(compassEnabled=false,mapToolbarEnabled=false,myLocationButtonEnabled=false,zoomControlsEnabled=false,scrollGesturesEnabled=false,zoomGesturesEnabled=false,rotationGesturesEnabled=false,tiltGesturesEnabled=false)){
+    var loaded by remember(route){mutableStateOf(false)}
+    val bounds=remember(route){LatLngBounds.builder().also{builder->route.forEach{point->builder.include(point)}}.build()}
+    androidx.compose.runtime.LaunchedEffect(loaded,bounds){if(loaded)runCatching{camera.animate(CameraUpdateFactory.newLatLngBounds(bounds,48))}}
+    GoogleMap(Modifier.fillMaxWidth().height(180.dp).testTag("trip_route_map"),cameraPositionState=camera,onMapLoaded={loaded=true},uiSettings=MapUiSettings(compassEnabled=false,mapToolbarEnabled=false,myLocationButtonEnabled=false,zoomControlsEnabled=false,scrollGesturesEnabled=false,zoomGesturesEnabled=false,rotationGesturesEnabled=false,tiltGesturesEnabled=false)){
         Polyline(points=route,color=MaterialTheme.colorScheme.primary,width=5f)
         Marker(state=remember(first){MarkerState(first)},title=tr("Trip start","航程起点"))
         Marker(state=remember(last){MarkerState(last)},title=tr("Trip end","航程终点"))

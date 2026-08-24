@@ -90,6 +90,8 @@ import com.yokuli.anchorwatch.map.nautical.OpenSeaMapConfiguration
 import com.yokuli.anchorwatch.map.nautical.OpenSeaMapDiagnostics
 import com.yokuli.anchorwatch.map.nautical.OpenSeaMapTileProvider
 import com.yokuli.anchorwatch.map.nautical.NauticalPrimarySource
+import com.yokuli.anchorwatch.map.nautical.NauticalSourcePreference
+import com.yokuli.anchorwatch.map.nautical.MapOverlayPreferences
 import com.yokuli.anchorwatch.map.nautical.NauticalSourceResolver
 import com.yokuli.anchorwatch.map.style.BaseMapStyle
 import com.yokuli.anchorwatch.map.style.GoogleBaseMapKind
@@ -101,6 +103,7 @@ import com.yokuli.anchorwatch.ui.theme.SafetyColors
 import java.text.DateFormat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 private data class SonarMapInspection(
     val grid:com.yokuli.anchorwatch.domain.sonar.SonarInspection,
@@ -112,7 +115,7 @@ internal object ApproachSheetPolicy{
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
 internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
-    var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
+    var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showSonarDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
     var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
     var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
@@ -133,8 +136,10 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     val fix = state.fix; val active = state.active
-    val routedNmeaHeading=state.vesselData.headingTrueDegrees.takeIf{it.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA&&it.value!=null}?.let{it.value!! to (it.receivedElapsedRealtime?:0L)}
-    val boatHeading=fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix,nmeaPhysicalHeading=routedNmeaHeading,trustedNmeaCourse=state.trustedNmeaCourse)}
+    // Map, instruments and NMEA output consume the same canonical presentation
+    // selection. Safety/evidence applies stricter quality gates downstream, but
+    // the map must not invent a second heading priority tree or use COG as bow.
+    val boatHeading=state.vesselData.headingTrueDegrees.value
     DisposableEffect(Unit){vm.setMapHeadingDisplayActive(true);onDispose{vm.setMapHeadingDisplayActive(false)}}
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -143,8 +148,9 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     val baseMapStyle=BaseMapStyle.fromPersisted(state.settings.mapType)
     val baseMapPolicy=MapStylePolicy.forStyle(baseMapStyle)
     val nauticalSource=remember(baseMapStyle,state.offlineMap.installed,state.offlineMap.name,state.settings.offlineMapEnabled){
-        NauticalSourceResolver.resolve(baseMapStyle,state.offlineMap.installed,state.settings.offlineMapEnabled,state.offlineMap.name)
+        NauticalSourceResolver.resolve(baseMapStyle,state.offlineMap.installed,if(state.settings.offlineMapEnabled)NauticalSourcePreference.USER_MBTILES else NauticalSourcePreference.DEFAULT_ONLINE,state.offlineMap.name)
     }
+    val overlayPreferences=remember(state.settings.linzHydroEnabled,state.settings.linzHydroOpacity,state.settings.sonarLayerEnabled,state.settings.showLinzDepthReference,state.settings.showPersonalMapReference){MapOverlayPreferences(state.settings.linzHydroEnabled,state.settings.linzHydroOpacity,state.settings.sonarLayerEnabled,state.settings.showLinzDepthReference,state.settings.showPersonalMapReference)}
     val nauticalMapStyle=remember(context){runCatching{MapStyleOptions.loadRawResourceStyle(context,R.raw.map_style_nautical)}.getOrNull()}
     val nauticalTileProvider=remember(context){OpenSeaMapTileProvider(java.io.File(context.filesDir,"offline_maps/openseamap_recent"),BuildConfig.VERSION_NAME)}
     val linzTileProviders=remember{val templates=BuildConfig.LINZ_HYDRO_TILE_TEMPLATES.split('|').filter(LinzHydroConfiguration::isUsable);val perChartCache=LinzHydroTileProvider.MAX_DISK_BYTES/templates.size.coerceAtLeast(1);templates.mapIndexed{index,template->LinzHydroTileProvider(template,java.io.File(context.filesDir,"offline_maps/linz_recent/$index"),perChartCache)}}
@@ -152,7 +158,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     DisposableEffect(offlineTileProvider){onDispose{offlineTileProvider?.close()}}
     val sonarGrid=state.sonarGrid
     val sonarTileProvider=remember{SonarTileProvider(SonarGrid.build(emptyList()))};val sonarTileOverlayState=rememberTileOverlayState()
-    val sonarLayerVisible=SonarMapDisplayPolicy.isVisible(state.settings.sonarLayerEnabled,sonarGrid.cells.isNotEmpty())
+    val sonarLayerVisible=SonarMapDisplayPolicy.isVisible(overlayPreferences.personalSonarEnabled,sonarGrid.cells.isNotEmpty())
     val sonarOverlayMounted=renderGoogleMap&&sonarLayerVisible&&sonarGrid.cells.isNotEmpty()
     var sonarInspection by remember{mutableStateOf<SonarMapInspection?>(null)}
     LaunchedEffect(sonarGrid,state.sonarGridVersion,sonarOverlayMounted){val version=state.sonarGridVersion;val changed=sonarTileProvider.updateGrid(sonarGrid,state.sonarGridChangedCells.takeIf{it.isNotEmpty()});if(changed>0&&sonarOverlayMounted)runCatching{sonarTileOverlayState.clearTileCache()};vm.consumeSonarGridChanges(version)}
@@ -214,7 +220,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     val acceptedMapPoint=fix?.takeIf{it.valid}?.let{GeoPoint(it.latitude,it.longitude)}
     val cameraMapPoint=inspectionTarget?.let{GeoPoint(it.latitude,it.longitude)}
     val mapChartUiState=remember(effectiveMapLocked,acceptedMapPoint,cameraMapPoint,state.settings.linzHydroEnabled,state.settings.linzHydroOpacity){
-        MapChartPolicy.resolve(effectiveMapLocked,acceptedMapPoint,cameraMapPoint,BuildConfig.LINZ_HYDRO_CONFIGURED,state.settings.linzHydroEnabled,state.settings.linzHydroOpacity)
+        MapChartPolicy.resolve(effectiveMapLocked,acceptedMapPoint,cameraMapPoint,BuildConfig.LINZ_HYDRO_CONFIGURED,overlayPreferences.linzNzChartEnabled,overlayPreferences.linzNzChartOpacity)
     }
     val mapAttribution=buildList{
         if(baseMapStyle==BaseMapStyle.NAUTICAL)add(OpenSeaMapConfiguration.ATTRIBUTION)
@@ -236,6 +242,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     }
     val bottomSheetState=rememberStandardBottomSheetState(initialValue=SheetValue.PartiallyExpanded,skipHiddenState=true)
     val scaffoldState=rememberBottomSheetScaffoldState(bottomSheetState=bottomSheetState)
+    val bottomSheetScope=rememberCoroutineScope()
     LaunchedEffect(state.anchorageApproach.selectedClusterId){
         if(ApproachSheetPolicy.shouldCollapse(state.anchorageApproach.selectedClusterId))bottomSheetState.partialExpand()
     }
@@ -244,8 +251,11 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         scaffoldState=scaffoldState,
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
-        sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
+        // Root tab pagers are click-only, so the sheet may keep its intended
+        // vertical drag without a parent horizontal pager stealing the map.
+        sheetSwipeEnabled=true,
+        sheetDragHandle={Box(Modifier.fillMaxWidth().clickable{bottomSheetScope.launch{if(bottomSheetState.currentValue==SheetValue.Expanded)bottomSheetState.partialExpand()else bottomSheetState.expand()}}.testTag("watch_sheet_toggle"),contentAlignment=Alignment.Center){BottomSheetDefaults.DragHandle()}},
+        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},{vm.openDataSection(0)},{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -386,7 +396,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input);showSetup=false;setupReference=null}
+        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input)}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
@@ -399,9 +409,10 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     AnchorCentreRecalculationDialog(state.centreRecalculation,vm)
-    if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->vm.updateSettings(state.settings.copy(offlineMapEnabled=enabled))},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})
+    if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->vm.setOfflineMapEnabled(enabled)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))},{enabled->if(enabled&&!state.settings.sonarDisclaimerAccepted)showSonarDisclaimer=true else vm.setSonarLayerEnabled(enabled)},{enabled->vm.updateSettings(state.settings.copy(showLinzDepthReference=enabled))},{enabled->vm.updateSettings(state.settings.copy(showPersonalMapReference=enabled))},{showLayers=false;vm.page(3)})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})
     if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is a navigation aid only. It may be unavailable or outdated and does not replace official charts, Notices to Mariners, depth instruments or a proper passage plan.","该海图影像层仅供辅助参考，可能不可用或已过期，不能替代官方海图、航海通告、测深仪或正规的航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})
+    if(showSonarDisclaimer)SonarSafetyDisclaimerDialog({showSonarDisclaimer=false}){vm.setSonarLayerEnabled(true,acceptDisclaimer=true);showSonarDisclaimer=false}
 }
 
 @Composable
@@ -467,14 +478,14 @@ private fun WatchPreflightSheet(state:MainUiState,dismiss:()->Unit,continueSetup
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
-private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:()->Unit,setMapType:(Int)->Unit,setUserNautical:(Boolean)->Unit,setLinz:(Boolean)->Unit,setOpacity:(Double)->Unit){
+private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:()->Unit,setMapType:(Int)->Unit,setUserNautical:(Boolean)->Unit,setLinz:(Boolean)->Unit,setOpacity:(Double)->Unit,setSonar:(Boolean)->Unit,setLinzDepth:(Boolean)->Unit,setPersonalDepth:(Boolean)->Unit,manageChartFiles:()->Unit){
  val uriHandler=androidx.compose.ui.platform.LocalUriHandler.current
  val linzDiagnostics by LinzHydroDiagnostics.state.collectAsState()
  val nauticalDiagnostics by OpenSeaMapDiagnostics.state.collectAsState()
  val networkAvailable=isNetworkAvailable(androidx.compose.ui.platform.LocalContext.current)
  ModalBottomSheet(onDismissRequest=dismiss){Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=20.dp).padding(bottom=28.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
   Text(tr("Map layers","地图图层"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
-  Text(tr("Map style","地图样式"),style=MaterialTheme.typography.labelLarge)
+  Text(tr("Base map","底图"),style=MaterialTheme.typography.labelLarge)
   SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
    SegmentedButton(state.settings.mapType==1,{setMapType(1)},shape=SegmentedButtonDefaults.itemShape(0,3),modifier=Modifier.testTag("map_style_map")){Text(tr("Standard","标准"))}
    SegmentedButton(state.settings.mapType==2,{setMapType(2)},shape=SegmentedButtonDefaults.itemShape(1,3),modifier=Modifier.testTag("map_style_satellite")){Text(tr("Satellite","卫星"))}
@@ -483,23 +494,24 @@ private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:
   if(state.settings.mapType==3){
    Text(tr("Nautical source","航海图来源"),style=MaterialTheme.typography.labelLarge)
    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-    SegmentedButton(!state.settings.offlineMapEnabled,{setUserNautical(false)},shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Standard","标准来源"))}
-    SegmentedButton(state.settings.offlineMapEnabled,{setUserNautical(true)},enabled=state.offlineMap.installed,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("User MBTiles","用户 MBTiles"))}
+    SegmentedButton(!state.settings.offlineMapEnabled,{setUserNautical(false)},shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Default online","默认在线航海图"))}
+    SegmentedButton(state.settings.offlineMapEnabled,{setUserNautical(true)},enabled=state.offlineMap.installed,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("Imported MBTiles","已导入 MBTiles"))}
    }
-   Text(if(state.offlineMap.installed&&state.settings.offlineMapEnabled)tr("Using ${state.offlineMap.name?:"user MBTiles"}. Missing tiles fall through to the standard nautical map.","正在使用 ${state.offlineMap.name?:"用户 MBTiles"}；缺少的瓦片会自动显示标准航海图。") else tr("Quiet base map with OpenSeaMap seamarks.","清淡底图叠加 OpenSeaMap 航标。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(if(state.offlineMap.installed&&state.settings.offlineMapEnabled)tr("Using ${state.offlineMap.name?:"imported MBTiles"}. Missing tiles fall through to the default online nautical map.","正在使用 ${state.offlineMap.name?:"已导入 MBTiles"}；缺少的瓦片会自动显示默认在线航海图。") else tr("OpenSeaMap seamarks on a quiet base map. This is not an official chart and does not replace passage planning.","OpenSeaMap 航标叠加于简洁底图；它不是官方海图，也不能替代正规航海计划。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   if(!state.offlineMap.installed)OutlinedButton(manageChartFiles,Modifier.fillMaxWidth()){Icon(Icons.Default.FolderOpen,null);Spacer(Modifier.width(6.dp));Text(tr("Manage chart files","管理海图文件"))}
    TextButton({uriHandler.openUri(OpenSeaMapConfiguration.LICENSE_URL)}){Icon(Icons.AutoMirrored.Filled.OpenInNew,null);Spacer(Modifier.width(6.dp));Text(tr("OpenSeaMap attribution & licence","OpenSeaMap 署名与许可"))}
    if(nauticalDiagnostics.failures>0&&nauticalDiagnostics.successes==0L)TileFailureCard(tr("Nautical tile status","航海瓦片状态"),nauticalDiagnostics.requests,nauticalDiagnostics.successes,nauticalDiagnostics.failures,nauticalDiagnostics.lastHttpCode,nauticalDiagnostics.message)
   }
   HorizontalDivider()
+  Text(tr("Overlays","叠加层"),style=MaterialTheme.typography.labelLarge)
   Column(Modifier.testTag("local_depth_section"),verticalArrangement=Arrangement.spacedBy(10.dp)){
-   Text(tr("Local depth chart","区域水深海图"),style=MaterialTheme.typography.labelLarge)
    val availabilitySummary=when(val available=chartState.availability){
     is LocalDepthAvailability.Available->if(networkAvailable)tr("Available here · ${available.provider.displayName}","当前位置可用 · ${available.provider.displayName}")else tr("Offline · cached tiles may remain available","离线 · 已缓存瓦片可能仍可用")
     is LocalDepthAvailability.ProviderNotConfigured->tr("Supported here, but unavailable in this build","当前位置受支持，但当前构建未配置")
     LocalDepthAvailability.UnsupportedArea->tr("Not available in this area","当前区域不可用")
     LocalDepthAvailability.PositionUnknown->tr("Waiting for a boat position or map location","正在等待船位或地图位置")
    }
-   Box(Modifier.testTag("local_depth_toggle")){SettingSwitch(tr("Show Local depth chart","显示区域水深海图"),availabilitySummary,chartState.localDepthPreferenceEnabled,chartState.availability is LocalDepthAvailability.Available,setLinz)}
+   Box(Modifier.testTag("local_depth_toggle")){SettingSwitch(tr("LINZ NZ chart enhancement","LINZ 新西兰海图增强"),availabilitySummary,chartState.localDepthPreferenceEnabled,chartState.availability is LocalDepthAvailability.Available,setLinz)}
    val provider=when(val available=chartState.availability){is LocalDepthAvailability.Available->available.provider;is LocalDepthAvailability.ProviderNotConfigured->available.provider;else->null}
    Text(provider?.displayName?:tr("No regional provider for this location","当前位置没有区域数据提供方"),Modifier.testTag("local_depth_provider"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    if(chartState.localDepthPreferenceEnabled&&chartState.availability is LocalDepthAvailability.Available){
@@ -509,6 +521,11 @@ private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:
     if(linzDiagnostics.failures>0&&linzDiagnostics.successes==0L)TileFailureCard(tr("Local depth tile status","区域水深瓦片状态"),linzDiagnostics.requests,linzDiagnostics.successes,linzDiagnostics.failures,linzDiagnostics.lastHttpCode,linzDiagnostics.message)
    }
   }
+  SettingSwitch(tr("Personal sonar layer","个人声呐图层"),if(state.sonarGrid.cells.isEmpty())tr("No personal sonar data yet","暂无个人声呐数据")else tr("${state.sonarSurveys.size} surveys · ${state.sonarGrid.cells.size} grid cells · fixed 75% opacity","${state.sonarSurveys.size} 个调查 · ${state.sonarGrid.cells.size} 个网格 · 固定 75% 不透明度"),state.settings.sonarLayerEnabled,state.sonarGrid.cells.isNotEmpty(),setSonar)
+  HorizontalDivider()
+  Text(tr("Depth readouts","水深读数"),style=MaterialTheme.typography.labelLarge)
+  SettingSwitch(tr("Current-position LINZ depth","当前位置 LINZ 水深"),tr("Vector chart reference; never presented as live sonar","矢量海图参考；绝不会冒充实时声呐"),state.settings.showLinzDepthReference,BuildConfig.LINZ_API_KEY.isNotBlank(),setLinzDepth)
+  SettingSwitch(tr("Current-position personal measured depth","当前位置个人实测水深"),if(state.sonarGrid.cells.isEmpty())tr("No personal sonar grid is available","暂无个人声呐网格")else tr("Shows measured or interpolated status at the boat","显示船位处的实测或插值状态"),state.settings.showPersonalMapReference,state.sonarGrid.cells.isNotEmpty(),setPersonalDepth)
   Text(tr("Map and chart tiles are visual aids only. Their network, cache and display state never changes the anchor alarm, GPS acceptance or background watch.","地图与海图瓦片仅供视觉辅助；其网络、缓存和显示状态绝不会改变锚警、GPS 接受逻辑或后台监控。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
  }}
 }

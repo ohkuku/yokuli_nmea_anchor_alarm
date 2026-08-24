@@ -86,7 +86,11 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             onboardingCompleted=p[K.onboarding]?:false,
             anchorageApproachDisclaimerAccepted=p[K.approachDisclaimer]?:false,
-            profile=ConnectionProfile(name=p[K.name]?:"Boat",host=p[K.host]?:"192.168.1.100",port=p[K.port]?:10110,protocol=runCatching{Protocol.valueOf(p[K.protocol]?:"TCP")}.getOrDefault(Protocol.TCP),requireChecksum=p[K.checksum]?:true,autoReconnect=p[K.auto]?:true,noDataTimeoutSeconds=(p[K.noDataTimeout]?:10).coerceIn(3,120),stableId=p[K.profileId]?:"boat-primary"),
+            // RX and TX direction/ports are gateway-specific. A fresh install
+            // must require an explicit RX endpoint instead of suggesting that
+            // the common 10110 TX port is safe for reception. Existing saved
+            // keys are preserved byte-for-byte.
+            profile=ConnectionProfile(name=p[K.name]?:"Boat",host=p[K.host].orEmpty(),port=p[K.port]?:0,protocol=runCatching{Protocol.valueOf(p[K.protocol]?:"TCP")}.getOrDefault(Protocol.TCP),requireChecksum=p[K.checksum]?:true,autoReconnect=p[K.auto]?:true,noDataTimeoutSeconds=(p[K.noDataTimeout]?:10).coerceIn(3,120),stableId=p[K.profileId]?:"boat-primary"),
             mapType=(p[K.map]?:1).takeIf{it in 1..3}?:1,
             nauticalDisclaimerAccepted=p[K.nauticalDisclaimer]?:false,
             keepWifiAwake=p[K.wifi]?:true,

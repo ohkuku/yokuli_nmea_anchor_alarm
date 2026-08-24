@@ -10,11 +10,11 @@ import org.junit.Test
 
 class BaseMapStyleTest {
     @Test fun persistedValuesAreStableAndUnknownValuesFallBackToMap() {
-        assertEquals(BaseMapStyle.MAP, BaseMapStyle.fromPersisted(1))
+        assertEquals(BaseMapStyle.STANDARD, BaseMapStyle.fromPersisted(1))
         assertEquals(BaseMapStyle.SATELLITE, BaseMapStyle.fromPersisted(2))
         assertEquals(BaseMapStyle.NAUTICAL, BaseMapStyle.fromPersisted(3))
-        assertEquals(BaseMapStyle.MAP, BaseMapStyle.fromPersisted(-1))
-        assertEquals(BaseMapStyle.MAP, BaseMapStyle.fromPersisted(99))
+        assertEquals(BaseMapStyle.STANDARD, BaseMapStyle.fromPersisted(-1))
+        assertEquals(BaseMapStyle.STANDARD, BaseMapStyle.fromPersisted(99))
     }
 
     @Test fun eachStyleHasAnExclusiveRenderPolicyAndLeavingNauticalResetsIt() {
@@ -23,7 +23,7 @@ class BaseMapStyleTest {
         assertTrue(nautical.applyNauticalStyle)
         assertTrue(nautical.showSeamarks)
 
-        val map = MapStylePolicy.forStyle(BaseMapStyle.MAP)
+        val map = MapStylePolicy.forStyle(BaseMapStyle.STANDARD)
         assertEquals(GoogleBaseMapKind.NORMAL, map.googleBaseMap)
         assertFalse(map.applyNauticalStyle)
         assertFalse(map.showSeamarks)

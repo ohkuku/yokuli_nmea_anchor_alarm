@@ -25,6 +25,7 @@ import com.yokuli.anchorwatch.data.database.AppDatabase
 import android.net.Uri
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity
+import com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageMapPlace
 import com.yokuli.anchorwatch.domain.anchorage.AnchoragePlanningStatus
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageViewport
@@ -44,9 +45,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class AnchorageDisplayMode{MAP,LIST}
+internal const val UNASSIGNED_REGION_ID=-1L
 data class AnchorageFilterState(val favoriteOnly:Boolean=false,val planningStatus:AnchoragePlanningStatus?=null,val visitedOnly:Boolean=false)
 data class AnchorageLibraryUiState(
     val allPlaces:List<AnchoragePlaceEntity> = emptyList(),
+    val regions:List<AnchorageRegionEntity> = emptyList(),
     val visiblePlaces:List<AnchoragePlaceEntity> = emptyList(),
     val selectedPlace:AnchoragePlaceBundle?=null,
     val selectedRegionId:Long?=null,
@@ -61,9 +64,13 @@ data class AnchorageLibraryUiState(
     private val visible=MutableStateFlow<List<AnchoragePlaceEntity>>(emptyList());private val selected=MutableStateFlow<AnchoragePlaceBundle?>(null);private val controls=MutableStateFlow(Controls());private var viewportJob:Job?=null;private var queryJob:Job?=null
     private val planning=MutableStateFlow<Pair<Double,Double>?>(null);val planningPoint=planning.asStateFlow()
     private data class Controls(val regionId:Long?=null,val filters:AnchorageFilterState=AnchorageFilterState(),val mode:AnchorageDisplayMode=AnchorageDisplayMode.MAP,val query:String="")
-    val state:StateFlow<AnchorageLibraryUiState> = combine(library.places,visible,selected,controls,library.collections){all,inViewport,selectedPlace,control,collections->
-        val base=(if(control.query.isBlank())inViewport.ifEmpty{all}else inViewport).filter{place->(control.regionId==null||place.primaryRegionId==control.regionId)&&(!control.filters.favoriteOnly||place.favorite)&&(!control.filters.visitedOnly||place.visitCountCached+place.legacyVisitCount>0)&&(control.filters.planningStatus==null||place.planningStatus==control.filters.planningStatus.name)}
-        AnchorageLibraryUiState(all,base,selectedPlace,control.regionId,control.filters,control.mode,control.query,false,collections)
+    private val libraryIndex=combine(library.places,database.anchorageRegionDao().observeAll()){all,regions->all to regions}
+    val state:StateFlow<AnchorageLibraryUiState> = combine(libraryIndex,visible,selected,controls,library.collections){(all,regions),inViewport,selectedPlace,control,collections->
+        val base=(if(control.query.isBlank())inViewport.ifEmpty{all}else inViewport).filter{place->
+            val inRegion=when(control.regionId){null->true;UNASSIGNED_REGION_ID->place.primaryRegionId==null;else->place.primaryRegionId==control.regionId}
+            inRegion&&(!control.filters.favoriteOnly||place.favorite)&&(!control.filters.visitedOnly||place.visitCountCached+place.legacyVisitCount>0)&&(control.filters.planningStatus==null||place.planningStatus==control.filters.planningStatus.name)
+        }
+        AnchorageLibraryUiState(all,regions,base,selectedPlace,control.regionId,control.filters,control.mode,control.query,false,collections)
     }.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5_000),AnchorageLibraryUiState())
     fun updateViewport(value:AnchorageViewport){viewportJob?.cancel();viewportJob=viewModelScope.launch{delay(225);visible.value=library.viewport(value)}}
     fun setMode(value:AnchorageDisplayMode){controls.value=controls.value.copy(mode=value)}
