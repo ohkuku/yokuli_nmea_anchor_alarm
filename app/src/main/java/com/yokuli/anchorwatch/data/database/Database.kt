@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 19
+const val DATABASE_SCHEMA_VERSION = 20
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -105,6 +105,9 @@ data class AnchorSessionEntity(
     @ColumnInfo(defaultValue = "0") val headingEvidenceEpoch:Long=0L,
     val headingEvidenceEnabledAt:Long?=null,
     val headingEvidenceSourceId:String?=null,
+    val anchoragePlaceId:Long?=null,
+    val anchorageSpotId:Long?=null,
+    val anchorageVisitId:Long?=null,
 )
 
 @Entity(tableName="saved_anchorages",indices=[Index("updatedAt"),Index("lastVisitedAt")])
@@ -573,7 +576,8 @@ interface TripDao{
 }
 
 @Database(
-    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class,PressureHistoryEntity::class,TripSessionEntity::class,TripSampleEntity::class,TripEventEntity::class,TripWaypointEntity::class,TripCustomMetricSampleEntity::class,TripDashboardEntity::class,AnchorTelemetrySampleEntity::class],
+    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class,PressureHistoryEntity::class,TripSessionEntity::class,TripSampleEntity::class,TripEventEntity::class,TripWaypointEntity::class,TripCustomMetricSampleEntity::class,TripDashboardEntity::class,AnchorTelemetrySampleEntity::class,
+        com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceRegionCrossRef::class,com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class,com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceSummaryEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageSearchFtsEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageGisMetaEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageRegionPackEntity::class],
     version = DATABASE_SCHEMA_VERSION,
     exportSchema = true,
 )
@@ -586,4 +590,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun incidentLogDao():IncidentLogDao
     abstract fun pressureHistoryDao():PressureHistoryDao
     abstract fun tripDao():TripDao
+    abstract fun anchorageRegionDao():com.yokuli.anchorwatch.data.database.dao.AnchorageRegionDao
+    abstract fun anchoragePlaceDao():com.yokuli.anchorwatch.data.database.dao.AnchoragePlaceDao
+    abstract fun anchorageSpotDao():com.yokuli.anchorwatch.data.database.dao.AnchorageSpotDao
+    abstract fun anchorageVisitDao():com.yokuli.anchorwatch.data.database.dao.AnchorageVisitDao
+    abstract fun anchorageCollectionDao():com.yokuli.anchorwatch.data.database.dao.AnchorageCollectionDao
+    abstract fun anchorageMetadataDao():com.yokuli.anchorwatch.data.database.dao.AnchorageMetadataDao
+    abstract fun anchoragePhotoDao():com.yokuli.anchorwatch.data.database.dao.AnchoragePhotoDao
+    abstract fun anchorageSearchDao():com.yokuli.anchorwatch.data.database.dao.AnchorageSearchDao
+    abstract fun anchorageSpatialDao():com.yokuli.anchorwatch.data.database.dao.AnchorageSpatialDao
 }

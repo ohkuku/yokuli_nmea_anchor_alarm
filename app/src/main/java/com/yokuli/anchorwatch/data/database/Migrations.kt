@@ -281,3 +281,87 @@ object Migration18To19:Migration(18,19){
   db.execSQL("CREATE INDEX IF NOT EXISTS index_pressure_history_sourceStableKey_sampledAtUtcMillis ON pressure_history(sourceStableKey,sampledAtUtcMillis)")
  }
 }
+
+/** Personal Anchorage GIS. The legacy saved_anchorages table deliberately
+ * remains intact for audit/repair during the first GIS release. */
+object Migration19To20:Migration(19,20){
+ override fun migrate(db:SupportSQLiteDatabase){
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN anchoragePlaceId INTEGER")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN anchorageSpotId INTEGER")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN anchorageVisitId INTEGER")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_regions (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,parentRegionId INTEGER,displayName TEXT NOT NULL,officialName TEXT,alternateNamesJson TEXT NOT NULL,provider TEXT NOT NULL,externalId TEXT,featureType TEXT NOT NULL,geometryType TEXT NOT NULL,geometryGeoJson TEXT,centerLatitude REAL NOT NULL,centerLongitude REAL NOT NULL,bboxMinLatitude REAL NOT NULL,bboxMaxLatitude REAL NOT NULL,bboxMinLongitude REAL NOT NULL,bboxMaxLongitude REAL NOT NULL,official INTEGER NOT NULL,userConfirmed INTEGER NOT NULL,custom INTEGER NOT NULL,sourceUpdatedAt INTEGER,lastResolvedAt INTEGER,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,FOREIGN KEY(parentRegionId) REFERENCES anchorage_regions(id) ON UPDATE NO ACTION ON DELETE SET NULL)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_regions_parentRegionId ON anchorage_regions(parentRegionId)")
+  db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_anchorage_regions_provider_externalId ON anchorage_regions(provider,externalId)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_regions_featureType ON anchorage_regions(featureType)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_regions_updatedAt ON anchorage_regions(updatedAt)")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_places (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,primaryRegionId INTEGER,displayName TEXT NOT NULL,officialName TEXT,aliasesJson TEXT NOT NULL,placeType TEXT NOT NULL,geometryType TEXT NOT NULL,geometryGeoJson TEXT,centerLatitude REAL NOT NULL,centerLongitude REAL NOT NULL,bboxMinLatitude REAL NOT NULL,bboxMaxLatitude REAL NOT NULL,bboxMinLongitude REAL NOT NULL,bboxMaxLongitude REAL NOT NULL,description TEXT NOT NULL,personalNotes TEXT NOT NULL,verificationStatus TEXT NOT NULL,planningStatus TEXT NOT NULL,favorite INTEGER NOT NULL,archived INTEGER NOT NULL,visitCountCached INTEGER NOT NULL,legacyVisitCount INTEGER NOT NULL,lastVisitedAt INTEGER,legacySavedAnchorageId INTEGER,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,FOREIGN KEY(primaryRegionId) REFERENCES anchorage_regions(id) ON UPDATE NO ACTION ON DELETE SET NULL)")
+  listOf("primaryRegionId","updatedAt","lastVisitedAt","planningStatus","favorite").forEach{db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_places_$it ON anchorage_places($it)")}
+  db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_anchorage_places_legacySavedAnchorageId ON anchorage_places(legacySavedAnchorageId)")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_place_regions (placeId INTEGER NOT NULL,regionId INTEGER NOT NULL,relationType TEXT NOT NULL,sortOrder INTEGER NOT NULL,PRIMARY KEY(placeId,regionId),FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE,FOREIGN KEY(regionId) REFERENCES anchorage_regions(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_place_regions_regionId ON anchorage_place_regions(regionId)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_place_regions_placeId_sortOrder ON anchorage_place_regions(placeId,sortOrder)")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_spots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,placeId INTEGER NOT NULL,name TEXT NOT NULL,spotType TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,coordinateSource TEXT NOT NULL,coordinateUncertaintyMeters REAL,preferredAlarmRadiusMeters REAL,typicalWaterDepthMeters REAL,typicalRodeLengthMeters REAL,seabedType TEXT NOT NULL,customSeabedText TEXT,approachNotes TEXT NOT NULL,personalNotes TEXT NOT NULL,verificationStatus TEXT NOT NULL,visitCountCached INTEGER NOT NULL,legacyVisitCount INTEGER NOT NULL,lastVisitedAt INTEGER,legacySavedAnchorageId INTEGER,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_spots_placeId ON anchorage_spots(placeId)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_spots_placeId_lastVisitedAt ON anchorage_spots(placeId,lastVisitedAt)")
+  db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_anchorage_spots_legacySavedAnchorageId ON anchorage_spots(legacySavedAnchorageId)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_spots_updatedAt ON anchorage_spots(updatedAt)")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_visits (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,placeId INTEGER NOT NULL,spotId INTEGER,anchorSessionId INTEGER,visitKind TEXT NOT NULL,startedAt INTEGER NOT NULL,endedAt INTEGER,actualAnchorLatitude REAL,actualAnchorLongitude REAL,coordinateSource TEXT,coordinateUncertaintyMeters REAL,waterDepthMeters REAL,rodeLengthMeters REAL,alarmRadiusMeters REAL,maxExcursionMeters REAL,alarmCount INTEGER NOT NULL,minDepthMeters REAL,maxDepthMeters REAL,maxWindKnots REAL,maxWindSource TEXT,typicalMotionScore REAL,p95MotionScore REAL,p95AbsoluteHeelDegrees REAL,dominantRollPeriodSeconds REAL,impactCount INTEGER,userNotes TEXT NOT NULL,summaryVersion TEXT NOT NULL,createdAt INTEGER NOT NULL,FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE,FOREIGN KEY(spotId) REFERENCES anchorage_spots(id) ON UPDATE NO ACTION ON DELETE SET NULL,FOREIGN KEY(anchorSessionId) REFERENCES anchor_sessions(id) ON UPDATE NO ACTION ON DELETE SET NULL)")
+  listOf("placeId","spotId","startedAt").forEach{db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_visits_$it ON anchorage_visits($it)")}
+  db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_anchorage_visits_anchorSessionId ON anchorage_visits(anchorSessionId)")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_collections (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,name TEXT NOT NULL,description TEXT NOT NULL,icon TEXT,sortOrder INTEGER NOT NULL,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_collections_sortOrder ON anchorage_collections(sortOrder)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_collections_updatedAt ON anchorage_collections(updatedAt)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_collection_places (collectionId INTEGER NOT NULL,placeId INTEGER NOT NULL,addedAt INTEGER NOT NULL,PRIMARY KEY(collectionId,placeId),FOREIGN KEY(collectionId) REFERENCES anchorage_collections(id) ON UPDATE NO ACTION ON DELETE CASCADE,FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_collection_places_placeId ON anchorage_collection_places(placeId)")
+
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_protection_sectors (placeId INTEGER NOT NULL,medium TEXT NOT NULL,sector TEXT NOT NULL,rating TEXT NOT NULL,source TEXT NOT NULL,confidence REAL,notes TEXT NOT NULL,updatedAt INTEGER NOT NULL,PRIMARY KEY(placeId,medium,sector),FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_facilities (placeId INTEGER NOT NULL,type TEXT NOT NULL,availability TEXT NOT NULL,source TEXT NOT NULL,notes TEXT NOT NULL,updatedAt INTEGER NOT NULL,PRIMARY KEY(placeId,type),FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_personal_ratings (placeId INTEGER NOT NULL,holding INTEGER,shelter INTEGER,comfort INTEGER,quietness INTEGER,shoreAccess INTEGER,crowding INTEGER,overallPreference TEXT NOT NULL,legacyOverallRating INTEGER,notes TEXT NOT NULL,updatedAt INTEGER NOT NULL,PRIMARY KEY(placeId),FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_photos (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,placeId INTEGER NOT NULL,spotId INTEGER,visitId INTEGER,relativeFileName TEXT NOT NULL,thumbnailRelativeFileName TEXT,mimeType TEXT NOT NULL,sha256 TEXT NOT NULL,width INTEGER,height INTEGER,caption TEXT NOT NULL,capturedAt INTEGER,createdAt INTEGER NOT NULL,FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE,FOREIGN KEY(spotId) REFERENCES anchorage_spots(id) ON UPDATE NO ACTION ON DELETE SET NULL,FOREIGN KEY(visitId) REFERENCES anchorage_visits(id) ON UPDATE NO ACTION ON DELETE SET NULL)")
+  listOf("placeId","spotId","visitId").forEach{db.execSQL("CREATE INDEX IF NOT EXISTS index_anchorage_photos_$it ON anchorage_photos($it)")}
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_place_summaries (placeId INTEGER NOT NULL,generatedAt INTEGER NOT NULL,engineVersion TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(placeId),FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS anchorage_search_fts USING FTS4(placeId INTEGER NOT NULL,placeName TEXT NOT NULL,aliases TEXT NOT NULL,regionPath TEXT NOT NULL,spotNames TEXT NOT NULL,notes TEXT NOT NULL)")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_gis_meta (`key` TEXT NOT NULL,longValue INTEGER,textValue TEXT,PRIMARY KEY(`key`))")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_region_packs (regionId INTEGER NOT NULL,downloadedAt INTEGER NOT NULL,providerRevision TEXT,featureCount INTEGER NOT NULL,PRIMARY KEY(regionId),FOREIGN KEY(regionId) REFERENCES anchorage_regions(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  createSpatialTable(db,"anchorage_place_rtree")
+  createSpatialTable(db,"anchorage_spot_rtree")
+
+  // Deterministic and lossless: one legacy row becomes exactly one Place and
+  // one Spot. Nearby legacy points are never silently merged.
+  db.execSQL("""INSERT OR IGNORE INTO anchorage_places(id,primaryRegionId,displayName,officialName,aliasesJson,placeType,geometryType,geometryGeoJson,centerLatitude,centerLongitude,bboxMinLatitude,bboxMaxLatitude,bboxMinLongitude,bboxMaxLongitude,description,personalNotes,verificationStatus,planningStatus,favorite,archived,visitCountCached,legacyVisitCount,lastVisitedAt,legacySavedAnchorageId,createdAt,updatedAt) SELECT id,NULL,name,NULL,'[]','UNKNOWN','POINT',NULL,latitude,longitude,latitude,latitude,longitude,longitude,'',notes,CASE WHEN sourceSessionId IS NOT NULL OR visitCount>0 THEN 'VERIFIED_BY_SESSION' ELSE 'PLANNED' END,'NONE',0,0,CASE WHEN visitCount<0 THEN 0 ELSE visitCount END,CASE WHEN visitCount<0 THEN 0 ELSE visitCount END,lastVisitedAt,id,createdAt,updatedAt FROM saved_anchorages""")
+  db.execSQL("""INSERT OR IGNORE INTO anchorage_spots(id,placeId,name,spotType,latitude,longitude,coordinateSource,coordinateUncertaintyMeters,preferredAlarmRadiusMeters,typicalWaterDepthMeters,typicalRodeLengthMeters,seabedType,customSeabedText,approachNotes,personalNotes,verificationStatus,visitCountCached,legacyVisitCount,lastVisitedAt,legacySavedAnchorageId,createdAt,updatedAt) SELECT id,id,'Main spot',CASE WHEN coordinateSource='CONFIRMED_ANCHOR' THEN 'ANCHOR_SPOT' ELSE 'PLANNED_REFERENCE' END,latitude,longitude,coordinateSource,coordinateUncertaintyMeters,preferredAlarmRadiusMeters,typicalWaterDepthMeters,typicalRodeLengthMeters,seabedType,customSeabedText,'','',CASE WHEN sourceSessionId IS NOT NULL OR visitCount>0 THEN 'VERIFIED_BY_SESSION' ELSE 'PLANNED' END,CASE WHEN visitCount<0 THEN 0 ELSE visitCount END,CASE WHEN visitCount<0 THEN 0 ELSE visitCount END,lastVisitedAt,id,createdAt,updatedAt FROM saved_anchorages""")
+  db.execSQL("""INSERT OR IGNORE INTO anchorage_personal_ratings(placeId,holding,shelter,comfort,quietness,shoreAccess,crowding,overallPreference,legacyOverallRating,notes,updatedAt) SELECT id,NULL,NULL,NULL,NULL,NULL,NULL,'UNKNOWN',rating,'',updatedAt FROM saved_anchorages WHERE rating IS NOT NULL""")
+  db.execSQL("""INSERT OR IGNORE INTO anchorage_visits(placeId,spotId,anchorSessionId,visitKind,startedAt,endedAt,actualAnchorLatitude,actualAnchorLongitude,coordinateSource,coordinateUncertaintyMeters,waterDepthMeters,rodeLengthMeters,alarmRadiusMeters,maxExcursionMeters,alarmCount,minDepthMeters,maxDepthMeters,maxWindKnots,maxWindSource,typicalMotionScore,p95MotionScore,p95AbsoluteHeelDegrees,dominantRollPeriodSeconds,impactCount,userNotes,summaryVersion,createdAt) SELECT a.id,a.id,s.id,'SESSION',s.startedAt,s.endedAt,s.anchorLatitude,s.anchorLongitude,a.coordinateSource,a.coordinateUncertaintyMeters,s.waterDepthMeters,s.rodeLengthMeters,s.alarmRadiusMeters,s.maxDistanceMeters,s.alarmCount,s.minObservedDepthMeters,s.maxObservedDepthMeters,s.maxObservedWindKnots,s.maxObservedWindSource,NULL,NULL,NULL,NULL,NULL,'','1',a.updatedAt FROM saved_anchorages a JOIN anchor_sessions s ON s.id=a.sourceSessionId""")
+  db.execSQL("UPDATE anchor_sessions SET anchoragePlaceId=savedAnchorageId,anchorageSpotId=savedAnchorageId WHERE savedAnchorageId IN (SELECT id FROM saved_anchorages)")
+  db.execSQL("UPDATE anchor_sessions SET anchorageVisitId=(SELECT v.id FROM anchorage_visits v WHERE v.anchorSessionId=anchor_sessions.id LIMIT 1) WHERE id IN (SELECT anchorSessionId FROM anchorage_visits WHERE anchorSessionId IS NOT NULL)")
+
+  db.execSQL("INSERT OR REPLACE INTO anchorage_place_rtree SELECT id,centerLatitude,centerLatitude,centerLongitude,centerLongitude FROM anchorage_places")
+  // Conservative migration envelope; repository rewrites this with the exact
+  // latitude-aware calculation on the first verifier pass.
+  db.execSQL("""INSERT OR REPLACE INTO anchorage_spot_rtree SELECT id,latitude-(MAX(20.0,COALESCE(preferredAlarmRadiusMeters,0),COALESCE(coordinateUncertaintyMeters,0))/111320.0),latitude+(MAX(20.0,COALESCE(preferredAlarmRadiusMeters,0),COALESCE(coordinateUncertaintyMeters,0))/111320.0),longitude-(MAX(20.0,COALESCE(preferredAlarmRadiusMeters,0),COALESCE(coordinateUncertaintyMeters,0))/50000.0),longitude+(MAX(20.0,COALESCE(preferredAlarmRadiusMeters,0),COALESCE(coordinateUncertaintyMeters,0))/50000.0) FROM anchorage_spots""")
+  db.execSQL("INSERT INTO anchorage_search_fts(rowid,placeId,placeName,aliases,regionPath,spotNames,notes) SELECT p.id,p.id,p.displayName,p.aliasesJson,'',COALESCE((SELECT group_concat(name,' ') FROM anchorage_spots s WHERE s.placeId=p.id),''),p.personalNotes FROM anchorage_places p")
+  val now=System.currentTimeMillis()
+  db.execSQL("INSERT OR REPLACE INTO anchorage_gis_meta(`key`,longValue,textValue) SELECT 'LEGACY_ROW_COUNT',COUNT(*),NULL FROM saved_anchorages")
+  db.execSQL("INSERT OR REPLACE INTO anchorage_gis_meta(`key`,longValue,textValue) SELECT 'MIGRATED_PLACE_COUNT',COUNT(*),NULL FROM anchorage_places WHERE legacySavedAnchorageId IS NOT NULL")
+  db.execSQL("INSERT OR REPLACE INTO anchorage_gis_meta(`key`,longValue,textValue) SELECT 'MIGRATED_SPOT_COUNT',COUNT(*),NULL FROM anchorage_spots WHERE legacySavedAnchorageId IS NOT NULL")
+  db.execSQL("INSERT OR REPLACE INTO anchorage_gis_meta(`key`,longValue,textValue) VALUES('MIGRATION_COMPLETED_AT',$now,NULL)")
+  db.execSQL("INSERT OR IGNORE INTO anchorage_collections(name,description,icon,sortOrder,createdAt,updatedAt) VALUES('Favorites','','favorite',0,$now,$now),('Want to visit','','planned',1,$now,$now),('Backup','','backup',2,$now,$now)")
+ }
+
+ private fun createSpatialTable(db:SupportSQLiteDatabase,name:String){
+  // AOSP/vendor SQLite builds are allowed to omit the optional RTREE module.
+  // Prefer the real virtual index, but never brick a database migration on
+  // those devices: the indexed bbox fallback has identical query semantics.
+  runCatching{db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS $name USING rtree(id,minLat,maxLat,minLon,maxLon)")}.getOrElse{
+   db.execSQL("CREATE TABLE IF NOT EXISTS $name (id INTEGER NOT NULL PRIMARY KEY,minLat REAL NOT NULL,maxLat REAL NOT NULL,minLon REAL NOT NULL,maxLon REAL NOT NULL)")
+   db.execSQL("CREATE INDEX IF NOT EXISTS index_${name}_latitude ON $name(maxLat,minLat)")
+   db.execSQL("CREATE INDEX IF NOT EXISTS index_${name}_longitude ON $name(maxLon,minLon)")
+  }
+ }
+}
