@@ -282,6 +282,7 @@ class MainViewModel @Inject constructor(
     private val conditionRuntime:ConditionRuntime,
     private val anchorageRepository:AnchorageRepository,
     private val anchorageApproachRepository:AnchorageApproachRepository,
+    private val anchorageSpotRepository:com.yokuli.anchorwatch.data.anchorage.AnchorageSpotRepository,
     private val anchorageQrImageGenerator:AnchorageQrImageGenerator,
     private val vesselDataHub:VesselDataHub,
     private val nmeaFieldRepository:NmeaFieldRepository,
@@ -308,6 +309,7 @@ class MainViewModel @Inject constructor(
     private val nmeaCourseTrustGate=NmeaCourseTrustGate()
     private var selectedApproachClusterId:String?=null
     private var selectedApproachMemberIds:Set<Long> = emptySet()
+    private var gisApproachTarget:AnchorageCluster?=null
     private var lastApproachHeadingRefreshElapsed=0L
 
     init{
@@ -376,7 +378,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{conditionRuntime.state.collect{value->_ui.update{it.copy(conditions=value)}}}
         viewModelScope.launch{anchorageRepository.anchorages.collect{value->_ui.update{it.copy(savedAnchorages=value)}}}
         viewModelScope.launch{anchorageApproachRepository.clusters.collect{clusters->
-            if(selectedApproachClusterId!=null){
+            if(selectedApproachClusterId!=null&&gisApproachTarget==null){
                 val resolved=com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterIdentityResolver.resolve(selectedApproachClusterId,selectedApproachMemberIds,clusters)
                 selectedApproachClusterId=resolved?.id
                 selectedApproachMemberIds=resolved?.savedAnchorageIds?.toSet().orEmpty()
@@ -427,7 +429,7 @@ class MainViewModel @Inject constructor(
 
     private fun refreshAnchorageApproach(nowElapsed:Long=android.os.SystemClock.elapsedRealtime()){
         val state=_ui.value
-        if(state.active!=null&&selectedApproachClusterId!=null){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();phoneHeadingRepository.setApproachDemand(false)}
+        if(state.active!=null&&selectedApproachClusterId!=null){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();gisApproachTarget=null;phoneHeadingRepository.setApproachDemand(false)}
         val accepted=state.fix?.takeIf{
             it.valid&&state.positionHealth!=com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST
         }
@@ -449,7 +451,7 @@ class MainViewModel @Inject constructor(
         )
         val headingMode=if(state.approachHeadingMode==ApproachHeadingMode.VESSEL&&!vesselHeadingAvailable)ApproachHeadingMode.PHONE else state.approachHeadingMode
         val approach=AnchorageApproachEngine.evaluate(
-            clusters=state.anchorageClusters,
+            clusters=availableApproachClusters(),
             selectedClusterId=selectedApproachClusterId,
             positionLatitude=accepted?.latitude,
             positionLongitude=accepted?.longitude,
@@ -1007,12 +1009,20 @@ class MainViewModel @Inject constructor(
         openCoordinatesInGoogleMaps(session.anchorLatitude,session.anchorLongitude)
     }
     fun openAnchorageInGoogleMaps(value:SavedAnchorageEntity)=openCoordinatesInGoogleMaps(value.latitude,value.longitude)
+    fun openAnchorageCoordinates(latitude:Double,longitude:Double)=openCoordinatesInGoogleMaps(latitude,longitude)
+    fun approachAnchorageSpot(spotId:Long)=viewModelScope.launch{
+        val spot=anchorageSpotRepository.get(spotId)?:return@launch
+        spot.legacySavedAnchorageId?.let{legacy->approachSavedAnchorage(legacy);return@launch}
+        val radius=maxOf(40.0,spot.preferredAlarmRadiusMeters?.takeIf{it.isFinite()&&it>0}?:0.0,spot.coordinateUncertaintyMeters?.takeIf{it.isFinite()&&it>0}?:0.0)
+        val target=AnchorageCluster("spot:${spot.id}",spot.latitude,spot.longitude,radius,emptyList(),spot.name,1,spot.typicalWaterDepthMeters,spot.typicalWaterDepthMeters,spot.typicalRodeLengthMeters,spot.typicalRodeLengthMeters,spot.preferredAlarmRadiusMeters,spot.preferredAlarmRadiusMeters,spot.lastVisitedAt,spot.preferredAlarmRadiusMeters==null,spot.coordinateSource!="CONFIRMED_ANCHOR")
+        gisApproachTarget=target;approachAnchorage(target.id)
+    }
     fun approachSavedAnchorage(savedAnchorageId:Long){
         val cluster=_ui.value.anchorageClusters.firstOrNull{savedAnchorageId in it.savedAnchorageIds}?:return
         approachAnchorage(cluster.id)
     }
     fun approachAnchorage(clusterId:String){
-        if(_ui.value.anchorageClusters.none{it.id==clusterId})return
+        if(availableApproachClusters().none{it.id==clusterId})return
         if(_ui.value.active!=null){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Lift anchor before starting saved-anchorage approach guidance. The active alarm session remains unchanged."))}
             return
@@ -1034,7 +1044,7 @@ class MainViewModel @Inject constructor(
     fun dismissAnchorageApproachDisclaimer()=_ui.update{it.copy(approachDisclaimerTargetId=null)}
     private fun startAnchorageApproach(clusterId:String){
         if(_ui.value.active!=null)return
-        val target=_ui.value.anchorageClusters.firstOrNull{it.id==clusterId}?:return
+        val target=availableApproachClusters().firstOrNull{it.id==clusterId}?:return
         selectedApproachClusterId=target.id
         selectedApproachMemberIds=target.savedAnchorageIds.toSet()
         phoneHeadingRepository.setApproachDemand(true)
@@ -1049,7 +1059,8 @@ class MainViewModel @Inject constructor(
         _ui.update{it.copy(approachHeadingMode=mode)}
         refreshAnchorageApproach()
     }
-    fun cancelAnchorageApproach(){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();phoneHeadingRepository.setApproachDemand(false);refreshAnchorageApproach()}
+    fun cancelAnchorageApproach(){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();gisApproachTarget=null;phoneHeadingRepository.setApproachDemand(false);refreshAnchorageApproach()}
+    private fun availableApproachClusters()=_ui.value.anchorageClusters+listOfNotNull(gisApproachTarget).filter{target->_ui.value.anchorageClusters.none{it.id==target.id}}
     fun setMapHeadingDisplayActive(active:Boolean){phoneHeadingRepository.setDisplayDemand(active)}
     fun dismissNearbyAnchorage(){
         anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
