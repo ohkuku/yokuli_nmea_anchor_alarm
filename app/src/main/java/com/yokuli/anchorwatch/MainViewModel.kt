@@ -869,6 +869,11 @@ class MainViewModel @Inject constructor(
         if(current.publicationEnabled){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop NMEA output before changing its purpose."))};return@launch}
         outputSettingsRepository.save(current.copy(purpose=purpose));_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     }
+    fun setNmeaOutputAutoStart(enabled:Boolean)=viewModelScope.launch{
+        val current=_ui.value.outputSettings
+        if(current.publicationEnabled){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop NMEA output before changing auto-start."))};return@launch}
+        outputSettingsRepository.save(current.copy(autoStartOutput=enabled,publicationEnabled=false));_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+    }
     fun startNmeaOutput()=viewModelScope.launch{
         val state=_ui.value;val value=state.outputSettings
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}

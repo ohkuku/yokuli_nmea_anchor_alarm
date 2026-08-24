@@ -182,7 +182,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   // that initial DataStore emission stop a service whose active watch is still
   // being restored on the sibling coroutine.
   scope.launch{startupReady.await();preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->configureSharing(enabled,port,source)}}
-  scope.launch{startupReady.await();combine(outputSettings.settings,preferences.settings,dao.sessions()){output,settings,sessions->Triple(output,settings,sessions.firstOrNull{it.active})}.distinctUntilChanged().collect{(output,settings,active)->configurePhoneOutput(output,settings.gpsDataSource,active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()})}}
+  scope.launch{startupReady.await();outputSettings.activateAutoStart();combine(outputSettings.settings,preferences.settings,dao.sessions()){output,settings,sessions->Triple(output,settings,sessions.firstOrNull{it.active})}.distinctUntilChanged().collect{(output,settings,active)->configurePhoneOutput(output,settings.gpsDataSource,active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()})}}
   scope.launch{navigation.validRawSentences.collect(sharingRuntime::onBoatSentence)}
   scope.launch{
    startupReady.await()
@@ -554,7 +554,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   val appSettings=preferences.settings.first()
   if(!requested.anyEnabled){phonePositionOutput.configure(requested,appSettings.profile);nmeaRuntime.releaseIfUnowned();return}
   var effective=requested
-  val phonePositionPublishing=requested.effectivePositionPolicy!=PublicationPolicy.OFF
+  val phonePositionPublishing=requested.phonePositionPublishing
   val allowed=PositionSourceConflictPolicy.canEnablePhonePositionOutput(PositionSourceConflictState(phonePositionPublishing,selected,activeSource))
   if(phonePositionPublishing&&!allowed){effective=effective.withPolicy("position",PublicationPolicy.OFF);outputSettings.save(effective);notifySeparate("Phone GPS output blocked","NMEA Position is the App GPS source. Other enabled phone vessel sensors may continue.",true)}
   if(effective.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){

@@ -10,6 +10,7 @@ import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
 import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
+import com.yokuli.anchorwatch.data.vessel.NmeaOutputLeasePolicy
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.*
 import com.yokuli.anchorwatch.runtime.output.SelectedExternalSourcePresence
@@ -40,6 +41,18 @@ class NmeaDeviceOutputPolicyTest{
         val value=NmeaDeviceOutputSettings(purpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,transportConfigured=true,publicationEnabled=true)
         assertTrue(value.anyStreamSelected);assertTrue(value.anyEnabled)
         assertFalse(value.phonePositionPublishing)
+    }
+
+    @Test fun processRestartNeverResumesRuntimeLeaseUnlessExplicitAutoStartIsReady(){
+        val configured=NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true)
+        assertFalse(NmeaOutputLeasePolicy.shouldAutoStart(configured))
+        assertTrue(NmeaOutputLeasePolicy.shouldAutoStart(configured.copy(publicationEnabled=false,autoStartOutput=true)))
+        assertFalse(NmeaOutputLeasePolicy.shouldAutoStart(configured.copy(autoStartOutput=true,transportConfigured=false)))
+    }
+
+    @Test fun restoreAlwaysClearsRuntimeAndAutoStartLeases(){
+        val restored=NmeaOutputLeasePolicy.afterRestore(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true,autoStartOutput=true))
+        assertFalse(restored.publicationEnabled);assertFalse(restored.autoStartOutput)
     }
 
     @Test fun backupLooksOnlyAtSelectedExternalSourceAndFishfinderVhwDoesNotBlockHeadingTakeover(){

@@ -18,6 +18,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 
 private val Context.vesselSettingsStore by preferencesDataStore("vessel_data_settings")
 private val Context.outputSettingsStore by preferencesDataStore("nmea_output_settings")
@@ -73,6 +76,7 @@ data class NmeaDeviceOutputSettings(
      */
     val publicationEnabled:Boolean=false,
     val purpose:NmeaOutputPurpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+    val autoStartOutput:Boolean=false,
 )
 enum class NmeaOutputTransportMode { SAME_AS_INPUT_CONNECTION, DEDICATED_TCP, UDP_UNICAST, UDP_BROADCAST }
 enum class PhoneHeadingOutputFormat { HDT_TRUE, HDG_MAGNETIC, HDT_AND_HDG }
@@ -83,6 +87,10 @@ val NmeaDeviceOutputSettings.effectivePressurePolicy get()=pressurePolicy.takeIf
 val NmeaDeviceOutputSettings.anyStreamSelected:Boolean get()=purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED||effectivePositionPolicy!=PublicationPolicy.OFF||effectiveHeadingPolicy!=PublicationPolicy.OFF||effectiveMotionPolicy!=PublicationPolicy.OFF||effectivePressurePolicy!=PublicationPolicy.OFF||derivedWindPolicy!=PublicationPolicy.OFF||proprietaryStatusEnabled
 val NmeaDeviceOutputSettings.anyEnabled:Boolean get()=publicationEnabled&&transportConfigured&&anyStreamSelected
 val NmeaDeviceOutputSettings.phonePositionPublishing:Boolean get()=purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&publicationEnabled&&transportConfigured&&effectivePositionPolicy!=PublicationPolicy.OFF
+object NmeaOutputLeasePolicy{
+    fun shouldAutoStart(value:NmeaDeviceOutputSettings)=value.autoStartOutput&&value.transportConfigured&&value.anyStreamSelected
+    fun afterRestore(value:NmeaDeviceOutputSettings)=value.copy(publicationEnabled=false,autoStartOutput=false)
+}
 fun NmeaDeviceOutputSettings.withPolicy(family:String,policy:PublicationPolicy)=when(family){
     "position"->copy(phonePositionEnabled=policy!=PublicationPolicy.OFF,positionPolicy=policy)
     "heading"->copy(phoneHeadingEnabled=policy!=PublicationPolicy.OFF,headingPolicy=policy)
@@ -113,19 +121,32 @@ class VesselSettingsRepository @Inject constructor(@ApplicationContext private v
 
 @Singleton
 class OutputSettingsRepository @Inject constructor(@ApplicationContext private val context:Context){
-    private object K{val purpose=stringPreferencesKey("output_purpose");val phonePosition=booleanPreferencesKey("phone_position_enabled");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val proprietary=booleanPreferencesKey("phone_proprietary_enabled");val mode=stringPreferencesKey("transport_mode");val host=stringPreferencesKey("output_host");val port=intPreferencesKey("output_port");val headingFormat=stringPreferencesKey("phone_heading_format");val transportConfigured=booleanPreferencesKey("transport_configured");val publicationEnabled=booleanPreferencesKey("publication_enabled");val positionPolicy=stringPreferencesKey("publication_position_policy");val headingPolicy=stringPreferencesKey("publication_heading_policy");val motionPolicy=stringPreferencesKey("publication_motion_policy");val pressurePolicy=stringPreferencesKey("publication_pressure_policy");val windPolicy=stringPreferencesKey("publication_derived_wind_policy");val destinations=stringPreferencesKey("output_destinations_json")}
+    private object K{val purpose=stringPreferencesKey("output_purpose");val autoStart=booleanPreferencesKey("output_auto_start");val phonePosition=booleanPreferencesKey("phone_position_enabled");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val proprietary=booleanPreferencesKey("phone_proprietary_enabled");val mode=stringPreferencesKey("transport_mode");val host=stringPreferencesKey("output_host");val port=intPreferencesKey("output_port");val headingFormat=stringPreferencesKey("phone_heading_format");val transportConfigured=booleanPreferencesKey("transport_configured");val publicationEnabled=booleanPreferencesKey("publication_enabled");val positionPolicy=stringPreferencesKey("publication_position_policy");val headingPolicy=stringPreferencesKey("publication_heading_policy");val motionPolicy=stringPreferencesKey("publication_motion_policy");val pressurePolicy=stringPreferencesKey("publication_pressure_policy");val windPolicy=stringPreferencesKey("publication_derived_wind_policy");val destinations=stringPreferencesKey("output_destinations_json")}
     private val gson=Gson();private val destinationType=object:TypeToken<List<NmeaOutputDestination>>(){}.type
     private fun policy(stored:String?,legacy:Boolean?,newDefault:PublicationPolicy)=stored?.let{runCatching{PublicationPolicy.valueOf(it)}.getOrNull()}?:legacy?.let{if(it)PublicationPolicy.ALWAYS else PublicationPolicy.OFF}?:newDefault
-    val settings=context.outputSettingsStore.data.map{p->
+    private val outputRunning=MutableStateFlow(false)
+    private val persistedSettings=context.outputSettingsStore.data.map{p->
         // A first-run setup explicitly skips NMEA Output. Existing saved
         // policies are preserved, but a fresh install never publishes merely
         // because a destination is configured later.
         val position=policy(p[K.positionPolicy],p[K.phonePosition],PublicationPolicy.OFF);val heading=policy(p[K.headingPolicy],p[K.phoneHeading],PublicationPolicy.OFF);val motion=policy(p[K.motionPolicy],p[K.phoneMotion],PublicationPolicy.OFF);val pressure=policy(p[K.pressurePolicy],p[K.phonePressure],PublicationPolicy.OFF);val wind=policy(p[K.windPolicy],null,PublicationPolicy.OFF)
-        val mode=p[K.mode]?.let{runCatching{NmeaOutputTransportMode.valueOf(it)}.getOrNull()}?:NmeaOutputTransportMode.DEDICATED_TCP;val host=p[K.host].orEmpty();val port=p[K.port]?:10110;val configured=p[K.transportConfigured]?:p.contains(K.mode);val publicationEnabled=p[K.publicationEnabled]?:false
-        val restoredDestinations=p[K.destinations]?.let{json->runCatching{gson.fromJson<List<NmeaOutputDestination>>(json,destinationType)}.getOrNull()}?.filter{it.id.isNotBlank()&&it.port in 1..65535}?.map{it.copy(enabled=publicationEnabled)}.orEmpty()
-        val migratedDestination=NmeaOutputDestination(transport=mode.destinationTransport(),host=host,port=port,enabled=publicationEnabled)
-        NmeaDeviceOutputSettings(purpose=p[K.purpose]?.let{runCatching{NmeaOutputPurpose.valueOf(it)}.getOrNull()}?:NmeaOutputPurpose.BOAT_BUS_INJECTION,phonePositionEnabled=position!=PublicationPolicy.OFF,phoneHeadingEnabled=heading!=PublicationPolicy.OFF,phoneMotionEnabled=motion!=PublicationPolicy.OFF,phonePressureEnabled=pressure!=PublicationPolicy.OFF,proprietaryStatusEnabled=p[K.proprietary]?:false,transportMode=mode,outputHost=host,outputPort=port,phoneHeadingFormat=p[K.headingFormat]?.let{runCatching{PhoneHeadingOutputFormat.valueOf(it)}.getOrNull()}?:PhoneHeadingOutputFormat.HDT_TRUE,transportConfigured=configured,positionPolicy=position,headingPolicy=heading,motionPolicy=motion,pressurePolicy=pressure,derivedWindPolicy=wind,destinations=if(restoredDestinations.isNotEmpty())restoredDestinations else if(configured)listOf(migratedDestination)else emptyList(),publicationEnabled=publicationEnabled)
+        val mode=p[K.mode]?.let{runCatching{NmeaOutputTransportMode.valueOf(it)}.getOrNull()}?:NmeaOutputTransportMode.DEDICATED_TCP;val host=p[K.host].orEmpty();val port=p[K.port]?:10110;val configured=p[K.transportConfigured]?:p.contains(K.mode);val autoStart=p[K.autoStart]?:false
+        val restoredDestinations=p[K.destinations]?.let{json->runCatching{gson.fromJson<List<NmeaOutputDestination>>(json,destinationType)}.getOrNull()}?.filter{it.id.isNotBlank()&&it.port in 1..65535}?.map{it.copy(enabled=false)}.orEmpty()
+        val migratedDestination=NmeaOutputDestination(transport=mode.destinationTransport(),host=host,port=port,enabled=false)
+        NmeaDeviceOutputSettings(purpose=p[K.purpose]?.let{runCatching{NmeaOutputPurpose.valueOf(it)}.getOrNull()}?:NmeaOutputPurpose.BOAT_BUS_INJECTION,phonePositionEnabled=position!=PublicationPolicy.OFF,phoneHeadingEnabled=heading!=PublicationPolicy.OFF,phoneMotionEnabled=motion!=PublicationPolicy.OFF,phonePressureEnabled=pressure!=PublicationPolicy.OFF,proprietaryStatusEnabled=p[K.proprietary]?:false,transportMode=mode,outputHost=host,outputPort=port,phoneHeadingFormat=p[K.headingFormat]?.let{runCatching{PhoneHeadingOutputFormat.valueOf(it)}.getOrNull()}?:PhoneHeadingOutputFormat.HDT_TRUE,transportConfigured=configured,positionPolicy=position,headingPolicy=heading,motionPolicy=motion,pressurePolicy=pressure,derivedWindPolicy=wind,destinations=if(restoredDestinations.isNotEmpty())restoredDestinations else if(configured)listOf(migratedDestination)else emptyList(),publicationEnabled=false,autoStartOutput=autoStart)
     }
-    suspend fun save(value:NmeaDeviceOutputSettings)=context.outputSettingsStore.edit{it[K.purpose]=value.purpose.name;it[K.phonePosition]=value.effectivePositionPolicy!=PublicationPolicy.OFF;it[K.phoneHeading]=value.effectiveHeadingPolicy!=PublicationPolicy.OFF;it[K.phoneMotion]=value.effectiveMotionPolicy!=PublicationPolicy.OFF;it[K.phonePressure]=value.effectivePressurePolicy!=PublicationPolicy.OFF;it[K.positionPolicy]=value.effectivePositionPolicy.name;it[K.headingPolicy]=value.effectiveHeadingPolicy.name;it[K.motionPolicy]=value.effectiveMotionPolicy.name;it[K.pressurePolicy]=value.effectivePressurePolicy.name;it[K.windPolicy]=value.derivedWindPolicy.name;it[K.proprietary]=value.proprietaryStatusEnabled;it[K.mode]=value.transportMode.name;it[K.host]=value.outputHost.trim();it[K.port]=value.outputPort.coerceIn(1,65535);it[K.headingFormat]=value.phoneHeadingFormat.name;it[K.transportConfigured]=value.transportConfigured;it[K.publicationEnabled]=value.publicationEnabled;val primary=(value.destinations.firstOrNull{destination->destination.id=="boat-gateway"}?:NmeaOutputDestination()).copy(transport=value.transportMode.destinationTransport(),host=value.outputHost.trim(),port=value.outputPort.coerceIn(1,65535),enabled=value.publicationEnabled);it[K.destinations]=gson.toJson(listOf(primary)+value.destinations.filterNot{destination->destination.id=="boat-gateway"}.take(7))}
+    val settings=combine(persistedSettings,outputRunning){persisted,running->persisted.copy(publicationEnabled=running)}
+    suspend fun activateAutoStart(){outputRunning.value=NmeaOutputLeasePolicy.shouldAutoStart(persistedSettings.first())}
+    suspend fun save(value:NmeaDeviceOutputSettings){
+        outputRunning.value=value.publicationEnabled
+        context.outputSettingsStore.edit{preferences->
+            preferences[K.purpose]=value.purpose.name;preferences[K.autoStart]=value.autoStartOutput;preferences.remove(K.publicationEnabled)
+            preferences[K.phonePosition]=value.effectivePositionPolicy!=PublicationPolicy.OFF;preferences[K.phoneHeading]=value.effectiveHeadingPolicy!=PublicationPolicy.OFF;preferences[K.phoneMotion]=value.effectiveMotionPolicy!=PublicationPolicy.OFF;preferences[K.phonePressure]=value.effectivePressurePolicy!=PublicationPolicy.OFF
+            preferences[K.positionPolicy]=value.effectivePositionPolicy.name;preferences[K.headingPolicy]=value.effectiveHeadingPolicy.name;preferences[K.motionPolicy]=value.effectiveMotionPolicy.name;preferences[K.pressurePolicy]=value.effectivePressurePolicy.name;preferences[K.windPolicy]=value.derivedWindPolicy.name
+            preferences[K.proprietary]=value.proprietaryStatusEnabled;preferences[K.mode]=value.transportMode.name;preferences[K.host]=value.outputHost.trim();preferences[K.port]=value.outputPort.coerceIn(1,65535);preferences[K.headingFormat]=value.phoneHeadingFormat.name;preferences[K.transportConfigured]=value.transportConfigured
+            val primary=(value.destinations.firstOrNull{destination->destination.id=="boat-gateway"}?:NmeaOutputDestination()).copy(transport=value.transportMode.destinationTransport(),host=value.outputHost.trim(),port=value.outputPort.coerceIn(1,65535),enabled=false)
+            preferences[K.destinations]=gson.toJson(listOf(primary)+value.destinations.filterNot{destination->destination.id=="boat-gateway"}.map{it.copy(enabled=false)}.take(7))
+        }
+    }
     private fun NmeaOutputTransportMode.destinationTransport()=when(this){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET;NmeaOutputTransportMode.DEDICATED_TCP->NmeaDestinationTransport.DEDICATED_TCP;NmeaOutputTransportMode.UDP_UNICAST->NmeaDestinationTransport.UDP_UNICAST;NmeaOutputTransportMode.UDP_BROADCAST->NmeaDestinationTransport.UDP_BROADCAST}
 }
