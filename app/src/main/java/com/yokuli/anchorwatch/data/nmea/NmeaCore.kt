@@ -4,6 +4,7 @@ import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
 import com.yokuli.anchorwatch.domain.sonar.DepthReference
 import com.yokuli.anchorwatch.domain.sonar.DepthSentenceType
+import com.yokuli.anchorwatch.data.nmea.input.ParsedNmeaEnvelope
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
@@ -30,14 +31,20 @@ class NmeaStreamSplitter(private val maxLength:Int=1024) {
  }
 }
 
-data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val depth:Double?=null,val depthObservation:DepthObservation?=null,val speedThroughWaterKnots:Double?=null,val hdop:Double?=null,val fixQuality:Int?=null,val satellites:Int?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String)
+data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val depth:Double?=null,val depthObservation:DepthObservation?=null,val speedThroughWaterKnots:Double?=null,val hdop:Double?=null,val fixQuality:Int?=null,val satellites:Int?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String,val sentenceId:String="")
 
 class Nmea0183Parser {
+ fun parseEnvelope(line:String,requireChecksum:Boolean=true,elapsed:Long=System.nanoTime()/1_000_000):ParsedNmeaEnvelope?{
+  val update=parse(line,requireChecksum,elapsed)?:return null
+  val full=update.sentenceId.uppercase();val type=update.type.uppercase();val talker=full.removeSuffix(type).takeIf{it.isNotBlank()}
+  return ParsedNmeaEnvelope(line.trim(),talker.orEmpty(),type,full.ifBlank{type},elapsed,update)
+ }
  fun parse(line:String,requireChecksum:Boolean=true,elapsed:Long=System.nanoTime()/1_000_000):NmeaUpdate? {
   if(!NmeaChecksum.validate(line,requireChecksum)) return null
   val body=line.substring(1).substringBefore('*'); val f=body.split(','); if(f[0].length<3)return null
   val type=f[0].takeLast(3)
-  return when(type){"RMC"->rmc(f,line,elapsed);"GGA"->gga(f,line,elapsed);"GLL"->gll(f,line,elapsed);"VTG"->NmeaUpdate(sog=f.getOrNull(5).d(),cog=f.getOrNull(1).d(),type="VTG");"VHW"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),magneticHeading=f.getOrNull(3).d(),speedThroughWaterKnots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(.539957),type="VHW");"HDT"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),type="HDT");"HDM"->NmeaUpdate(magneticHeading=f.getOrNull(1).d(),type="HDM");"HDG"->hdg(f);"DPT"->depthDpt(f,line,elapsed);"DBT"->depthDbt(f,line,elapsed);"MWD"->mwd(f);"MWV"->mwv(f);"VWR"->relativeWind(f,false);"VWT"->relativeWind(f,true);"MDA"->mda(f);"ZDA"->zda(f);in FIELD_BUS_TYPES->NmeaUpdate(type=type);else->null}
+  val update=when(type){"RMC"->rmc(f,line,elapsed);"GGA"->gga(f,line,elapsed);"GLL"->gll(f,line,elapsed);"VTG"->NmeaUpdate(sog=f.getOrNull(5).d(),cog=f.getOrNull(1).d(),type="VTG");"VHW"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),magneticHeading=f.getOrNull(3).d(),speedThroughWaterKnots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(.539957),type="VHW");"HDT"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),type="HDT");"HDM"->NmeaUpdate(magneticHeading=f.getOrNull(1).d(),type="HDM");"HDG"->hdg(f);"DPT"->depthDpt(f,line,elapsed);"DBT"->depthDbt(f,line,elapsed);"MWD"->mwd(f);"MWV"->mwv(f);"VWR"->relativeWind(f,false);"VWT"->relativeWind(f,true);"MDA"->mda(f);"ZDA"->zda(f);in FIELD_BUS_TYPES->NmeaUpdate(type=type);else->null}
+  return update?.copy(sentenceId=f[0].uppercase())
  }
  private fun depthDpt(f:List<String>,raw:String,e:Long):NmeaUpdate {
   val depth=f.getOrNull(1).d()?:return NmeaUpdate(type="DPT");val offset=f.getOrNull(2).d()
@@ -87,4 +94,4 @@ class Nmea0183Parser {
  companion object { private val FIELD_BUS_TYPES=setOf("VLW","ROT","RSA","MTW","MTA","VDR","RMB","BWC","BWR","BOD","XTE","APB","XDR") }
 }
 
-data class NmeaDiagnostics(val bytes:Long=0,val validSentences:Long=0,val invalidSentences:Long=0,val checksumErrors:Long=0,val lastPacketElapsed:Long?=null,val lastFixElapsed:Long?=null,val lastByType:Map<String,String> = emptyMap(),val raw:List<String> = emptyList())
+data class NmeaDiagnostics(val bytes:Long=0,val validSentences:Long=0,val invalidSentences:Long=0,val checksumErrors:Long=0,val lastPacketElapsed:Long?=null,val lastFixElapsed:Long?=null,val lastByType:Map<String,String> = emptyMap(),val raw:List<String> = emptyList(),val echoedAppTxSentences:Long=0)

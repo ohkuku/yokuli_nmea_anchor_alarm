@@ -3,7 +3,7 @@ package com.yokuli.anchorwatch.domain.vessel
 enum class VesselDataSource { NONE, BOAT_NMEA, PHONE_GNSS, PHONE_IMU, PHONE_MAGNETOMETER, PHONE_BAROMETER, DERIVED, DEMO }
 enum class VesselDataQuality { UNKNOWN, DEGRADED, GOOD }
 enum class VesselDataFreshness { FRESH, HELD, STALE, UNAVAILABLE }
-enum class VesselSourcePreference { AUTO, BOAT, PHONE }
+enum class VesselSourcePreference { AUTO, BOAT, PHONE, DERIVED }
 enum class WatchWorkspaceMode { ANCHOR, TRIP }
 enum class TripInstrumentPreset { SAILING, NAV, MOTION, WEATHER, CUSTOM }
 enum class InstrumentTileId {
@@ -89,6 +89,11 @@ data class VesselObservation<T>(
     val quality:VesselDataQuality=VesselDataQuality.UNKNOWN,
     val freshness:VesselDataFreshness=VesselDataFreshness.UNAVAILABLE,
     val provenance:String?=null,
+    val sourceIdentity:VesselSourceIdentity?=null,
+    val sourceClass:VesselSourceClass=source.toSourceClass(),
+    val reference:VesselReference?=null,
+    val provenanceDetail:VesselProvenance?=null,
+    val conflict:VesselSourceConflict?=null,
 )
 
 data class VesselDataSnapshot(
@@ -117,6 +122,10 @@ data class VesselDataSnapshot(
     val totalLogNauticalMiles:VesselObservation<Double> = VesselObservation(),
     val tripLogNauticalMiles:VesselObservation<Double> = VesselObservation(),
     val derived:VesselDerivedSnapshot = VesselDerivedSnapshot(),
+    val deviceHeadingTrueDegrees:VesselObservation<Double> = VesselObservation(),
+    val deviceHeadingMagneticDegrees:VesselObservation<Double> = VesselObservation(),
+    val candidates:Map<VesselMetricId,List<VesselSourceCandidate<*>>> = emptyMap(),
+    val conflicts:Map<VesselMetricId,VesselSourceConflict> = emptyMap(),
     val generatedElapsedRealtime:Long=0L,
 )
 
@@ -124,6 +133,7 @@ object VesselSourceSelector {
     fun <T> select(preference:VesselSourcePreference,boat:VesselObservation<T>,phone:VesselObservation<T>):VesselObservation<T> = when(preference){
         VesselSourcePreference.BOAT->boat
         VesselSourcePreference.PHONE->phone
+        VesselSourcePreference.DERIVED->VesselObservation()
         VesselSourcePreference.AUTO->when{
             boat.freshness==VesselDataFreshness.FRESH&&boat.quality==VesselDataQuality.GOOD->boat
             phone.freshness==VesselDataFreshness.FRESH&&phone.quality!=VesselDataQuality.UNKNOWN->phone
@@ -145,7 +155,7 @@ class VesselAutoSourceSelector<T>(
     private var candidateSince:Long?=null
 
     fun select(preference:VesselSourcePreference,boat:VesselObservation<T>,phone:VesselObservation<T>,nowElapsed:Long):VesselObservation<T>{
-        if(preference!=VesselSourcePreference.AUTO){resetCandidate();selectedSource=if(preference==VesselSourcePreference.BOAT)VesselDataSource.BOAT_NMEA else phone.source.takeIf{it!=VesselDataSource.NONE}?:VesselDataSource.PHONE_GNSS;return if(preference==VesselSourcePreference.BOAT)boat else phone}
+        if(preference!=VesselSourcePreference.AUTO){resetCandidate();selectedSource=if(preference==VesselSourcePreference.BOAT)VesselDataSource.BOAT_NMEA else phone.source.takeIf{it!=VesselDataSource.NONE}?:VesselDataSource.PHONE_GNSS;return when(preference){VesselSourcePreference.BOAT->boat;VesselSourcePreference.PHONE->phone;else->VesselObservation()}}
         val desired=VesselSourceSelector.select(VesselSourcePreference.AUTO,boat,phone)
         if(selectedSource==VesselDataSource.NONE){selectedSource=desired.source;resetCandidate();return desired}
         val current=when(selectedSource){VesselDataSource.BOAT_NMEA->boat;VesselDataSource.PHONE_GNSS,VesselDataSource.PHONE_MAGNETOMETER->phone;else->desired}
