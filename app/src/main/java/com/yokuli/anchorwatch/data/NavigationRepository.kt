@@ -1,7 +1,10 @@
 package com.yokuli.anchorwatch.data
 import android.os.SystemClock
 import com.yokuli.anchorwatch.data.nmea.*
+import com.yokuli.anchorwatch.data.nmea.input.NmeaCandidateMapper
+import com.yokuli.anchorwatch.data.nmea.input.ParsedNmeaEnvelope
 import com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard
+import com.yokuli.anchorwatch.data.vessel.VesselSourceRegistry
 import com.yokuli.anchorwatch.domain.model.*
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
 import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
@@ -17,24 +20,32 @@ data class NmeaInstrumentState(
  val speedOverGroundKnots:Pair<Double,Long>?=null,
  val courseOverGroundTrue:Pair<Double,Long>?=null,
  val speedThroughWaterKnots:Pair<Double,Long>?=null,
+ val selectedHeadingSourceId:String?=null,
+ val headingCandidates:List<NmeaHeadingCandidate> = emptyList(),
+ val headingConflict:Boolean=false,
+ val headingConflictDegrees:Double?=null,
+ val pinnedHeadingSourceUnavailable:Boolean=false,
 )
 
 @Singleton class NavigationRepository @Inject constructor(
  private val liveDepth:LiveDepthRepository,
  private val liveWind:LiveWindRepository,
  private val outboundLoopGuard:NmeaOutboundLoopGuard,
+ private val sourceRegistry:VesselSourceRegistry,
 ){
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val connection=NmeaConnectionManager(scope,::resetHeldMeasurements)
- private val requestGuard=Any();private var appConnectionRequested=false;private var backgroundConnectionRequested=false
+ private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val headingResolver=NmeaHeadingResolver();private val connection=NmeaConnectionManager(scope,::resetHeldMeasurements)
+ private val requestGuard=Any();private var appConnectionRequested=false;private var backgroundConnectionRequested=false;@Volatile private var userDisconnected=false
  private val _fix=MutableStateFlow<NavigationFix?>(null);val fix=_fix.asStateFlow();val connectionState=connection.state
  private val _recentFixes=MutableStateFlow<List<NavigationFix>>(emptyList());val recentFixes=_recentFixes.asStateFlow()
  private val _diagnostics=MutableStateFlow(NmeaDiagnostics());val diagnostics=_diagnostics.asStateFlow()
  private val _connectionStartedElapsed=MutableStateFlow<Long?>(null);val connectionStartedElapsed=_connectionStartedElapsed.asStateFlow()
  private val _validRawSentences=MutableSharedFlow<String>(extraBufferCapacity=512,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val validRawSentences=_validRawSentences.asSharedFlow()
+ private val _parsedEnvelopes=MutableSharedFlow<ParsedNmeaEnvelope>(extraBufferCapacity=256,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val parsedEnvelopes=_parsedEnvelopes.asSharedFlow()
  private val _depthObservations=MutableSharedFlow<DepthObservation>(extraBufferCapacity=64,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val depthObservations=_depthObservations.asSharedFlow()
  private val _instruments=MutableStateFlow(NmeaInstrumentState());val instruments=_instruments.asStateFlow()
  val transportDiagnostics=connection.diagnostics
  @Volatile private var requireChecksum=true
+ @Volatile private var activeProfile=ConnectionProfile()
  private var headingTrue:Pair<Double,Long>?=null;private var headingMag:Pair<Double,Long>?=null;private var depth:Pair<Double,Long>?=null;private var speedThroughWater:Pair<Double,Long>?=null;private var sog:Pair<Double,Long>?=null;private var cog:Pair<Double,Long>?=null;private var hdop:Pair<Double,Long>?=null;private var fixQuality:Pair<Int,Long>?=null;private var satellites:Pair<Int,Long>?=null;private var altitude:Pair<Double,Long>?=null;private val wind=WindSnapshotAccumulator()
  @Volatile private var noDataTimeoutMillis=10_000L
  private var headingSampleSequence=0L
@@ -43,20 +54,22 @@ data class NmeaInstrumentState(
   scope.launch{connection.state.collect{state->when(state){NmeaConnectionState.CONNECTING->if(_connectionStartedElapsed.value==null)_connectionStartedElapsed.value=SystemClock.elapsedRealtime();NmeaConnectionState.RECONNECTING->_connectionStartedElapsed.value=SystemClock.elapsedRealtime();else->Unit}}}
   scope.launch{while(isActive){delay(1_000);val now=SystemClock.elapsedRealtime();val last=_diagnostics.value.lastFixElapsed;val started=_connectionStartedElapsed.value;val noFreshFix=started!=null&&now-maxOf(started,last?.takeIf{it>=started}?:started)>noDataTimeoutMillis;if(noFreshFix&&connection.state.value in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_FIX))connection.reportStaleFix()}}
  }
- fun connect(p:ConnectionProfile)=synchronized(requestGuard){appConnectionRequested=true;requireChecksum=p.requireChecksum;noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.connect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
- fun reconnect(p:ConnectionProfile)=synchronized(requestGuard){appConnectionRequested=true;requireChecksum=p.requireChecksum;noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.reconnect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
+ fun connect(p:ConnectionProfile)=synchronized(requestGuard){userDisconnected=false;appConnectionRequested=true;activeProfile=p;requireChecksum=p.requireChecksum;noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.connect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
+ fun reconnect(p:ConnectionProfile)=synchronized(requestGuard){userDisconnected=false;appConnectionRequested=true;activeProfile=p;requireChecksum=p.requireChecksum;noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.reconnect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
  fun writeToBoat(sentences:List<String>)=connection.write(sentences)
- fun disconnect()=synchronized(requestGuard){appConnectionRequested=false;if(!backgroundConnectionRequested){connection.disconnect();_connectionStartedElapsed.value=null}}
+ @Synchronized fun pinBoatHeadingSource(sourceId:String?){headingResolver.pin(sourceId);publishInstruments(SystemClock.elapsedRealtime())}
+ fun disconnect()=synchronized(requestGuard){appConnectionRequested=false;if(!backgroundConnectionRequested){userDisconnected=true;connection.disconnect();_connectionStartedElapsed.value=null}}
  /** Acquire the shared NMEA stream for a foreground service without replacing a
   * connection that the user already opened from the Connect page. */
  fun acquireBackgroundConnection(p:ConnectionProfile)=synchronized(requestGuard){
-  backgroundConnectionRequested=true
+  if(userDisconnected)return@synchronized false
+  backgroundConnectionRequested=true;activeProfile=p
   noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.ensureConnected(p).also{started->if(started)requireChecksum=p.requireChecksum else _connectionStartedElapsed.value=previous}
  }
  /** Claims ownership only when the user already has a live NMEA connection.
   * Source selection must never silently start a saved endpoint. */
  fun claimBackgroundConnectionIfConnected():Boolean=synchronized(requestGuard){
-  if(connectionState.value!=NmeaConnectionState.CONNECTED)return@synchronized false
+  if(userDisconnected||connectionState.value!=NmeaConnectionState.CONNECTED)return@synchronized false
   backgroundConnectionRequested=true
   true
  }
@@ -66,26 +79,43 @@ data class NmeaInstrumentState(
  }
  /** Explicit safety decision: release every owner and close the transport. */
  fun disconnectAll()=synchronized(requestGuard){
+  userDisconnected=true
   appConnectionRequested=false
   backgroundConnectionRequested=false
   connection.disconnect()
   _connectionStartedElapsed.value=null
  }
+ fun clearUserDisconnectLatch()=synchronized(requestGuard){userDisconnected=false}
+ fun isUserDisconnected()=userDisconnected
+ fun hasOpenTransport()=connection.hasOpenTransport()
+ fun activeProfileStableId()=activeProfile.stableId
+ fun connectionGeneration()=connection.diagnostics.value.connectionGeneration
  fun clearDiagnostics(){_diagnostics.value=NmeaDiagnostics()}
  fun accept(line:String,requireChecksum:Boolean=true){
   var reportValidFix=false
   synchronized(this){
-   val normalized=line.trim();val now=SystemClock.elapsedRealtime();val checksumValid=NmeaChecksum.validate(normalized,requireChecksum);val old=_diagnostics.value;val raw=(old.raw+normalized).takeLast(200)
+   val normalized=line.trim();val now=SystemClock.elapsedRealtime();val checksumValid=NmeaChecksum.validate(normalized,requireChecksum);val old=_diagnostics.value
    // Preserve transport diagnostics, but never let an echoed App-generated
    // sentence become independent boat position/heading/wind evidence.
-   if(checksumValid&&outboundLoopGuard.isRecentOutbound(normalized,now)){_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,validSentences=old.validSentences+1,lastPacketElapsed=now,raw=raw);return}
+   val echoed=checksumValid&&outboundLoopGuard.isRecentOutbound(normalized,now)
+   val raw=(old.raw+(if(echoed)"[Echoed App TX] $normalized" else normalized)).takeLast(200)
+   if(echoed){_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,validSentences=old.validSentences+1,lastPacketElapsed=now,raw=raw,echoedAppTxSentences=old.echoedAppTxSentences+1);return}
    if(checksumValid)_validRawSentences.tryEmit(normalized)
-   val u=parser.parse(normalized,requireChecksum,now)
-   if(u==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
-   liveWind.accept(u,now);u.depthObservation?.let{liveDepth.accept(it)}
-   if(u.trueHeading!=null){headingTrue=u.trueHeading to now;headingSampleSequence++};u.magneticHeading?.let{headingMag=it to now};u.depth?.let{depth=it to now};u.depthObservation?.let(_depthObservations::tryEmit);u.speedThroughWaterKnots?.let{speedThroughWater=it to now};u.sog?.let{sog=it to now};u.cog?.let{cog=it to now};u.hdop?.let{hdop=it to now};u.fixQuality?.let{fixQuality=it to now};u.satellites?.let{satellites=it to now};u.position?.altitudeMeters?.let{altitude=it to now}
+   val envelope=parser.parseEnvelope(normalized,requireChecksum,now)
+   if(envelope==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
+   val u=envelope.update;_parsedEnvelopes.tryEmit(envelope)
+   val generation=connection.diagnostics.value.connectionGeneration
+   sourceRegistry.publishAll(NmeaCandidateMapper.map(envelope,activeProfile.stableId,generation))
+   val headingResolution=headingResolver.accept(u,now)
+   val selectedHeading=headingResolution.selected
+   val previousHeadingSource=_instruments.value.selectedHeadingSourceId
+   headingTrue=selectedHeading?.trueDegrees?.let{it to selectedHeading.receivedElapsedRealtime}
+   headingMag=selectedHeading?.magneticDegrees?.let{it to selectedHeading.receivedElapsedRealtime}
+   if(selectedHeading?.trueDegrees!=null&&(previousHeadingSource!=selectedHeading.sourceId||selectedHeading.receivedElapsedRealtime==now))headingSampleSequence++
+   liveWind.accept(u.copy(trueHeading=selectedHeading?.takeIf{it.receivedElapsedRealtime==now}?.trueDegrees),now);u.depthObservation?.let{liveDepth.accept(it)}
+   u.depth?.let{depth=it to now};u.depthObservation?.let(_depthObservations::tryEmit);u.speedThroughWaterKnots?.let{speedThroughWater=it to now};u.sog?.let{sog=it to now};u.cog?.let{cog=it to now};u.hdop?.let{hdop=it to now};u.fixQuality?.let{fixQuality=it to now};u.satellites?.let{satellites=it to now};u.position?.altitudeMeters?.let{altitude=it to now}
    wind.update(u,now)
-   _instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater)
+   _instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater,selectedHeading?.sourceId,headingResolution.candidates,headingResolution.conflict,headingResolution.conflictDegrees,headingResolution.pinnedSourceUnavailable)
    u.position?.let{position->
     val freshHeading=headingTrue.fresh(now);val windSnapshot=wind.snapshot(now);val freshTrueDirection=windSnapshot.trueDirectionDegrees;val freshTrueSpeed=windSnapshot.trueSpeedKnots;val freshApparentSpeed=windSnapshot.apparentSpeedKnots;val freshApparentAngle=windSnapshot.apparentAngleDegrees;val freshTrueAngle=windSnapshot.trueAngleDegrees
     val heldHdop=hdop?.first;val heldQuality=fixQuality?.first;val heldSatellites=satellites?.first
@@ -105,5 +135,6 @@ data class NmeaInstrumentState(
  }
  private fun Pair<Double,Long>?.fresh(now:Long)=this?.takeIf{now-it.second<=10_000}?.first
  private fun <T> Pair<T,Long>?.fresh(now:Long,maxAge:Long)=this?.takeIf{now-it.second<=maxAge}?.first
- @Synchronized private fun resetHeldMeasurements(){headingTrue=null;headingMag=null;depth=null;speedThroughWater=null;sog=null;cog=null;hdop=null;fixQuality=null;satellites=null;altitude=null;headingSampleSequence=0;wind.clear();liveDepth.clear();liveWind.clear();_fix.value=null;_instruments.value=NmeaInstrumentState()}
+ @Synchronized private fun publishInstruments(now:Long){val resolution=headingResolver.resolve(now);val selected=resolution.selected;headingTrue=selected?.trueDegrees?.let{it to selected.receivedElapsedRealtime};headingMag=selected?.magneticDegrees?.let{it to selected.receivedElapsedRealtime};_instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater,selected?.sourceId,resolution.candidates,resolution.conflict,resolution.conflictDegrees,resolution.pinnedSourceUnavailable)}
+ @Synchronized private fun resetHeldMeasurements(){headingResolver.reset();sourceRegistry.clearNmea();headingTrue=null;headingMag=null;depth=null;speedThroughWater=null;sog=null;cog=null;hdop=null;fixQuality=null;satellites=null;altitude=null;headingSampleSequence=0;wind.clear();liveDepth.clear();liveWind.clear();_fix.value=null;_instruments.value=NmeaInstrumentState()}
 }
