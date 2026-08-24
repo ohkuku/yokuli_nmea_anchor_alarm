@@ -46,6 +46,9 @@ import kotlinx.coroutines.launch
 
 enum class AnchorageDisplayMode{MAP,LIST}
 internal const val UNASSIGNED_REGION_ID=-1L
+internal object AnchorageRegionFilterPolicy{
+    fun matches(primaryRegionId:Long?,selectedRegionId:Long?)=when(selectedRegionId){null->true;UNASSIGNED_REGION_ID->primaryRegionId==null;else->primaryRegionId==selectedRegionId}
+}
 data class AnchorageFilterState(val favoriteOnly:Boolean=false,val planningStatus:AnchoragePlanningStatus?=null,val visitedOnly:Boolean=false)
 data class AnchorageLibraryUiState(
     val allPlaces:List<AnchoragePlaceEntity> = emptyList(),
@@ -67,7 +70,7 @@ data class AnchorageLibraryUiState(
     private val libraryIndex=combine(library.places,database.anchorageRegionDao().observeAll()){all,regions->all to regions}
     val state:StateFlow<AnchorageLibraryUiState> = combine(libraryIndex,visible,selected,controls,library.collections){(all,regions),inViewport,selectedPlace,control,collections->
         val base=(if(control.query.isBlank())inViewport.ifEmpty{all}else inViewport).filter{place->
-            val inRegion=when(control.regionId){null->true;UNASSIGNED_REGION_ID->place.primaryRegionId==null;else->place.primaryRegionId==control.regionId}
+            val inRegion=AnchorageRegionFilterPolicy.matches(place.primaryRegionId,control.regionId)
             inRegion&&(!control.filters.favoriteOnly||place.favorite)&&(!control.filters.visitedOnly||place.visitCountCached+place.legacyVisitCount>0)&&(control.filters.planningStatus==null||place.planningStatus==control.filters.planningStatus.name)
         }
         AnchorageLibraryUiState(all,regions,base,selectedPlace,control.regionId,control.filters,control.mode,control.query,false,collections)

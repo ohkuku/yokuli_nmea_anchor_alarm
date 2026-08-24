@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import com.yokuli.anchorwatch.data.vessel.VesselDataSettings
+import com.yokuli.anchorwatch.data.trip.TripReplayData
 import com.yokuli.anchorwatch.domain.vessel.CandidateValidity
 import com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot
 import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
@@ -81,5 +82,11 @@ class P0OperabilityComposeTest{
         )}}
         compose.onNodeWithTag("start_trip_recording").assertIsNotEnabled()
         compose.onNodeWithText("Waiting for Android GNSS").assertIsDisplayed()
+    }
+
+    @Test fun completedTripWithoutCoordinatesShowsAnExplicitRouteReason(){
+        compose.setContent{YokuliTheme{TripReportRouteMap(TripReplayData(emptyList(),emptyList()))}}
+        compose.onNodeWithTag("trip_route_empty").assertIsDisplayed()
+        compose.onNodeWithText("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.").assertIsDisplayed()
     }
 }

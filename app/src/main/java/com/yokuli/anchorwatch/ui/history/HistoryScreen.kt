@@ -278,7 +278,7 @@ private fun coordinatePair(startLat:Double?,startLon:Double?,endLat:Double?,endL
     }
 }
 
-@Composable private fun TripReportRouteMap(data:TripReplayData?){
+@Composable internal fun TripReportRouteMap(data:TripReplayData?){
     val route=data?.points.orEmpty().mapNotNull{point->if(point.latitude!=null&&point.longitude!=null)LatLng(point.latitude,point.longitude)else null}
     if(data==null){Box(Modifier.fillMaxWidth().height(120.dp).testTag("trip_route_loading"),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
     if(route.isEmpty()){Card(Modifier.fillMaxWidth().testTag("trip_route_empty")){Text(tr("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.","本次航程没有记录到可用坐标；仪表样本与事件仍可在下方查看。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};return}
