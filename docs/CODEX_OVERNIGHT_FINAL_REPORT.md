@@ -64,7 +64,7 @@ New test support and cases include:
 
 ## Verification and full gate result
 
-Per the user's explicit instruction for this pass, no Gradle task, unit test, lint task, emulator, Android connected test, device command or real gateway test was run.
+After the implementation pass, the user explicitly requested a local compile. `./gradlew --no-daemon assembleDebug` was therefore run on 2026-08-25 and passed after correcting one Compose-context compile error. Unit tests, lint, emulator, Android connected tests, device commands and real gateway tests were still not run.
 
 | Gate | Result |
 |---|---|
@@ -73,12 +73,13 @@ Per the user's explicit instruction for this pass, no Gradle task, unit test, li
 | Secret-pattern scan of changed App source | PASS |
 | JVM unit tests | NOT RUN — user instruction |
 | Android lint | NOT RUN — user instruction |
-| Debug/release assemble | NOT RUN — user instruction |
+| Debug assemble | PASS — `assembleDebug`, 2026-08-25 |
+| Release assemble | NOT RUN |
 | Compose/connected tests | NOT RUN — user instruction |
 | Emulator/device | NOT RUN — user instruction |
 | Physical NMEA gateway | UNVERIFIED_HARDWARE |
 
-This branch is therefore **implemented and review-ready, but not release-verified**. It must not be described as build-green or hardware-verified until the deferred gate and manual checklist pass.
+This branch is therefore **Debug-buildable and review-ready, but not release-verified**. It must not be described as fully build-green or hardware-verified until the deferred lint/test/release gates and manual checklist pass.
 
 ## Manual QA
 

@@ -137,8 +137,21 @@
 - Evidence: the carried working tree contains partially applied cross-cutting edits and documentation that claim verification from an earlier pass. This ledger treats those claims as historical only; this pass has not rerun them per user instruction.
 - Reproduction steps: inspect working tree and compare source/diff for duplicated or contradictory mutation routes.
 - Root cause: preceding work was left uncommitted on `codex/develop` before this P0 task began.
-- Failing test: compile/lint gate to be run later; `git diff --check` is the only permitted local static gate in this pass.
+- Failing test: the first permitted `./gradlew --no-daemon assembleDebug` run failed at `WatchBottomSheet.kt:103`; lint and test gates remain deferred.
 - Fix commit: **`ce30e53`, `320e9d3`**
-- Verification result: **Full working diff was reviewed, secret-pattern scan and `git diff --check` passed. Unit/lint/assemble/connected gates remain deliberately NOT RUN.**
+- Verification result: **Full working diff was reviewed, secret-pattern scan and `git diff --check` passed. The first Debug assemble exposed an invalid `@Composable` translation call inside `LaunchedEffect`; translation is now resolved before entering the effect, and the repeated `assembleDebug` passed. Unit/lint/connected gates remain deliberately NOT RUN.**
 - Real hardware verified: **No.**
-- Status: **REVIEWED AND COMMITTED — BUILD INTEGRITY UNVERIFIED UNTIL GATE RUN**
+- Status: **DEBUG BUILD VERIFIED — LINT/TEST/RELEASE/HARDWARE GATES STILL OPEN**
+
+## Finding P0-011 — P0 branch initially failed Kotlin compilation
+
+- Severity: **P0 / release-blocking build integrity**
+- User story: a developer or CI runner must be able to assemble the Debug APK before any manual P0 verification begins.
+- Evidence: the first `./gradlew --no-daemon assembleDebug` run failed with “`@Composable invocations can only happen from the context of a @Composable function`” at `WatchBottomSheet.kt:103`.
+- Reproduction steps: check out `ea6413c` and run `./gradlew --no-daemon assembleDebug`.
+- Root cause: the bilingual `tr(...)` Compose helper was invoked after a coroutine delay inside a `LaunchedEffect` suspend lambda rather than during composition.
+- Failing test: `./gradlew --no-daemon assembleDebug`.
+- Fix commit: **`a545e4a`**
+- Verification result: **The translated message is now resolved during composition and captured by the effect. A redundant always-true post-delay condition reported by the compiler was also removed without changing the single-flight timeout behavior. The final clean `assembleDebug` completed successfully in 28s.**
+- Real hardware verified: **No — not required for compiler verification.**
+- Status: **FIXED AND DEBUG ASSEMBLE PASSED**

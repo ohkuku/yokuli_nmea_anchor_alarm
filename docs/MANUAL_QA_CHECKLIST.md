@@ -1,241 +1,241 @@
-# Anchor by Yokuli — P0 Manual QA Checklist
+# Anchor by Yokuli — P0 人工 QA 检查清单
 
-> Build/commit: ____________________  Date: __________  Tester: __________
+> 构建版本/Commit：____________________　日期：__________　测试人员：__________
 >
-> Phone / Android: ____________________  Boat gateway / firmware: ____________________
+> 手机型号/Android 版本：____________________　船载网关/固件版本：____________________
 >
-> Network topology (Wi‑Fi/AP, RX port, TX port, single-client?): __________________________________
+> 网络拓扑（Wi-Fi/AP、接收端口、发送端口、是否仅支持单客户端）：__________________________________
 
-This pass deliberately did **not** run an emulator, device, unit, lint or Gradle build gate. Complete the safety-critical cases below on the intended hardware before treating the build as verified. For every failure, keep the session open when safe, export a Support Bundle, take a screenshot/screen recording, and enter the actual time.
+本轮已执行并通过 Debug APK 编译（`./gradlew --no-daemon assembleDebug`），但没有运行模拟器、真机、单元测试、Lint 或真实 NMEA 网关测试。正式确认版本可用前，请在目标硬件上完成下列安全关键场景。遇到失败时，在确保安全的前提下保留当前 Session，导出 Support Bundle，保存截图或录屏，并记录实际发生时间。
 
-Result values: `PASS / FAIL / BLOCKED / NOT RUN`.
+结果填写：`通过 / 失败 / 阻塞 / 未测试`。
 
-## A. Cold start and Anchor primary action
+## A. 冷启动与“下锚”主流程
 
-### QA-P0-001 — First Set anchor tap is never a no-op
+### QA-P0-001 — 第一次点击“下锚”绝不能无响应
 
-1. Force-stop the App; enable precise location and notifications.
-2. Open Anchor → Current and wait for a live System GPS fix.
-3. Tap **Set anchor** exactly once.
-4. Verify Watch Preflight opens. Continue, complete required fields, then tap **Start anchor watch** exactly once.
-5. Verify the button shows progress and one active session appears. If it cannot start, verify the same foreground screen gives the exact reason and retains all form values.
+1. 强制停止 App，开启精确位置和通知权限。
+2. 打开“锚警 → 当前”，等待系统 GPS 出现实时有效定位。
+3. 只点击一次 **下锚（Set anchor）**。
+4. 确认“布防前检查（Watch Preflight）”打开。继续并填写所有必填项，然后只点击一次 **开始锚警（Start anchor watch）**。
+5. 确认按钮显示处理中，并且只创建一个活动 Session。如果无法启动，确认当前前台页面显示准确原因，且已填表单内容没有丢失。
 
-- Expected: one tap → one visible transition/result; no notification-only failure; no duplicate session.
-- Result: __________
-- Actual / timestamp: ________________________________________________________________
-- Screenshot / bundle: _______________________________________________________________
-- Notes: _____________________________________________________________________________
+- 预期：一次点击对应一次明确的页面变化或结果；失败不能只出现在通知栏；不能重复创建 Session。
+- 结果：__________
+- 实际现象/时间：________________________________________________________________
+- 截图/Support Bundle：____________________________________________________________
+- 备注：__________________________________________________________________________
 
-### QA-P0-002 — Start while GNSS is cold
+### QA-P0-002 — GNSS 尚未定位时开始下锚
 
-1. Force-stop, disable then re-enable Location, and immediately open Set anchor.
-2. Submit a valid setup before the first GNSS fix arrives.
-3. Wait up to 15 seconds without tapping again.
+1. 强制停止 App，先关闭再重新开启系统定位，然后立即进入下锚流程。
+2. 在首次 GNSS 定位出现前提交一套有效的下锚设置。
+3. 不要重复点击，等待最多 15 秒。
 
-- Expected: progress remains single-flight; the first fresh precise GNSS fix starts the session, or a visible 15-second failure retains the setup.
-- Result / feedback: _________________________________________________________________
+- 预期：启动操作始终只有一个；收到第一个新鲜且精确的 GNSS 定位后创建 Session；若 15 秒内仍不可用，则显示明确错误并保留设置。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-003 — Visible primary blockers
+### QA-P0-003 — 主按钮明确显示阻塞原因
 
-Repeat Set anchor while (a) settings are still loading and (b) a Trip Watch is active.
+分别在以下状态尝试下锚：（a）设置仍在加载；（b）航程监控（Trip Watch）正在运行。
 
-- Expected: the primary button remains tappable and explains the required action; it never looks broken.
-- Result / feedback: _________________________________________________________________
+- 预期：主按钮仍可点击并解释需要先完成什么，不能像坏掉一样完全无反馈。
+- 结果/反馈：____________________________________________________________________
 
-## B. Anchor map and sheet gesture ownership
+## B. 锚警地图与详情面板的手势归属
 
-### QA-P0-004 — Map pan/zoom/marker gestures
+### QA-P0-004 — 地图拖动、缩放与标记操作
 
-1. On Anchor → Current, drag horizontally/vertically, pinch zoom, rotate, tap saved markers and drag a measurement pin.
-2. Repeat with map lock on and off.
+1. 在“锚警 → 当前”地图上横向/纵向拖动、双指缩放、旋转、点击收藏标记，并拖动测距图钉。
+2. 分别在地图锁定和解锁状态下重复操作。
 
-- Expected: the root stays on **Current**; no drag changes to History/Anchorages. Locked mode accepts gestures and returns to the boat while preserving the adjusted scale; unlocked mode stays where browsed.
-- Result / feedback: _________________________________________________________________
+- 预期：根页面始终停留在“当前”，任何地图拖动都不能切换到“历史”或“锚地库”。锁定时允许操作地图，随后自动回船位并保留用户调整后的缩放比例；解锁后保持用户浏览位置。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-005 — Watch details sheet
+### QA-P0-005 — 锚警详情面板
 
-Drag the Watch sheet handle upward and downward; scroll all details while expanded.
+上下拖动锚警详情面板的把手；完全展开后滚动查看所有内容。
 
-- Expected: sheet expands/collapses; map gestures outside the sheet still work; controls remain reachable.
-- Result / feedback: _________________________________________________________________
+- 预期：面板可以展开和收起；面板外的地图手势仍然有效；所有按钮和信息均可访问。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-006 — Other root workspaces
+### QA-P0-006 — 其他根页面手势
 
-Swipe horizontally over Sail instruments and Data controls.
+在“航行（Sail）”仪表和“数据（Data）”控件上横向滑动。
 
-- Expected: inner Sail instrument pages may swipe; Anchor/Sail/Data root sections change only by tapping their tabs.
-- Result / feedback: _________________________________________________________________
+- 预期：航行页面内部的仪表页可以滑动；锚警、航行和数据的根栏目只能通过点击 Tab 切换。
+- 结果/反馈：____________________________________________________________________
 
-## C. NMEA input and paused Anchor recovery
+## C. NMEA 输入与暂停后的锚警恢复
 
-Record real gateway directions before testing:
+测试前记录真实网关的数据方向：
 
-- Boat/server → App RX host/port: ____________________
-- App → boat/server TX host/port: ____________________
-- Same socket explicitly supported? `YES / NO / UNKNOWN`
+- 船/服务器 → App 的接收地址和端口（RX）：____________________
+- App → 船/服务器的发送地址和端口（TX）：____________________
+- 网关是否明确支持同一 Socket 双向通信：`是 / 否 / 不确定`
 
-### QA-P0-007 — Formal NMEA input on a fragile/single-client gateway
+### QA-P0-007 — 脆弱或仅支持单客户端网关的正式 NMEA 输入
 
-1. Ensure no old App/client owns the RX socket.
-2. Data → Input: enter host and RX port; tap **Save & connect input** once.
-3. Observe Connecting → Connected/no data or Receiving. Do not use Output yet.
-4. Check gateway client count if available.
+1. 确保没有旧版 App 或其他客户端占用 RX 连接。
+2. 打开“数据 → 输入”，填写主机和 RX 端口，只点击一次 **保存并连接输入（Save & connect input）**。
+3. 观察状态依次变为“正在连接 → 已连接但无数据”或“正在接收”；此时先不要开启输出。
+4. 如果网关可以显示客户端数量，请检查数量。
 
-- Expected: one formal RX client only; no disposable test connection; quiet valid socket remains connected; invalid host/port shows inline validation and opens no socket.
-- Result / accepted client count: _____________________________________________________
+- 预期：App 只建立一个正式 RX 客户端，不额外建立测试连接；合法但暂时安静的 Socket 保持连接；非法主机或端口在表单中直接报错，且不打开 Socket。
+- 结果/网关接收的客户端数：______________________________________________________
 
-### QA-P0-008 — Delayed traffic and automatic NMEA default
+### QA-P0-008 — 延迟收到数据与自动选择 NMEA
 
-1. Connect while the server is quiet, then begin valid RMC/GGA traffic.
-2. Do not touch the GPS source selector during the wait.
+1. 在服务器暂时不发送数据时建立连接，之后再开始发送有效 RMC/GGA 数据。
+2. 等待期间不要操作 GPS 数据源选择器。
 
-- Expected: connection remains the same generation; after the first usable position, idle Anchor default becomes NMEA. Explicitly tapping System during the wait cancels automatic promotion.
-- Result / feedback: _________________________________________________________________
+- 预期：前后使用同一代正式连接；收到首个可用位置后，空闲状态下的新锚警默认数据源自动变为 NMEA。如果等待期间用户明确选择系统 GPS，则取消自动切换。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-009 — Pause, disconnect, recover, resume once
+### QA-P0-009 — 暂停、断线、恢复后只点一次继续
 
-1. Start a NMEA Anchor session and note session ID/centre/radius/track count.
-2. Pause; disconnect NMEA; restart or reconnect the fragile gateway.
-3. Tap Reconnect once, wait for a fresh valid position, then tap Resume exactly once.
+1. 使用 NMEA 开始锚警，记录 Session ID、锚中心、警戒半径和轨迹点数量。
+2. 暂停锚警，断开 NMEA，然后重启或重新连接脆弱网关。
+3. 只点一次“重新连接”，等待新的有效定位，再只点一次 **继续（Resume）**。
 
-- Expected: Resume shows progress and cannot be tapped repeatedly; up to 15–30 seconds is allowed according to profile; same session ID, centre, radius and earlier track remain; one success/failure result appears in foreground.
-- Result / before-after values: _______________________________________________________
+- 预期：继续按钮显示处理中，且不能被连续点击；根据连接配置允许等待 15–30 秒；恢复后仍是同一 Session，锚中心、半径和旧轨迹均保留；前台只出现一次明确的成功或失败结果。
+- 结果/前后数值：________________________________________________________________
 
-### QA-P0-010 — NMEA loss during active watch
+### QA-P0-010 — 活动锚警期间 NMEA 丢失
 
-Interrupt RX while a NMEA Anchor session is active.
+在 NMEA 锚警运行期间中断 RX。
 
-- Expected: Anchor session stays open; immediate high-priority NMEA-loss notification plus in-App recovery card; GPS data-loss alarm follows its timeout; user may Pause → reconnect/configure/switch to Phone GPS → Resume without re-anchoring.
-- Result / alarm timing: ______________________________________________________________
+- 预期：Session 不会被关闭；立即出现高优先级 NMEA 丢失通知和 App 内恢复卡片；GPS 数据丢失警报按设置的超时触发。用户可以“暂停 → 重新连接/配置/切换到手机 GPS → 继续”，无需重新下锚。
+- 结果/报警时间：________________________________________________________________
 
-### QA-P0-011 — Explicit disconnect really stops input
+### QA-P0-011 — 主动断开必须真正停止输入
 
-With no feature owning NMEA, tap Stop input and watch Raw & health for at least 30 seconds.
+确认没有功能正在依赖 NMEA 后，点击“停止输入”，并观察“原始数据与健康状态”至少 30 秒。
 
-- Expected: RX closes and counters/raw input stop. If a feature owns NMEA, a decision dialog identifies it and Disconnect does not pretend to succeed.
-- Result / feedback: _________________________________________________________________
+- 预期：RX Socket 关闭，计数器和原始输入停止变化。如果仍有功能依赖 NMEA，应弹出决策对话框并指出依赖者，不能假装已经断开。
+- 结果/反馈：____________________________________________________________________
 
-## D. Environmental alerts
+## D. 环境警报
 
-### QA-P0-012 — No new alert without its exact live instrument
+### QA-P0-012 — 没有对应实时仪器时不能新开环境警报
 
-During an active non-Demo Anchor session, disconnect NMEA and open Condition alerts.
+在一个非演示模式的活动锚警中断开 NMEA，然后打开环境/条件警报。
 
-- Expected: disabled Depth/Wind/Wind-shift guards cannot be newly enabled; an already-enabled guard may be switched off; stale/held data is labelled and cannot authorize a new guard; Runtime rechecks the same rule.
-- Result / feedback: _________________________________________________________________
+- 预期：没有对应实时数据时，深度、风速和风向变化警戒不能被新开启；已经开启的警戒仍允许关闭；陈旧或保持值必须明确标记，且不能作为新开启警戒的依据；运行层会再次校验同一规则。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-013 — Resume with configured guard data missing
+### QA-P0-013 — 已配置环境警报但恢复时仪器缺失
 
-Pause a session with an enabled guard, remove the instrument, then resume core GPS monitoring.
+暂停一个已经启用环境警戒的 Session，断开对应仪器，然后只恢复核心 GPS 锚警。
 
-- Expected: UI explains missing instruments; core Anchor may resume, configured guard enters its defined audible data-loss state after grace period, and user can explicitly disable it.
-- Result / feedback: _________________________________________________________________
+- 预期：UI 明确解释缺少什么仪器；核心锚警可以恢复；已配置的环境警戒在宽限期后进入预定的有声数据丢失状态，同时允许用户明确关闭该警戒。
+- 结果/反馈：____________________________________________________________________
 
-## E. Phone vessel sensor → NMEA output story
+## E. 手机船舶传感器 → NMEA 输出
 
-### QA-P0-014 — Ordered calibration
+### QA-P0-014 — 按顺序完成校准
 
-On a real mounted phone, open Settings → Phone vessel sensors and perform only in order:
+把手机真实固定到船上，进入“设置 → 手机船舶传感器”，严格按以下顺序操作：
 
-1. Choose bow edge, secure the phone, set vessel zero.
-2. Confirm **Fixed to the vessel**.
-3. Enter/confirm measured true-heading alignment.
-4. Verify the final readiness card changes to ready.
+1. 选择朝向船艏的手机边缘，固定手机，设置船舶零位。
+2. 确认 **已固定在船上（Fixed to the vessel）**。
+3. 输入并确认测得的真船首向校准值。
+4. 确认最终的就绪卡片变为“已就绪”。
 
-- Expected: every step explains purpose and prerequisite; moving/picking up the phone suspends vessel-frame eligibility; uncalibrated/unaligned phone never becomes a boat heading source.
-- Result / sensor model / feedback: __________________________________________________
+- 预期：每一步都解释用途和前置条件；拿起或移动手机会暂停其船体坐标系资格；未校准或未对齐的手机绝不能成为有效船首向来源。
+- 结果/传感器型号/反馈：__________________________________________________________
 
-### QA-P0-015 — Endpoint test vs production Start
+### QA-P0-015 — 端点测试与正式启动输出的区别
 
-1. Before calibration, configure a separate TX endpoint and run endpoint test.
-2. Verify endpoint test may send its diagnostic, but **Start sharing vessel data** remains blocked.
-3. Complete QA-P0-014; start sharing once.
+1. 在完成校准前，配置一个独立 TX 端点并运行端点测试。
+2. 确认端点测试可以发送诊断数据，但 **开始共享船舶数据（Start sharing vessel data）** 仍被阻止。
+3. 完成 QA-P0-014，再只启动一次正式输出。
 
-- Expected: production start requires zero + vessel mounted + heading alignment; one complete canonical feed is sent; no automatic output start after App restart.
-- Result / feedback: _________________________________________________________________
+- 预期：正式启动要求船舶零位、已固定状态和船首向对齐全部完成；启动后发送一套完整、统一的标准数据流；App 重启后绝不能自动恢复输出。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-016 — Independent RX/TX and heartbeat
+### QA-P0-016 — RX/TX 独立性与固定心跳
 
-Run this twice: first use **TCP client** with different RX and TX ports; then stop it, choose **TCP server**, connect one chartplotter/tablet client to the displayed phone address, and observe both for 2 minutes including unchanged heading/depth.
+本测试执行两次：第一次选择 **TCP 客户端**，并为 RX 和 TX 使用不同端口；停止后选择 **TCP 服务器**，让一台海图仪或平板连接到页面显示的手机地址。两次都持续观察至少 2 分钟，并包含船首向和水深数值没有变化的时间段。
 
-- Expected: RX stays connected; TCP client connects only to the selected TX endpoint; TCP server is the same canonical Output product rather than a second Sharing switch; unchanged usable fields remain present at heartbeat cadence; null/change-only input does not erase held values; stopping output closes only its client/listener and does not stop RX; Raw output shows generated and transport-written lines.
-- Result / receiver evidence: ________________________________________________________
+- 预期：RX 始终保持连接；TCP 客户端只连接所选 TX 端点；TCP 服务器属于同一个统一 NMEA Output 产品，而不是第二套“共享”开关；未变化但仍有效的字段按固定心跳持续发送；输入中的 null 或“仅变化时发送”不能抹掉仍有效的保持值；停止输出只关闭 TX 客户端或监听器，不能停止 RX；“原始输出”同时显示已生成和实际写入传输层的数据行。
+- 结果/接收端证据：______________________________________________________________
 
-## F. Saved Anchorage library and approach
+## F. 收藏锚地库与接近导航
 
-### QA-P0-017 — Single-Spot Place
+### QA-P0-017 — 只有一个锚点的锚地
 
-Open a saved Place containing one Spot from both Map and List.
+分别从地图和列表打开一个只包含一个锚点（Spot）的收藏锚地（Place）。
 
-- Expected: one complete dialog opens directly on one actionable Spot card; no preview/details duplicate; generic stored “Main spot” is displayed as **Primary anchoring spot**; Google Maps and QR work.
-- Result / feedback: _________________________________________________________________
+- 预期：直接打开一个完整详情界面，只显示一个可操作锚点卡片，不重复显示“预览 + 详情”；历史数据中的通用名称“Main spot”应显示为 **主要下锚点**；Google Maps 和二维码功能可用。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-018 — Multi-Spot Place
+### QA-P0-018 — 包含多个锚点的锚地
 
-Open a Place with at least two Spots.
+打开一个至少包含两个锚点的收藏锚地。
 
-- Expected: one dialog shows a list of distinct Spot cards; each Approach action uses that exact coordinate; no implicit first-Spot selection.
-- Result / feedback: _________________________________________________________________
+- 预期：同一详情界面显示多个不同锚点卡片；每个“接近导航（Approach）”都使用该卡片自己的坐标；不能默认偷偷选择第一个锚点。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-019 — Approach is visible and reachable
+### QA-P0-019 — 接近导航必须明确可见且可操作
 
-Start Approach from Anchorages and separately from History.
+分别从“锚地库”和“历史”开始一次接近导航。
 
-- Expected: details close; App returns to Anchor → Current; Watch sheet collapses enough not to cover guidance; target/distance/bearing/heading-mode/cancel are unmistakably visible. A missing/deleted target gives foreground error, never silence.
-- Result / feedback: _________________________________________________________________
+- 预期：详情界面关闭；App 自动回到“锚警 → 当前”；锚警详情面板自动收起到不会遮挡导航；目标、距离、方位、方向模式和取消操作都清晰可见。如果目标已经删除或不存在，应在前台显示错误，绝不能静默失败。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-020 — Map/List controls and region browsing
+### QA-P0-020 — 地图/列表控件与区域浏览
 
-Test smallest supported screen width and 1.3× font scale. Open region selector with classified and unclassified saved Places.
+在支持的最小屏幕宽度和 1.3 倍字体下测试。准备已分类和未分类的收藏锚地，并打开区域筛选。
 
-- Expected: Map/List labels never overlap; all database regions are listed; **Unassigned places** remains browsable; Map and List use the same saved Place repository.
-- Result / feedback: _________________________________________________________________
+- 预期：“地图/列表”文字与图标不重叠；数据库中的所有区域都能列出；**未分配区域的锚地**仍可浏览；地图和列表使用同一套收藏锚地数据源。
+- 结果/反馈：____________________________________________________________________
 
-## G. Trip Watch source and history
+## G. 航程监控的数据源与历史
 
-### QA-P0-021 — Phone GPS trip
+### QA-P0-021 — 使用手机 GPS 记录航程
 
-1. Sail → Start Trip; select **Phone GPS**.
-2. Turn NMEA off; wait for Android GNSS readiness; start.
-3. Record movement and end.
+1. 打开“航行 → 开始航程”，选择 **手机 GPS（Phone GPS）**。
+2. 关闭 NMEA，等待 Android GNSS 就绪，再开始航程。
+3. 移动一段距离后结束航程。
 
-- Expected: Start is blocked until fresh Android GNSS; session stores `PHONE`; samples show phone position; Anchor GPS and Data → Vessel global default are unchanged after ending.
-- Result / sample source: _____________________________________________________________
+- 预期：新鲜 Android GNSS 出现前不能启动；Session 保存的数据源为 `PHONE`；样本使用手机位置；结束后锚警 GPS 设置及“数据 → 船舶”的全局默认值均未被修改。
+- 结果/样本数据源：______________________________________________________________
 
-### QA-P0-022 — Boat NMEA and Auto trips
+### QA-P0-022 — 船载 NMEA 与自动数据源航程
 
-Repeat using Boat NMEA, then Auto; interrupt and restore boat traffic during Auto.
+先使用“船载 NMEA”，再使用“自动”重复测试；自动模式运行期间中断并恢复船载数据。
 
-- Expected: Boat choice requires eligible Boat position; Auto shows the currently selected source and uses deterministic Hub arbitration; recorded source changes/gaps are visible in report timeline.
-- Result / feedback: _________________________________________________________________
+- 预期：船载模式要求存在合格的船载位置；自动模式明确显示当前选中来源，并使用统一且确定的 Vessel Hub 仲裁；记录报告的时间线上可以看到数据源变化和中断空档。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-023 — Trip route history
+### QA-P0-023 — 航程历史地图
 
-Open a completed Trip in History.
+在历史记录中打开一个已经结束的航程。
 
-- Expected: expanded card immediately shows route preview; Report and Replay add detail. A trip with no usable coordinates says so explicitly. A build without Maps reports that the route exists and keeps exports available.
-- Result / feedback: _________________________________________________________________
+- 预期：展开卡片后立即显示航迹预览；“报告”和“回放”提供更多细节。没有可用坐标时必须明确说明原因。未配置 Google Maps 的构建应说明航迹数据仍存在，并继续允许导出。
+- 结果/反馈：____________________________________________________________________
 
-## H. Restart, background and destructive regression
+## H. 重启、后台运行与高风险回归
 
-### QA-P0-024 — Process death/reboot ownership
+### QA-P0-024 — 进程终止/重启后的状态归属
 
-Repeat process kill during (a) active Anchor, (b) paused Anchor, (c) active Trip, (d) NMEA output.
+分别在以下状态终止 App 进程：（a）锚警活动中；（b）锚警已暂停；（c）航程活动中；（d）NMEA 正在输出。随后重新打开 App；如果条件允许，再进行一次系统重启测试。
 
-- Expected: Anchor/Trip restore their durable session safely; paused remains paused; output never auto-starts; no duplicate RX/TX clients; visible health identifies recovery state.
-- Result / feedback: _________________________________________________________________
+- 预期：锚警和航程安全恢复其持久化 Session；暂停状态仍保持暂停；NMEA 输出绝不自动启动；不能产生重复 RX/TX 客户端；健康状态明确显示恢复结果。
+- 结果/反馈：____________________________________________________________________
 
-### QA-P0-025 — Alarm lifecycle regression
+### QA-P0-025 — 警报生命周期回归
 
-Trigger test alarm and real Demo radius alarm; verify Acknowledge/snooze, adjust range, Pause and Lift.
+分别触发警报试听和演示模式的真实越界警报，检查“确认/稍后提醒”、调整范围、暂停和起锚。
 
-- Expected: test controls remain visible above the UI; stop always silences; Pause/Lift/range-safe state cancels inappropriate ringing; snooze re-reminds rather than permanently suppressing a continuing danger.
-- Result / feedback: _________________________________________________________________
+- 预期：试听期间控制按钮始终可见且不会被覆盖；停止试听一定立即静音；暂停、起锚或调整到安全范围后，不应继续错误鸣响；危险仍持续时，“稍后提醒”应在设定时间后再次提醒，而不是永久关闭警报。
+- 结果/反馈：____________________________________________________________________
 
-## Final hardware gate
+## 最终硬件门禁
 
-- All P0 cases passed: `YES / NO`
-- Open failure IDs: _________________________________________________________________
-- Support bundles attached: _________________________________________________________
-- Safe to merge/release: `YES / NO`
-- QA sign-off: ____________________  Date/time: ____________________
+- 全部 P0 场景通过：`是 / 否`
+- 尚未解决的失败编号：____________________________________________________________
+- 已附 Support Bundle：____________________________________________________________
+- 可以合并/发布：`是 / 否`
+- QA 签字：____________________　日期/时间：____________________
