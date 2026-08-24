@@ -46,6 +46,7 @@ data class NmeaTxStatus(
     val lastError:String?=null,
     val message:String="Off",
     val sentenceTypes:Set<String> = emptySet(),
+    val recentGenerated:List<String> = emptyList(),
     val recentTx:List<String> = emptyList(),
     val streams:Map<String,NmeaStreamTxStatus> = emptyMap(),
 ){
@@ -145,12 +146,18 @@ class NmeaDeviceOutputConnection @Inject constructor(
     private val guard=Any()
     private var configured=NmeaDeviceOutputSettings()
     private val recent=ArrayDeque<String>()
+    private val generated=ArrayDeque<String>()
     private val _status=MutableStateFlow(NmeaTxStatus())
     val status=_status.asStateFlow()
     private var consecutiveFailures=0
     private var nextDedicatedAttemptElapsed=0L
 
-    fun recordGenerated(stream:String,now:Long=SystemClock.elapsedRealtime()):Long=synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();val sequence=old.lastGeneratedSequence+1;val rate=old.lastGeneratedElapsed?.let{previous->(now-previous).takeIf{it>0}?.let{1_000.0/it}}?:old.generatedRateHz;_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(lastGeneratedElapsed=now,suppressionReason=null,generatedCount=old.generatedCount+1,lastGeneratedSequence=sequence,generatedRateHz=rate)));sequence}
+    fun recordGenerated(stream:String,sentences:List<String>,now:Long=SystemClock.elapsedRealtime()):Long=synchronized(guard){
+        val old=_status.value.streams[stream]?:NmeaStreamTxStatus();val sequence=old.lastGeneratedSequence+1;val rate=old.lastGeneratedElapsed?.let{previous->(now-previous).takeIf{it>0}?.let{1_000.0/it}}?:old.generatedRateHz
+        val timestamp=java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS"))
+        sentences.forEach{line->generated.addLast("$timestamp  [$stream] ${line.trim()}");while(generated.size>RECENT_LIMIT)generated.removeFirst()}
+        _status.value=_status.value.copy(recentGenerated=generated.toList(),streams=_status.value.streams+(stream to old.copy(lastGeneratedElapsed=now,suppressionReason=null,generatedCount=old.generatedCount+1,lastGeneratedSequence=sequence,generatedRateHz=rate)));sequence
+    }
     fun recordDropped(stream:String){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(droppedCount=old.droppedCount+1)))}}
     fun recordSuppressed(stream:String,reason:String){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(suppressionReason=reason)))}}
     fun recordDecision(stream:String,policy:PublicationPolicy,decision:PublicationDecision,dataReady:Boolean){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(policy=policy,ownership=decision.ownership,dataReady=dataReady,suppressionReason=decision.suppression?.name)))}}

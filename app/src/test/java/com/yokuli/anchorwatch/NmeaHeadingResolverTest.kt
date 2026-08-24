@@ -39,4 +39,13 @@ class NmeaHeadingResolverTest{
         val available=resolver.accept(heading("HCHDT","HDT",21.0),1_100)
         assertEquals("HCHDT",available.selected?.sourceId);assertFalse(available.pinnedSourceUnavailable)
     }
+
+    @Test fun explicitInvalidityRemovesOnlyThatPhysicalHeadingSource(){
+        val resolver=NmeaHeadingResolver()
+        resolver.accept(heading("IIHDT","HDT",20.0),0)
+        resolver.accept(heading("HCHDT","HDT",21.0),100)
+        val afterInvalid=resolver.accept(NmeaUpdate(type="HDT",sentenceId="IIHDT",holdAllowed=false),200)
+        assertEquals("HCHDT",afterInvalid.selected?.sourceId)
+        assertTrue(afterInvalid.candidates.none{it.sourceId=="IIHDT"})
+    }
 }

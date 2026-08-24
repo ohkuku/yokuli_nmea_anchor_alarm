@@ -31,7 +31,54 @@ class NmeaStreamSplitter(private val maxLength:Int=1024) {
  }
 }
 
-data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val depth:Double?=null,val depthObservation:DepthObservation?=null,val speedThroughWaterKnots:Double?=null,val hdop:Double?=null,val fixQuality:Int?=null,val satellites:Int?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String,val sentenceId:String="")
+data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val magneticVariationDegrees:Double?=null,val depth:Double?=null,val depthObservation:DepthObservation?=null,val speedThroughWaterKnots:Double?=null,val hdop:Double?=null,val fixQuality:Int?=null,val satellites:Int?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String,val sentenceId:String="",val holdAllowed:Boolean=true)
+
+/**
+ * Some marine gateways send a complete value once and then repeat the same
+ * sentence with blank fields while that value is unchanged. Retention is
+ * deliberately scoped to one full sentence id and one live transport
+ * generation. It therefore cannot borrow depth/heading/wind from another
+ * instrument, endpoint or reconnect generation.
+ *
+ * Explicit negative validity (RMC/GLL/MWV V, GGA quality 0) clears that source;
+ * only an ordinary blank field is treated as "unchanged".
+ */
+class NmeaUpdateRetainer {
+ private val held=linkedMapOf<String,NmeaUpdate>()
+ @Synchronized fun accept(update:NmeaUpdate,elapsed:Long,rawSentence:String):NmeaUpdate{
+  val key=update.sentenceId.ifBlank{update.type}.uppercase()
+  if(key.isBlank())return update
+  if(!update.holdAllowed){held.remove(key);return update}
+  val previous=held[key]
+  fun carriedPosition():NavigationFix?=(update.position?:previous?.position)?.let{fix->
+   if(update.position!=null)fix else fix.copy(receivedElapsedRealtime=elapsed,sourceSentence=rawSentence)
+  }
+  val carriedDepth=(update.depthObservation?:previous?.depthObservation)?.let{observation->
+   val previousDepth=previous?.depthObservation
+   if(update.depthObservation!=null){
+    val offset=observation.offsetMeters?:previousDepth?.offsetMeters
+    observation.copy(offsetMeters=offset,reference=if(observation.offsetMeters==null&&previousDepth!=null)previousDepth.reference else observation.reference,receivedElapsedRealtime=elapsed,sourceSentence=rawSentence)
+   }else observation.copy(receivedElapsedRealtime=elapsed,sourceSentence=rawSentence)
+  }
+  val variation=update.magneticVariationDegrees?:previous?.magneticVariationDegrees
+  val magnetic=update.magneticHeading?:previous?.magneticHeading
+  val resolvedTrueHeading=update.trueHeading?:if((update.magneticHeading!=null||update.magneticVariationDegrees!=null)&&magnetic!=null&&variation!=null)(magnetic+variation+360.0)%360.0 else previous?.trueHeading
+  val merged=update.copy(
+   position=carriedPosition(),sog=update.sog?:previous?.sog,cog=update.cog?:previous?.cog,
+   trueHeading=resolvedTrueHeading,magneticHeading=magnetic,magneticVariationDegrees=variation,
+   depth=update.depth?:previous?.depth,depthObservation=carriedDepth,
+   speedThroughWaterKnots=update.speedThroughWaterKnots?:previous?.speedThroughWaterKnots,
+   hdop=update.hdop?:previous?.hdop,fixQuality=update.fixQuality?:previous?.fixQuality,satellites=update.satellites?:previous?.satellites,
+   trueWindDirection=update.trueWindDirection?:previous?.trueWindDirection,windSpeedKnots=update.windSpeedKnots?:previous?.windSpeedKnots,
+   apparentWindAngle=update.apparentWindAngle?:previous?.apparentWindAngle,trueWindAngle=update.trueWindAngle?:previous?.trueWindAngle,
+   trueWindSpeedKnots=update.trueWindSpeedKnots?:previous?.trueWindSpeedKnots,apparentWindSpeedKnots=update.apparentWindSpeedKnots?:previous?.apparentWindSpeedKnots,
+   utcMillis=update.utcMillis?:previous?.utcMillis,
+  )
+  held[key]=merged
+  return merged
+ }
+ @Synchronized fun clear(){held.clear()}
+}
 
 class Nmea0183Parser {
  fun parseEnvelope(line:String,requireChecksum:Boolean=true,elapsed:Long=System.nanoTime()/1_000_000):ParsedNmeaEnvelope?{
@@ -62,14 +109,14 @@ class Nmea0183Parser {
   // course-trust gates. The last previously valid components remain held.
   val sog=parsedSog.takeIf{status==true};val cog=parsedCog.takeIf{status==true}
   val position=if(status==null)null else p?.let{NavigationFix(it.first,it.second,utc,e,sog,cog,sourceSentence=raw,valid=status)}
-  return NmeaUpdate(position,sog,cog,utcMillis=utc,type="RMC")
+  return NmeaUpdate(position,sog,cog,utcMillis=utc,type="RMC",holdAllowed=status!=false)
  }
- private fun gga(f:List<String>,raw:String,e:Long):NmeaUpdate { val p=position(f,2,3,4,5);val q=f.getOrNull(6)?.toIntOrNull();val hdop=f.getOrNull(8).d();val satellites=f.getOrNull(7)?.toIntOrNull();val position=if(q==null)null else p?.let{NavigationFix(it.first,it.second,null,e,hdop=hdop,fixQuality=q,satellites=satellites,altitudeMeters=f.getOrNull(9).d(),sourceSentence=raw,valid=q>0)};return NmeaUpdate(position=position,hdop=hdop,fixQuality=q,satellites=satellites,type="GGA") }
- private fun gll(f:List<String>,raw:String,e:Long):NmeaUpdate { val p=position(f,1,2,3,4);val status=validity(f.getOrNull(6),"A","V");return NmeaUpdate(if(status==null)null else p?.let{NavigationFix(it.first,it.second,null,e,sourceSentence=raw,valid=status)},type="GLL") }
- private fun hdg(f:List<String>):NmeaUpdate { val mag=f.getOrNull(1).d(); val variation=f.getOrNull(4).d()?.let{if(f.getOrNull(5)=="W")-it else it}; return NmeaUpdate(trueHeading=if(mag!=null&&variation!=null)(mag+variation+360)%360 else null,magneticHeading=mag,type="HDG") }
+ private fun gga(f:List<String>,raw:String,e:Long):NmeaUpdate { val p=position(f,2,3,4,5);val q=f.getOrNull(6)?.toIntOrNull();val hdop=f.getOrNull(8).d();val satellites=f.getOrNull(7)?.toIntOrNull();val position=if(q==null)null else p?.let{NavigationFix(it.first,it.second,null,e,hdop=hdop,fixQuality=q,satellites=satellites,altitudeMeters=f.getOrNull(9).d(),sourceSentence=raw,valid=q>0)};return NmeaUpdate(position=position,hdop=hdop,fixQuality=q,satellites=satellites,type="GGA",holdAllowed=q!=0) }
+ private fun gll(f:List<String>,raw:String,e:Long):NmeaUpdate { val p=position(f,1,2,3,4);val status=validity(f.getOrNull(6),"A","V");return NmeaUpdate(if(status==null)null else p?.let{NavigationFix(it.first,it.second,null,e,sourceSentence=raw,valid=status)},type="GLL",holdAllowed=status!=false) }
+ private fun hdg(f:List<String>):NmeaUpdate { val mag=f.getOrNull(1).d(); val variation=f.getOrNull(4).d()?.let{if(f.getOrNull(5).equals("W",true))-it else it}; return NmeaUpdate(trueHeading=if(mag!=null&&variation!=null)(mag+variation+360)%360 else null,magneticHeading=mag,magneticVariationDegrees=variation,type="HDG") }
  private fun mwd(f:List<String>):NmeaUpdate { val knots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(1.943844);return NmeaUpdate(trueWindDirection=f.getOrNull(1).d(),windSpeedKnots=knots,trueWindSpeedKnots=knots,type="MWD") }
  private fun mwv(f:List<String>):NmeaUpdate {
-  if(f.getOrNull(5)!="A")return NmeaUpdate(type="MWV")
+  if(f.getOrNull(5)!="A")return NmeaUpdate(type="MWV",holdAllowed=!f.getOrNull(5).equals("V",true))
   val angle=f.getOrNull(1).d()?.let{(it%360.0+360.0)%360.0}
   val speed=f.getOrNull(3).d()?.let{when(f.getOrNull(4)){"M"->it*1.943844;"K"->it*.539957;else->it}}
   return when(f.getOrNull(2)){"R"->NmeaUpdate(windSpeedKnots=speed,apparentWindAngle=angle,apparentWindSpeedKnots=speed,type="MWV");"T"->NmeaUpdate(windSpeedKnots=speed,trueWindAngle=angle,trueWindSpeedKnots=speed,type="MWV");else->NmeaUpdate(type="MWV")}

@@ -1,5 +1,6 @@
 package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.data.nmea.*
+import com.yokuli.anchorwatch.domain.sonar.DepthReference
 import org.junit.Assert.*
 import org.junit.Test
 class NmeaParserTest{private val p=Nmea0183Parser()
@@ -34,6 +35,34 @@ class NmeaParserTest{private val p=Nmea0183Parser()
   assertEquals(225.0,weather.trueWindDirection!!,.01);assertEquals(14.0,weather.trueWindSpeedKnots!!,.01)
   assertEquals("ROT",p.parse("\$IIROT,2.3,A",false)!!.type)
   assertEquals("XDR",p.parse("\$IIXDR,A,3.1,D,HEEL",false)!!.type)
+ }
+ @Test fun blankFieldsRefreshTheSamePhysicalSourceWithoutErasingItsValue(){
+  val retainer=NmeaUpdateRetainer()
+  val depth=retainer.accept(p.parse("\$IIDBT,16.4,f,5.0,M,2.7,F",false,100)!!,100,"\$IIDBT,16.4,f,5.0,M,2.7,F")
+  val heldDepth=retainer.accept(p.parse("\$IIDBT,,f,,M,,F",false,250)!!,250,"\$IIDBT,,f,,M,,F")
+  assertEquals(5.0,depth.depth!!,.001);assertEquals(5.0,heldDepth.depth!!,.001)
+  assertEquals(250,heldDepth.depthObservation!!.receivedElapsedRealtime)
+
+  val heading=retainer.accept(p.parse("\$IIHDT,123.4,T",false,300)!!,300,"\$IIHDT,123.4,T")
+  val heldHeading=retainer.accept(p.parse("\$IIHDT,,T",false,400)!!,400,"\$IIHDT,,T")
+  assertEquals(heading.trueHeading,heldHeading.trueHeading)
+
+  retainer.accept(p.parse("\$IIHDG,100.0,,,10.0,E",false,500)!!,500,"\$IIHDG,100.0,,,10.0,E")
+  val changedMagnetic=retainer.accept(p.parse("\$IIHDG,110.0,,,,",false,600)!!,600,"\$IIHDG,110.0,,,,")
+  assertEquals(10.0,changedMagnetic.magneticVariationDegrees!!,.001);assertEquals(120.0,changedMagnetic.trueHeading!!,.001)
+
+  retainer.accept(p.parse("\$IIDPT,5.0,-1.2",false,700)!!,700,"\$IIDPT,5.0,-1.2")
+  val changedDepth=retainer.accept(p.parse("\$IIDPT,6.0,",false,800)!!,800,"\$IIDPT,6.0,")
+  assertEquals(-1.2,changedDepth.depthObservation!!.offsetMeters!!,.001);assertEquals(DepthReference.BELOW_KEEL,changedDepth.depthObservation!!.reference)
+ }
+ @Test fun retentionNeverCrossesTalkersAndExplicitInvalidityClearsTheSource(){
+  val retainer=NmeaUpdateRetainer()
+  retainer.accept(p.parse("\$IIHDT,123.4,T",false,100)!!,100,"\$IIHDT,123.4,T")
+  assertNull(retainer.accept(p.parse("\$HCHDT,,T",false,200)!!,200,"\$HCHDT,,T").trueHeading)
+  retainer.accept(p.parse("\$IIMWV,30.0,R,12.0,N,A",false,300)!!,300,"\$IIMWV,30.0,R,12.0,N,A")
+  val invalid=retainer.accept(p.parse("\$IIMWV,30.0,R,12.0,N,V",false,400)!!,400,"\$IIMWV,30.0,R,12.0,N,V")
+  assertFalse(invalid.holdAllowed);assertNull(invalid.apparentWindSpeedKnots)
+  assertNull(retainer.accept(p.parse("\$IIMWV,,R,,N,A",false,500)!!,500,"\$IIMWV,,R,,N,A").apparentWindSpeedKnots)
  }
  @Test fun streamSplitsAndBatches(){val s=NmeaStreamSplitter();assertTrue(s.feed("\$GPR").isEmpty());assertEquals("\$GPRMC,A",s.feed("MC,A\r\n").single());assertEquals(3,s.feed("\$A\r\n\$B\n\$C\r\n").size)}
 }

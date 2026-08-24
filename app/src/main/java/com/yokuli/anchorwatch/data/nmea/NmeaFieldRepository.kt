@@ -45,12 +45,51 @@ data class NmeaFieldObservation(
     fun isFresh(nowElapsed:Long,maxAgeMillis:Long=30_000L)=nowElapsed-receivedElapsedRealtime in 0L..maxAgeMillis
 }
 
+data class NmeaFieldHeartbeat(val talker:String,val sentenceType:String,val allowsHold:Boolean)
+
+/** Same-source last-value cache for the generic field bus (MDA/XDR/etc.). */
+class NmeaFieldRetentionBuffer(private val retentionMillis:Long=30_000L){
+    private val held=linkedMapOf<String,NmeaFieldObservation>()
+    @Synchronized fun accept(decoded:List<NmeaFieldObservation>,heartbeat:NmeaFieldHeartbeat?,rawLine:String,elapsed:Long):List<NmeaFieldObservation>{
+        if(heartbeat?.allowsHold==false){
+            held.entries.removeAll{(_,value)->value.key.talker==heartbeat.talker&&value.key.sentenceType==heartbeat.sentenceType}
+        }else if(heartbeat!=null){
+            val updated=decoded.mapTo(mutableSetOf()){it.key.stableId}
+            val carried=held.entries.filter{(_,value)->value.key.talker==heartbeat.talker&&value.key.sentenceType==heartbeat.sentenceType&&value.key.stableId !in updated}
+            carried.forEach{(id,value)->held[id]=value.copy(receivedElapsedRealtime=elapsed,rawSentence=rawLine.trim())}
+        }
+        decoded.forEach{held[it.key.stableId]=it}
+        held.entries.removeAll{elapsed-it.value.receivedElapsedRealtime>retentionMillis}
+        return held.values.sortedWith(compareBy<NmeaFieldObservation>{it.key.sentenceType}.thenBy{it.key.fieldIndex}.thenBy{it.key.transducerName.orEmpty()})
+    }
+    @Synchronized fun clear(){held.clear()}
+}
+
 /**
  * Produces a discoverable field bus without changing the safety parser. Empty
  * fields are deliberately omitted: an absent field means no update and never
  * erases the most recent observation from that field key.
  */
 object NmeaFieldDecoder {
+    fun heartbeat(line:String):NmeaFieldHeartbeat?{
+        if(!NmeaChecksum.validate(line,required=false))return null
+        val fields=line.trim().removePrefix("$").substringBefore('*').split(',')
+        val id=fields.firstOrNull()?.uppercase(Locale.US).orEmpty();if(id.length<3)return null
+        val type=id.takeLast(3);val talker=id.dropLast(3).ifBlank{"--"}
+        val explicitlyInvalid=when(type){
+            "RMC"->fields.getOrNull(2).equals("V",true)
+            "GGA"->fields.getOrNull(6)?.toIntOrNull()==0
+            "GLL"->fields.getOrNull(6).equals("V",true)
+            "MWV"->fields.getOrNull(5).equals("V",true)
+            "ROT"->fields.getOrNull(2).equals("V",true)
+            "RSA"->fields.getOrNull(2).equals("V",true)&&fields.getOrNull(4).equals("V",true)
+            "RMB"->fields.getOrNull(1).equals("V",true)
+            "XTE","APB"->fields.getOrNull(2).equals("V",true)
+            else->false
+        }
+        return NmeaFieldHeartbeat(talker,type,!explicitlyInvalid)
+    }
+
     fun decode(line:String,elapsed:Long=SystemClock.elapsedRealtime()):List<NmeaFieldObservation>{
         if(!NmeaChecksum.validate(line,required=false))return emptyList()
         val raw=line.trim();val fields=raw.removePrefix("$").substringBefore('*').split(',')
@@ -120,16 +159,16 @@ object NmeaFieldDecoder {
 @Singleton
 class NmeaFieldRepository @Inject constructor(navigation:NavigationRepository){
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
-    private val held=linkedMapOf<String,NmeaFieldObservation>()
+    private val retention=NmeaFieldRetentionBuffer(DISCOVERY_RETENTION_MILLIS)
     private val _fields=MutableStateFlow<List<NmeaFieldObservation>>(emptyList());val fields=_fields.asStateFlow()
     init{
-        scope.launch{navigation.transportDiagnostics.map{it.connectionGeneration}.distinctUntilChanged().drop(1).collect{synchronized(held){held.clear();_fields.value=emptyList()}}}
+        scope.launch{navigation.transportDiagnostics.map{it.connectionGeneration}.distinctUntilChanged().drop(1).collect{retention.clear();_fields.value=emptyList()}}
         scope.launch{navigation.validRawSentences.collect{line->accept(line)}}
     }
-    fun accept(line:String,elapsed:Long=SystemClock.elapsedRealtime())=synchronized(held){
-        NmeaFieldDecoder.decode(line,elapsed).forEach{held[it.key.stableId]=it}
-        held.entries.removeAll{elapsed-it.value.receivedElapsedRealtime>DISCOVERY_RETENTION_MILLIS}
-        _fields.value=held.values.sortedWith(compareBy<NmeaFieldObservation>{it.key.sentenceType}.thenBy{it.key.fieldIndex}.thenBy{it.key.transducerName.orEmpty()})
+    fun accept(line:String,elapsed:Long=SystemClock.elapsedRealtime()){
+        val decoded=NmeaFieldDecoder.decode(line,elapsed)
+        val heartbeat=NmeaFieldDecoder.heartbeat(line)
+        _fields.value=retention.accept(decoded,heartbeat,line,elapsed)
     }
     fun semantic(value:NmeaFieldSemantic):NmeaFieldObservation?=fields.value.filter{it.key.semantic==value}.maxByOrNull{it.receivedElapsedRealtime}
     companion object{const val DISCOVERY_RETENTION_MILLIS=30_000L}

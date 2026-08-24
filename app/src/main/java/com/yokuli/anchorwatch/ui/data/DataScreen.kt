@@ -49,7 +49,6 @@ import com.yokuli.anchorwatch.data.nmea.output.NmeaOutputEndpointPolicy
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
-import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.domain.vessel.VesselObservation
 import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
@@ -104,8 +103,8 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     LaunchedEffect(pager){snapshotFlow{pager.currentPage}.collect(vm::rememberDataSection)}
     Column(Modifier.fillMaxSize().testTag("data_page")){
         PrimaryTabRow(selectedTabIndex=pager.currentPage){
-            listOf(tr("Vessel","船舶"),tr("NMEA Input","NMEA 输入"),tr("NMEA Output","NMEA 输出"),tr("Sonar","声呐")).forEachIndexed{index,label->
-                Tab(selected=pager.currentPage==index,onClick={scope.launch{pager.animateScrollToPage(index)}},text={Text(label,maxLines=2)})
+            listOf(tr("Vessel","船舶"),tr("Input","输入"),tr("Output","输出"),tr("Sonar","声呐")).forEachIndexed{index,label->
+                Tab(selected=pager.currentPage==index,onClick={scope.launch{pager.animateScrollToPage(index)}},modifier=Modifier.testTag("data_tab_${listOf("vessel","input","output","sonar")[index]}"),text={Text(label,maxLines=1)})
             }
         }
         HorizontalPager(pager,Modifier.weight(1f)){section->when(section){0->VesselDataSourcesPage(state,vm);1->NmeaWorkspacePage(state,vm);2->DataOutputSettingsPage(state,vm);else->SonarSurveyPage(state,vm)}}
@@ -376,10 +375,11 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
         vm.clearConnectionAttempt()
     }
     LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("nmea_runtime_list"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { PageHeader(tr("NMEA connection","NMEA 连接"), tr("Configure and verify live traffic. A successful connection becomes the next default unless a session is open.","配置并验证实时数据。连接成功后会成为下次默认来源，但不会改变已开启会话。")) }
+        item { PageHeader(tr("NMEA input","NMEA 输入"), tr("Server → App receive (RX). This connection and App → Server output (TX) have separate controls.","服务器 → App 的接收连接（RX）。它与 App → 服务器的输出（TX）分别管理。")) }
+        if(state.outputSettings.publicationEnabled)item{Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(if(state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)tr("Same-socket output is using this RX connection. Stop output on the Output tab before stopping input.","同 Socket 输出正在使用这条输入连接。停止输入前，请先到“输出”页停止输出。")else tr("Dedicated NMEA output is running independently. Stopping input here does not stop TX; use Stop all output on the Output tab when needed.","独立 NMEA 输出正在单独运行。停止输入不会关闭 TX；需要时请到“输出”页点击“停止全部 NMEA 输出”。"),Modifier.fillMaxWidth().padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSecondaryContainer)}}
         if(activeWatchNmeaFault)item { Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Anchor watch needs a usable NMEA position","锚警需要可用的 NMEA 船位"),style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer);Text(tr("The transport may be disconnected, stale, without a current fix, or reporting unacceptable quality. The session remains locked to NMEA with no silent failover. Reconnect, or pause safely before changing the source.","连接可能已断开、过期、没有当前定位，或正在报告不合格的定位质量。本次会话仍锁定 NMEA，不会静默切源。请重连，或先安全暂停再更换数据源。"),color=MaterialTheme.colorScheme.onErrorContainer);OutlinedButton({showWatchDisconnect=true}){Text(tr("Pause safely","安全暂停"))}}} }
         item{ConnectionResultCard(state)}
-        if(connectionRunning)item{Column{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect","重连"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Disconnect","断开"))}};TextButton({showConnectionSettings=!showConnectionSettings},Modifier.align(Alignment.End)){Icon(if(showConnectionSettings)Icons.Default.ExpandLess else Icons.Default.Tune,null);Spacer(Modifier.width(4.dp));Text(if(showConnectionSettings)tr("Hide connection settings","收起连接设置")else tr("Connection settings","连接设置"))}}}
+        if(connectionRunning)item{Column{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect input","重连输入"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Stop input","停止输入"))}};TextButton({showConnectionSettings=!showConnectionSettings},Modifier.align(Alignment.End)){Icon(if(showConnectionSettings)Icons.Default.ExpandLess else Icons.Default.Tune,null);Spacer(Modifier.width(4.dp));Text(if(showConnectionSettings)tr("Hide connection settings","收起连接设置")else tr("Connection settings","连接设置"))}}}
         if(!connectionRunning||showConnectionSettings)
         item { Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if(connectionRunning) AssistChip({}, { Text(tr("Configuration locked while connected","连接期间配置已锁定")) }, leadingIcon={Icon(Icons.Default.Lock,null,Modifier.size(18.dp))}, enabled=false)
@@ -537,7 +537,7 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
             DiagnosticsRow(tr("True / apparent wind","真风 / 视风"),"${heldNmeaValue(trueWind?.value,trueWind?.receivedElapsedRealtime,"kn",now)}  ·  ${heldNmeaValue(apparentWind?.value,apparentWind?.receivedElapsedRealtime,"kn",now)}")
             DiagnosticsRow(tr("Depth","水深"),heldNmeaValue(depth?.depthMeters,depth?.receivedElapsedRealtime,"m",now,3_000L))
             DiagnosticsRow(tr("HDOP / provider","HDOP / 提供者"),"${heldNmeaValue(state.nmeaFix?.hdop,state.nmeaFix?.hdopReceivedElapsedRealtime,"",now)}  ·  ${state.nmeaFix?.positionProvider?.name?.let{diagnosticState(it)}?:"—"}")
-            Text(tr("A missing field means this sentence did not update that instrument. The last valid value is retained with its original age until the NMEA connection generation changes.","字段为空只表示本条语句没有更新该仪表。最后一次有效值会连同原始更新时间保留，直到 NMEA 连接代次改变。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("A blank field in a valid sentence means unchanged. That same physical source refreshes its last value; an explicit invalid status clears it, and values are never borrowed across instruments or reconnects.","有效语句中的空字段表示数值未变化。同一物理来源会刷新上一值；明确的无效状态会清除该值，且不同仪器或重连代次之间绝不会互相借值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }}}
         item{RuntimeHealthCard(state,tileDiagnostics,healthExpanded){healthExpanded=!healthExpanded}}
         item{Column(verticalArrangement=Arrangement.spacedBy(8.dp)){

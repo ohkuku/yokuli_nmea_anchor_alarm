@@ -37,8 +37,11 @@ class NmeaHeadingResolver(
     @Synchronized fun pin(sourceId:String?){pinnedId=sourceId?.trim()?.uppercase()?.takeIf{it.isNotBlank()};selectedId=null}
 
     @Synchronized fun accept(update:NmeaUpdate,now:Long):NmeaHeadingResolution{
-        if(update.type in HEADING_TYPES&&(update.trueHeading!=null||update.magneticHeading!=null)){
-            val id=update.sentenceId.ifBlank{update.type}.uppercase()
+        val id=update.sentenceId.ifBlank{update.type}.uppercase()
+        if(update.type in HEADING_TYPES&&!update.holdAllowed){
+            candidates.remove(id)
+            if(selectedId==id)selectedId=null
+        }else if(update.type in HEADING_TYPES&&(update.trueHeading!=null||update.magneticHeading!=null)){
             candidates[id]=NmeaHeadingCandidate(id,update.type,update.trueHeading?.normalized(),update.magneticHeading?.normalized(),now)
         }
         return resolve(now)

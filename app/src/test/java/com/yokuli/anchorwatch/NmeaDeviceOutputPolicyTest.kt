@@ -8,6 +8,7 @@ import com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaTcpClient
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
+import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
@@ -25,8 +26,10 @@ class NmeaDeviceOutputPolicyTest{
     }
 
     @Test fun firstUseCannotEnableStreamsBeforeTransportChoice(){
+        assertTrue(NmeaDeviceOutputSettings(phoneHeadingEnabled=true).anyStreamSelected)
         assertFalse(NmeaDeviceOutputSettings(phoneHeadingEnabled=true).anyEnabled)
-        assertTrue(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true).anyEnabled)
+        assertFalse(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true).anyEnabled)
+        assertTrue(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true).anyEnabled)
     }
 
     @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){

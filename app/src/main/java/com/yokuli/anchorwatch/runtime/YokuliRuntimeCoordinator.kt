@@ -44,6 +44,7 @@ import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.data.vessel.withPolicy
 import com.yokuli.anchorwatch.data.vessel.effectivePositionPolicy
+import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
 import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictPolicy
 import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictState
@@ -230,7 +231,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
    RuntimeCommand.ResumeWatch->launchCommand{anchorActor.execute{resume();conditionRuntime.sync(activeSession())}}
    is RuntimeCommand.SwitchWatchGpsSource->launchCommand{anchorActor.execute{
     val output=outputSettings.settings.first()
-    if(command.source==GpsDataSource.NMEA&&output.phonePositionEnabled){
+    if(command.source==GpsDataSource.NMEA&&output.phonePositionPublishing){
      notifySeparate("GPS source not changed","Turn off Phone Position output before using NMEA Position for this anchor session.",true)
     }else{
      switchPausedPositionSource(command.source)
@@ -424,8 +425,9 @@ class YokuliRuntimeCoordinator @Inject constructor(
    stopped+="NMEA Sharing"
   }
   if(RuntimeOwner.PHONE_NMEA_OUTPUT in nmeaOwners&&outputSettings.settings.first().anyEnabled){
-   outputSettings.save(NmeaDeviceOutputSettings())
-   phonePositionOutput.configure(NmeaDeviceOutputSettings())
+   val outputStopped=outputSettings.settings.first().copy(publicationEnabled=false)
+   outputSettings.save(outputStopped)
+   phonePositionOutput.configure(outputStopped)
    stopped+="phone-to-boat output"
   }
   val remainingOwners=resources.snapshot().nmeaOwners

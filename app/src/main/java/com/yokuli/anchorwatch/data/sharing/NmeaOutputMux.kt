@@ -30,12 +30,12 @@ class NmeaOutputMux @Inject constructor() {
         return "$withChecksum\r\n"
     }
 
-    fun acceptedPosition(fix: NavigationFix, nowElapsed: Long): List<String> {
+    fun acceptedPosition(fix: NavigationFix, nowElapsed: Long, maxAgeMillis:Long=3_000L): List<String> {
         if (!fix.valid || fix.latitude !in -90.0..90.0 || fix.longitude !in -180.0..180.0 ||
             fix.positionProvider !in setOf(PositionProvider.ANDROID_GNSS, PositionProvider.NMEA, PositionProvider.DEMO) ||
             (fix.isMockLocation && fix.positionProvider != PositionProvider.DEMO)
         ) return emptyList()
-        if (nowElapsed - fix.receivedElapsedRealtime !in 0..3_000L) return emptyList()
+        if (nowElapsed - fix.receivedElapsedRealtime !in 0..maxAgeMillis.coerceIn(1_000L,30_000L)) return emptyList()
         // A missing accuracy does not become permission to invent one, but the
         // Accepted Position gate has already validated this event. Reject only
         // an explicitly poor accuracy value here.
@@ -60,8 +60,8 @@ class NmeaOutputMux @Inject constructor() {
         }
     }
 
-    fun phonePosition(fix:NavigationFix,nowElapsed:Long):List<String>{
-        val position=acceptedPosition(fix,nowElapsed)
+    fun phonePosition(fix:NavigationFix,nowElapsed:Long,maxAgeMillis:Long=3_000L):List<String>{
+        val position=acceptedPosition(fix,nowElapsed,maxAgeMillis)
         if(position.isEmpty())return emptyList()
         val instant=Instant.ofEpochMilli(fix.timestampUtcMillis?:System.currentTimeMillis()).atZone(ZoneOffset.UTC)
         val time=instant.format(DateTimeFormatter.ofPattern("HHmmss.SS",Locale.US))

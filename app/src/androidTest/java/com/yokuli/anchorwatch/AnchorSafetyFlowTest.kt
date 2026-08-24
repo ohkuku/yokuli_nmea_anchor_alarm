@@ -333,7 +333,7 @@ class AnchorSafetyFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
                 compose.onNodeWithText("Data").performClick()
-                compose.onNodeWithText("NMEA Input").performClick()
+                compose.onNodeWithTag("data_tab_input").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
                 compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
                 compose.onNodeWithText("127.0.0.1").assertExists()
@@ -370,10 +370,10 @@ class AnchorSafetyFlowTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Data").performClick()
-            compose.onNodeWithText("NMEA Input").performClick()
+            compose.onNodeWithTag("data_tab_input").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_rx_port").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_rx_port").assertExists()
-            compose.onNodeWithText("NMEA Output").performClick()
+            compose.onNodeWithTag("data_tab_output").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_output_route",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_output_route").performScrollTo().assertIsDisplayed()
             compose.onNodeWithTag("nmea_output_tx_host").assertExists()
@@ -410,7 +410,7 @@ class AnchorSafetyFlowTest {
             assertEquals(GpsDataSource.DEMO,preferences.settings.first().gpsDataSource)
             ActivityScenario.launch(MainActivity::class.java).use {
                 compose.onNodeWithText("Data").performClick()
-                compose.onNodeWithText("NMEA Input").performClick()
+                compose.onNodeWithTag("data_tab_input").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
                 compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
                 compose.onNodeWithText("Test, save & connect").performScrollTo().performClick()
@@ -491,6 +491,7 @@ class AnchorSafetyFlowTest {
             val pages=listOf(
                 "settings_alarm" to 1,
                 "settings_vessel" to 2,
+                "settings_phone_sensors" to 2,
                 "settings_depth_sounder" to 2,
                 "settings_positioning" to 3,
                 "settings_map_depth" to 3,
@@ -1044,7 +1045,7 @@ class AnchorSafetyFlowTest {
     private fun openDisconnectDecision() {
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Data").performClick()
-        compose.onNodeWithText("NMEA Input").performClick()
+        compose.onNodeWithTag("data_tab_input").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Disconnect").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Disconnect").performScrollTo().performClick()
     }

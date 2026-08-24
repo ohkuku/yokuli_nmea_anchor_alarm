@@ -3,7 +3,9 @@ package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldDecoder
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldSemantic
+import com.yokuli.anchorwatch.data.nmea.NmeaFieldRetentionBuffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,6 +23,9 @@ class NmeaFieldDecoderTest {
         assertTrue(rot.none{it.key.semantic==NmeaFieldSemantic.ROT})
         val rmb=NmeaFieldDecoder.decode(NmeaChecksum.append("GPRMB,V,,,,,,,,,,,,,"),123)
         assertTrue(rmb.none{it.key.semantic!=NmeaFieldSemantic.RAW})
+        assertFalse(NmeaFieldDecoder.heartbeat(NmeaChecksum.append("IIROT,,V"))!!.allowsHold)
+        assertFalse(NmeaFieldDecoder.heartbeat(NmeaChecksum.append("IIMWV,30.0,R,12.0,N,V"))!!.allowsHold)
+        assertTrue(NmeaFieldDecoder.heartbeat(NmeaChecksum.append("WIMDA,,I,,B,,,,,,,,,,,,,,,"))!!.allowsHold)
     }
 
     @Test fun xdrKeepsStableTransducerIdentity(){
@@ -30,5 +35,17 @@ class NmeaFieldDecoderTest {
         assertTrue(result.any{it.key.transducerName=="PHONE_PITCH"&&it.key.semantic==NmeaFieldSemantic.PITCH})
         assertTrue(result.any{it.key.transducerName=="OTHER"&&it.key.semantic==NmeaFieldSemantic.RAW_ANGULAR})
         assertTrue(result.any{it.key.transducerName=="WATER"&&it.key.semantic==NmeaFieldSemantic.WATER_TEMPERATURE})
+    }
+
+    @Test fun genericWeatherFieldsHoldOnlyWithinTheSameTalkerAndSentence(){
+        val cache=NmeaFieldRetentionBuffer()
+        fun accept(body:String,elapsed:Long)=NmeaChecksum.append(body).let{line->cache.accept(NmeaFieldDecoder.decode(line,elapsed),NmeaFieldDecoder.heartbeat(line),line,elapsed)}
+        val first=accept("WIMDA,29.91,I,1.013,B,18.2,C,,,,,,,245.0,T,,M,14.0,N,7.2,M",100)
+        assertEquals(1013.0,first.first{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE}.value!!,.001)
+        val held=accept("WIMDA,,I,,B,18.2,C,,,,,,,245.0,T,,M,14.0,N,7.2,M",500)
+        val pressure=held.first{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE}
+        assertEquals(1013.0,pressure.value!!,.001);assertEquals(500,pressure.receivedElapsedRealtime)
+        val otherTalker=accept("IIMDA,,I,,B,,,,,,,,,,,,,,,",600)
+        assertEquals(1,otherTalker.count{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE})
     }
 }

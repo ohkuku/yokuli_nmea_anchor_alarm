@@ -33,7 +33,7 @@ data class NmeaInstrumentState(
  private val outboundLoopGuard:NmeaOutboundLoopGuard,
  private val sourceRegistry:VesselSourceRegistry,
 ){
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val headingResolver=NmeaHeadingResolver();private val connection=NmeaConnectionManager(scope,::resetHeldMeasurements)
+ private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val updateRetainer=NmeaUpdateRetainer();private val headingResolver=NmeaHeadingResolver();private val connection=NmeaConnectionManager(scope,::resetHeldMeasurements)
  private val requestGuard=Any();private var appConnectionRequested=false;private var backgroundConnectionRequested=false;@Volatile private var userDisconnected=false
  private val _fix=MutableStateFlow<NavigationFix?>(null);val fix=_fix.asStateFlow();val connectionState=connection.state
  private val _recentFixes=MutableStateFlow<List<NavigationFix>>(emptyList());val recentFixes=_recentFixes.asStateFlow()
@@ -101,10 +101,14 @@ data class NmeaInstrumentState(
    val raw=(old.raw+(if(echoed)"[Echoed App TX] $normalized" else normalized)).takeLast(200)
    if(echoed){_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,validSentences=old.validSentences+1,lastPacketElapsed=now,raw=raw,echoedAppTxSentences=old.echoedAppTxSentences+1);return}
    if(checksumValid)_validRawSentences.tryEmit(normalized)
-   val envelope=parser.parseEnvelope(normalized,requireChecksum,now)
-   if(envelope==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
-   val u=envelope.update;_parsedEnvelopes.tryEmit(envelope)
+   val parsed=parser.parseEnvelope(normalized,requireChecksum,now)
+   if(parsed==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
+   val u=updateRetainer.accept(parsed.update,now,normalized);val envelope=parsed.copy(update=u);_parsedEnvelopes.tryEmit(envelope)
    val generation=connection.diagnostics.value.connectionGeneration
+   if(!u.holdAllowed){
+    val invalidSource="nmea:${activeProfile.stableId}:$generation:${envelope.fullSentenceId}"
+    sourceRegistry.removeSources(setOf(invalidSource))
+   }
    sourceRegistry.publishAll(NmeaCandidateMapper.map(envelope,activeProfile.stableId,generation))
    val headingResolution=headingResolver.accept(u,now)
    val selectedHeading=headingResolution.selected
@@ -120,9 +124,9 @@ data class NmeaInstrumentState(
     val freshHeading=headingTrue.fresh(now);val windSnapshot=wind.snapshot(now);val freshTrueDirection=windSnapshot.trueDirectionDegrees;val freshTrueSpeed=windSnapshot.trueSpeedKnots;val freshApparentSpeed=windSnapshot.apparentSpeedKnots;val freshApparentAngle=windSnapshot.apparentAngleDegrees;val freshTrueAngle=windSnapshot.trueAngleDegrees
     val heldHdop=hdop?.first;val heldQuality=fixQuality?.first;val heldSatellites=satellites?.first
     val freshHdop=hdop.fresh(now,5_000)
-    // A null field in a position sentence means "not updated", not "invalid".
-    // Values are held together with their original receive time; every consumer
-    // applies its own freshness policy from that timestamp.
+    // A null field in a valid heartbeat means "unchanged", not "invalid".
+    // The same physical sentence source refreshes the held component so an
+    // unchanged instrument remains live without borrowing from another source.
     val merged=position.copy(sogKnots=sog?.first,cogTrueDegrees=cog?.first,headingTrueDegrees=headingTrue?.first,headingMagneticDegrees=headingMag?.first,sogReceivedElapsedRealtime=sog?.second,cogReceivedElapsedRealtime=cog?.second,headingReceivedElapsedRealtime=headingTrue?.second,headingMagneticReceivedElapsedRealtime=headingMag?.second,depthMeters=depth?.first,depthReceivedElapsedRealtime=depth?.second,speedThroughWaterKnots=speedThroughWater?.first,speedThroughWaterReceivedElapsedRealtime=speedThroughWater?.second,hdop=heldHdop,fixQuality=heldQuality,satellites=heldSatellites,hdopReceivedElapsedRealtime=hdop?.second,fixQualityReceivedElapsedRealtime=fixQuality?.second,satellitesReceivedElapsedRealtime=satellites?.second,altitudeMeters=altitude?.first,altitudeReceivedElapsedRealtime=altitude?.second,horizontalAccuracyMeters=freshHdop?.times(3.0)?.coerceIn(2.5,80.0),positionProvider=PositionProvider.NMEA,headingSource=if(freshHeading!=null)HeadingSource.NMEA_PHYSICAL else HeadingSource.NONE,headingQuality=if(freshHeading!=null)HeadingQuality.STABLE else HeadingQuality.UNAVAILABLE,windDirectionTrueDegrees=freshTrueDirection,windSpeedKnots=freshTrueSpeed?:freshApparentSpeed,apparentWindAngleDegrees=freshApparentAngle,trueWindAngleDegrees=freshTrueAngle,trueWindSpeedKnots=freshTrueSpeed,apparentWindSpeedKnots=freshApparentSpeed,headingSampleSequence=headingSampleSequence.takeIf{freshHeading!=null},windSampleSequence=windSnapshot.sampleSequence)
     _fix.value=merged
     if(merged.valid){reportValidFix=true;val cutoff=now-10*60_000L;_recentFixes.value=(_recentFixes.value+merged).filter{it.receivedElapsedRealtime>=cutoff}.takeLast(1_200)}
@@ -136,5 +140,5 @@ data class NmeaInstrumentState(
  private fun Pair<Double,Long>?.fresh(now:Long)=this?.takeIf{now-it.second<=10_000}?.first
  private fun <T> Pair<T,Long>?.fresh(now:Long,maxAge:Long)=this?.takeIf{now-it.second<=maxAge}?.first
  @Synchronized private fun publishInstruments(now:Long){val resolution=headingResolver.resolve(now);val selected=resolution.selected;headingTrue=selected?.trueDegrees?.let{it to selected.receivedElapsedRealtime};headingMag=selected?.magneticDegrees?.let{it to selected.receivedElapsedRealtime};_instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater,selected?.sourceId,resolution.candidates,resolution.conflict,resolution.conflictDegrees,resolution.pinnedSourceUnavailable)}
- @Synchronized private fun resetHeldMeasurements(){headingResolver.reset();sourceRegistry.clearNmea();headingTrue=null;headingMag=null;depth=null;speedThroughWater=null;sog=null;cog=null;hdop=null;fixQuality=null;satellites=null;altitude=null;headingSampleSequence=0;wind.clear();liveDepth.clear();liveWind.clear();_fix.value=null;_instruments.value=NmeaInstrumentState()}
+ @Synchronized private fun resetHeldMeasurements(){updateRetainer.clear();headingResolver.reset();sourceRegistry.clearNmea();headingTrue=null;headingMag=null;depth=null;speedThroughWater=null;sog=null;cog=null;hdop=null;fixQuality=null;satellites=null;altitude=null;headingSampleSequence=0;wind.clear();liveDepth.clear();liveWind.clear();_fix.value=null;_instruments.value=NmeaInstrumentState();_diagnostics.value=_diagnostics.value.copy(lastPacketElapsed=null,lastFixElapsed=null,lastByType=emptyMap(),raw=emptyList())}
 }
