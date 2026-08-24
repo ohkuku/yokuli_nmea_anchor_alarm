@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 18
+const val DATABASE_SCHEMA_VERSION = 19
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -487,6 +487,27 @@ interface IncidentLogDao {
     @Query("DELETE FROM incident_log") suspend fun clear(): Int
 }
 
+@Entity(
+    tableName="pressure_history",
+    primaryKeys=["sourceStableKey","bucketUtcMinute"],
+    indices=[Index(value=["sampledAtUtcMillis"]),Index(value=["sourceStableKey","sampledAtUtcMillis"])],
+)
+data class PressureHistoryEntity(
+    val sourceStableKey:String,
+    val bucketUtcMinute:Long,
+    val sampledAtUtcMillis:Long,
+    val pressureHpa:Double,
+    val sourceDisplayName:String,
+)
+
+@Dao
+interface PressureHistoryDao{
+    @Upsert suspend fun upsert(value:PressureHistoryEntity)
+    @Query("SELECT * FROM pressure_history WHERE sampledAtUtcMillis>=:sinceUtcMillis ORDER BY sampledAtUtcMillis") suspend fun since(sinceUtcMillis:Long):List<PressureHistoryEntity>
+    @Query("DELETE FROM pressure_history WHERE sampledAtUtcMillis<:oldestAllowedUtcMillis") suspend fun prune(oldestAllowedUtcMillis:Long):Int
+    @Query("SELECT COUNT(*) FROM pressure_history") suspend fun count():Long
+}
+
 @Dao
 interface TripDao{
  @Insert suspend fun insertSession(value:TripSessionEntity):Long
@@ -552,7 +573,7 @@ interface TripDao{
 }
 
 @Database(
-    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class,TripSessionEntity::class,TripSampleEntity::class,TripEventEntity::class,TripWaypointEntity::class,TripCustomMetricSampleEntity::class,TripDashboardEntity::class,AnchorTelemetrySampleEntity::class],
+    entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class,PressureHistoryEntity::class,TripSessionEntity::class,TripSampleEntity::class,TripEventEntity::class,TripWaypointEntity::class,TripCustomMetricSampleEntity::class,TripDashboardEntity::class,AnchorTelemetrySampleEntity::class],
     version = DATABASE_SCHEMA_VERSION,
     exportSchema = true,
 )
@@ -563,5 +584,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun linzDepthCacheDao():LinzDepthCacheDao
     abstract fun tidePredictionCacheDao():TidePredictionCacheDao
     abstract fun incidentLogDao():IncidentLogDao
+    abstract fun pressureHistoryDao():PressureHistoryDao
     abstract fun tripDao():TripDao
 }

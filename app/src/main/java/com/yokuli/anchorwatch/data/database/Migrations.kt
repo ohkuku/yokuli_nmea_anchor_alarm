@@ -272,3 +272,12 @@ object Migration17To18:Migration(17,18){
   db.execSQL("UPDATE anchor_sessions SET headingEvidenceEnabled=usePhoneHeading, headingEvidenceEpoch=CASE WHEN usePhoneHeading=1 THEN 1 ELSE 0 END, headingEvidenceEnabledAt=CASE WHEN usePhoneHeading=1 THEN startedAt ELSE NULL END")
  }
 }
+
+/** Restart-safe, source-specific pressure history sampled at one row per UTC minute. */
+object Migration18To19:Migration(18,19){
+ override fun migrate(db:SupportSQLiteDatabase){
+  db.execSQL("CREATE TABLE IF NOT EXISTS pressure_history (sourceStableKey TEXT NOT NULL, bucketUtcMinute INTEGER NOT NULL, sampledAtUtcMillis INTEGER NOT NULL, pressureHpa REAL NOT NULL, sourceDisplayName TEXT NOT NULL, PRIMARY KEY(sourceStableKey,bucketUtcMinute))")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_pressure_history_sampledAtUtcMillis ON pressure_history(sampledAtUtcMillis)")
+  db.execSQL("CREATE INDEX IF NOT EXISTS index_pressure_history_sourceStableKey_sampledAtUtcMillis ON pressure_history(sourceStableKey,sampledAtUtcMillis)")
+ }
+}
