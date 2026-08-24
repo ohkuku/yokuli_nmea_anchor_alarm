@@ -379,6 +379,11 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("nmea_output_tx_host").assertExists()
             compose.onNodeWithTag("nmea_output_tx_port").assertExists()
             compose.onNodeWithText("192.168.1.211").assertExists()
+            compose.onNodeWithTag("nmea_raw_output").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("raw_tx_stream_filter").assertExists()
+            compose.onNodeWithTag("raw_tx_type_filter").assertExists()
+            compose.onNodeWithTag("raw_tx_pause").assertExists()
+            compose.onNodeWithTag("raw_tx_clear").assertExists()
         }
     }
 
