@@ -1,5 +1,8 @@
 package com.yokuli.anchorwatch.data.nmea
 
+import com.yokuli.anchorwatch.domain.vessel.*
+import com.yokuli.anchorwatch.domain.vessel.source.MetricSourcePreference
+import com.yokuli.anchorwatch.domain.vessel.source.VesselSourceArbitrator
 import kotlin.math.abs
 
 data class NmeaHeadingCandidate(
@@ -18,30 +21,28 @@ data class NmeaHeadingResolution(
     val pinnedSourceUnavailable:Boolean=false,
 )
 
-/**
- * Arbitrates physical boat-heading sentences without allowing packet order to
- * become source selection. Identity includes talker + sentence (IIHDT, HCHDG,
- * SDVHW). A higher-quality source is preferred, but the current source remains
- * sticky while fresh so alternating gateways cannot make the display flicker.
- */
+/** Physical-NMEA adapter for the canonical [VesselSourceArbitrator]. It owns no
+ * source priority, freshness, pin or conflict rules of its own. */
 class NmeaHeadingResolver(
     private val freshMillis:Long=5_000L,
-    private val conflictHoldMillis:Long=3_000L,
-    private val conflictThresholdDegrees:Double=15.0,
+    @Suppress("UNUSED_PARAMETER") conflictHoldMillis:Long=3_000L,
+    @Suppress("UNUSED_PARAMETER") conflictThresholdDegrees:Double=15.0,
 ){
     private val candidates=linkedMapOf<String,NmeaHeadingCandidate>()
-    private var selectedId:String?=null
     private var pinnedId:String?=null
-    private var conflictStartedAt:Long?=null
+    private var allowPinnedFallback=false
+    private val arbitrator=VesselSourceArbitrator()
 
-    @Synchronized fun pin(sourceId:String?){pinnedId=sourceId?.trim()?.uppercase()?.takeIf{it.isNotBlank()};selectedId=null}
+    @Synchronized fun pin(sourceId:String?,allowFallback:Boolean=false){
+        pinnedId=sourceId?.trim()?.uppercase()?.takeIf{it.isNotBlank()}
+        allowPinnedFallback=allowFallback
+        arbitrator.reset()
+    }
 
     @Synchronized fun accept(update:NmeaUpdate,now:Long):NmeaHeadingResolution{
         val id=update.sentenceId.ifBlank{update.type}.uppercase()
-        if(update.type in HEADING_TYPES&&!update.holdAllowed){
-            candidates.remove(id)
-            if(selectedId==id)selectedId=null
-        }else if(update.type in HEADING_TYPES&&(update.trueHeading!=null||update.magneticHeading!=null)){
+        if(update.type in HEADING_TYPES&&!update.holdAllowed)candidates.remove(id)
+        else if(update.type in HEADING_TYPES&&(update.trueHeading!=null||update.magneticHeading!=null)){
             val measuredAt=listOfNotNull(update.measuredAt(NmeaMetric.TRUE_HEADING),update.measuredAt(NmeaMetric.MAGNETIC_HEADING)).maxOrNull()?:now
             candidates[id]=NmeaHeadingCandidate(id,update.type,update.trueHeading?.normalized(),update.magneticHeading?.normalized(),measuredAt)
         }
@@ -50,33 +51,27 @@ class NmeaHeadingResolver(
 
     @Synchronized fun resolve(now:Long):NmeaHeadingResolution{
         candidates.entries.removeAll{now-it.value.receivedElapsedRealtime>freshMillis}
-        val available=candidates.values.sortedWith(compareByDescending<NmeaHeadingCandidate>{priority(it)}.thenByDescending{it.receivedElapsedRealtime})
-        val pinned=pinnedId?.let(candidates::get)
-        val current=selectedId?.let(candidates::get)
-        val best=when{
-            pinnedId!=null->pinned
-            current==null->available.firstOrNull()
-            available.firstOrNull()?.let{priority(it)>priority(current)}==true->available.first()
-            else->current
-        }
-        selectedId=best?.sourceId
-        val trueCandidates=available.mapNotNull{candidate->candidate.trueDegrees?.let{candidate to it}}
-        val maximumDifference=trueCandidates.indices.flatMap{i->(i+1 until trueCandidates.size).map{j->angularDifference(trueCandidates[i].second,trueCandidates[j].second)}}.maxOrNull()
-        val conflicting=maximumDifference?.let{it>conflictThresholdDegrees}==true
-        if(conflicting){if(conflictStartedAt==null)conflictStartedAt=now}else conflictStartedAt=null
-        val conflict=conflicting&&conflictStartedAt?.let{now-it>=conflictHoldMillis}==true
-        return NmeaHeadingResolution(best,available,conflict,maximumDifference,pinnedId!=null&&pinned==null)
+        val available=candidates.values.sortedBy{it.sourceId}
+        fun source(value:NmeaHeadingCandidate)=VesselSourceIdentity(
+            id=value.sourceId,sourceType=VesselSourceType.NMEA_INPUT,sentenceType=value.sentenceType,
+            fullSentenceId=value.sourceId,displayName=value.sourceId,stableKey=value.sourceId,
+        )
+        val trueSources=available.mapNotNull{value->value.trueDegrees?.let{VesselSourceCandidate(VesselMetricId.HEADING_TRUE,it,source(value),VesselSourceClass.BOAT_NMEA,VesselReference.TrueNorth,value.receivedElapsedRealtime)}}
+        val magneticSources=available.mapNotNull{value->value.magneticDegrees?.let{VesselSourceCandidate(VesselMetricId.HEADING_MAGNETIC,it,source(value),VesselSourceClass.BOAT_NMEA,VesselReference.MagneticNorth,value.receivedElapsedRealtime)}}
+        fun <T> pinFor(values:List<VesselSourceCandidate<T>>)=pinnedId?.let{stored->VesselSourcePinPolicy.resolve(values,stored)?:stored}
+        val trueSelection=arbitrator.select(VesselMetricId.HEADING_TRUE,trueSources,MetricSourcePreference(VesselSourcePreference.BOAT,pinFor(trueSources),allowPinnedFallback),now)
+        val magneticSelection=arbitrator.select(VesselMetricId.HEADING_MAGNETIC,magneticSources,MetricSourcePreference(VesselSourcePreference.BOAT,pinFor(magneticSources),allowPinnedFallback),now)
+        val selectedId=trueSelection.selected?.source?.id?:magneticSelection.selected?.source?.id
+        val selected=selectedId?.let(candidates::get)
+        val trueValues=available.mapNotNull{candidate->candidate.trueDegrees?.let{candidate to it}}
+        val maximumDifference=trueValues.indices.flatMap{i->(i+1 until trueValues.size).map{j->angularDifference(trueValues[i].second,trueValues[j].second)}}.maxOrNull()
+        return NmeaHeadingResolution(
+            selected,available,trueSelection.conflict.active,maximumDifference,
+            pinnedId!=null&&trueSelection.pinnedSourceUnavailable&&magneticSelection.pinnedSourceUnavailable,
+        )
     }
 
-    @Synchronized fun reset(){candidates.clear();selectedId=null;conflictStartedAt=null}
-
-    private fun priority(candidate:NmeaHeadingCandidate)=when{
-        candidate.sentenceType=="HDT"&&candidate.trueDegrees!=null->300
-        candidate.sentenceType=="HDG"&&candidate.trueDegrees!=null->200
-        candidate.sentenceType=="VHW"&&candidate.trueDegrees!=null->100
-        candidate.magneticDegrees!=null->10
-        else->0
-    }
+    @Synchronized fun reset(){candidates.clear();arbitrator.reset()}
     private fun Double.normalized()=(this%360.0+360.0)%360.0
     private fun angularDifference(a:Double,b:Double)=abs(((a-b+540.0)%360.0)-180.0)
 

@@ -89,7 +89,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
             numeric(NmeaFieldSemantic.TRUE_WIND_DIRECTION)?.let{trueWindDirection=fieldObservation(it,it.value!!)}
             textual(NmeaFieldSemantic.DESTINATION_WAYPOINT)?.let{destinationWaypoint=fieldObservation(it,it.text!!)}
         }}
-        scope.launch{settings.settings.collect{value->positionPreference=value.positionPreference;headingPreference=value.headingPreference;pinnedPositionSourceId=value.pinnedPositionSourceId?.let(VesselSourcePinPolicy::normalize);pinnedHeadingSourceId=value.boatHeadingSourceId?.let(VesselSourcePinPolicy::normalize);allowPinnedFallback=value.allowPinnedFallback;vesselDraftMeters=value.draftMeters?:0.0;navigation.pinBoatHeadingSource(pinnedHeadingSourceId?.substringAfterLast(':'))}}
+        scope.launch{settings.settings.collect{value->positionPreference=value.positionPreference;headingPreference=value.headingPreference;pinnedPositionSourceId=value.pinnedPositionSourceId?.let(VesselSourcePinPolicy::normalize);pinnedHeadingSourceId=value.boatHeadingSourceId?.let(VesselSourcePinPolicy::normalize);allowPinnedFallback=value.allowPinnedFallback;vesselDraftMeters=value.draftMeters?:0.0;navigation.pinBoatHeadingSource(pinnedHeadingSourceId?.substringAfterLast(':'),allowPinnedFallback)}}
         scope.launch{outputSettings.settings.collect{phonePositionOutputEnabled=it.phonePositionPublishing}}
         scope.launch{while(isActive){publish(SystemClock.elapsedRealtime());delay(250)}}
     }
