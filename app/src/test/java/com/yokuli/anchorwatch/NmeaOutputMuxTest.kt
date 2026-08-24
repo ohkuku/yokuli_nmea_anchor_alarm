@@ -106,4 +106,20 @@ class NmeaOutputMuxTest {
         val output=List(5){mux.diagnosticMagneticHeading()}
         assertEquals(5,output.size);assertTrue(output.all{mux.sentenceType(it)=="HDG"&&it.contains("IIHDG,123.40,,,,")&&NmeaChecksum.validate(it,true)})
     }
+
+    @Test fun magneticHeadingOutputCarriesRealEastAndWestVariation(){
+        val east=mux.phoneMagneticHeading(120.0,18.25)
+        val west=mux.phoneMagneticHeading(120.0,-7.5)
+        assertTrue(east.contains("IIHDG,120.00,,,18.25,E"))
+        assertTrue(west.contains("IIHDG,120.00,,,7.50,W"))
+        assertTrue(NmeaChecksum.validate(east,true));assertTrue(NmeaChecksum.validate(west,true))
+    }
+
+    @Test fun hdtAndHdgCanDescribeTheSameDirectionWithDifferentReferences(){
+        val trueHeading=123.4;val eastVariation=19.5;val magnetic=trueHeading-eastVariation
+        val output=listOf(mux.phoneHeading(trueHeading),mux.phoneMagneticHeading(magnetic,eastVariation))
+        assertTrue(output[0].contains("IIHDT,123.40,T"))
+        assertTrue(output[1].contains("IIHDG,103.90,,,19.50,E"))
+        assertTrue(output.all{NmeaChecksum.validate(it,true)})
+    }
 }

@@ -20,17 +20,24 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 data class PhoneHeadingSample(
-    /** Responsive sensor heading for map/navigation presentation only. */
+    /** Responsive true heading. Null until a real geomagnetic reference exists. */
     val liveTrueHeadingDegrees: Double? = null,
+    /** Responsive magnetic heading; it must always be labelled °M. */
+    val liveMagneticHeadingDegrees: Double? = null,
     /** Integrity-gated heading that is safe to persist as estimator evidence. */
     val trueHeadingDegrees: Double? = null,
+    /** Presentation quality is independent from the estimator integrity gate. */
+    val presentationQuality: PhoneHeadingPresentationQuality = PhoneHeadingPresentationQuality.UNAVAILABLE,
     val quality: HeadingQuality = HeadingQuality.UNAVAILABLE,
     val epoch: Long = 0L,
     val sequence: Long = 0L,
     val receivedElapsedRealtime: Long? = null,
     /** HDT may only be emitted when this is true. */
     val declinationReferenceReady: Boolean = false,
+    val magneticDeclinationDegrees:Double?=null,
 )
+
+enum class PhoneHeadingPresentationQuality { GOOD, LOW_ACCURACY, DISTURBED, UNAVAILABLE }
 
 data class DeclinationReferenceState(
     val ready:Boolean=false,
@@ -208,10 +215,11 @@ class PhoneHeadingRepository @Inject constructor(
         sensorAccuracy: Int,
         allowEstimatorEvidence: Boolean = true,
     ) {
-        val declination = if(_declinationReference.value.ready)GeomagneticField(latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), wallTime).declination else 0f
-        val trueHeading = (magnetic + declination + 360.0) % 360.0
+        val referenceReady=_declinationReference.value.ready
+        val declination = if(referenceReady)GeomagneticField(latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), wallTime).declination.toDouble() else null
+        val trueHeading = declination?.let{(magnetic + it + 360.0) % 360.0}
         val nowElapsed=SystemClock.elapsedRealtime()
-        val observation = if (allowEstimatorEvidence) {
+        val observation = if (allowEstimatorEvidence&&trueHeading!=null) {
             monitor.observe(
                 nowElapsed = nowElapsed,
                 headingTrueDegrees = trueHeading,
@@ -224,9 +232,9 @@ class PhoneHeadingRepository @Inject constructor(
             PhoneHeadingObservation(HeadingQuality.UNAVAILABLE, null, 0L)
         }
         val previous=lastPublishedHeading
-        val delta=previous?.let{kotlin.math.abs(((trueHeading-it+540.0)%360.0)-180.0)}?:Double.POSITIVE_INFINITY
+        val delta=previous?.let{kotlin.math.abs(((magnetic-it+540.0)%360.0)-180.0)}?:Double.POSITIVE_INFINITY
         if(nowElapsed-lastPublishedElapsed<50L&&delta<1.0)return
-        lastPublishedElapsed=nowElapsed;lastPublishedHeading=trueHeading
+        lastPublishedElapsed=nowElapsed;lastPublishedHeading=magnetic
         // Keep sequence IDs unique across service/process restarts so persisted
         // evidence from an earlier activation never deduplicates newer samples.
         sequence = maxOf(sequence + 1L, System.currentTimeMillis() * 1_000L)
@@ -244,12 +252,20 @@ class PhoneHeadingRepository @Inject constructor(
         // once CI has a deterministic rotation-vector source.
         _sample.value = PhoneHeadingSample(
             liveTrueHeadingDegrees = trueHeading,
+            liveMagneticHeadingDegrees = magnetic,
             trueHeadingDegrees = observation.headingTrueDegrees,
+            presentationQuality = when(sensorAccuracy){
+                SensorManager.SENSOR_STATUS_ACCURACY_HIGH->PhoneHeadingPresentationQuality.GOOD
+                SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM->PhoneHeadingPresentationQuality.LOW_ACCURACY
+                SensorManager.SENSOR_STATUS_ACCURACY_LOW,SensorManager.SENSOR_STATUS_UNRELIABLE->PhoneHeadingPresentationQuality.DISTURBED
+                else->PhoneHeadingPresentationQuality.UNAVAILABLE
+            },
             quality = observation.quality,
             epoch = epoch,
             sequence = sequence,
             receivedElapsedRealtime = nowElapsed,
-            declinationReferenceReady = _declinationReference.value.ready,
+            declinationReferenceReady = referenceReady,
+            magneticDeclinationDegrees = declination,
         )
     }
 

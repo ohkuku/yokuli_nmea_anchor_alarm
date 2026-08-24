@@ -70,6 +70,14 @@ class NmeaOutputMux @Inject constructor() {
     }
 
     fun phoneHeading(trueHeadingDegrees:Double):String=sentence("IIHDT,${f(normalizeDegrees(trueHeadingDegrees),2)},T")
+    fun phoneMagneticHeading(magneticHeadingDegrees:Double,variationDegrees:Double):String{
+        val variation=kotlin.math.abs(variationDegrees);val direction=if(variationDegrees<0.0)"W" else "E"
+        return sentence("IIHDG,${f(normalizeDegrees(magneticHeadingDegrees),2)},,,${f(variation,2)},$direction")
+    }
+    fun derivedTrueWind(speedKnots:Double,directionTrueDegrees:Double,angleDegrees:Double):List<String>{
+        val side=if(angleDegrees<0)"L" else "R";val magnitude=abs(angleDegrees);val mwvAngle=normalizeDegrees(angleDegrees)
+        return listOf(sentence("WIMWD,${f(normalizeDegrees(directionTrueDegrees),2)},T,,M,${f(speedKnots.coerceAtLeast(0.0),2)},N,,M/S"),sentence("WIMWV,${f(mwvAngle,2)},T,${f(speedKnots.coerceAtLeast(0.0),2)},N,A"),sentence("WIVWT,${f(magnitude,2)},$side,${f(speedKnots.coerceAtLeast(0.0),2)},N,,,"))
+    }
     fun diagnostic():String=sentence("PYOK,TEST,ANCHOR_WATCH,1")
     fun diagnosticMagneticHeading(headingDegrees:Double=123.4):String=sentence("IIHDG,${f(normalizeDegrees(headingDegrees),2)},,,,")
     fun phoneRateOfTurn(degreesPerMinute:Double):String=sentence("IIROT,${f(degreesPerMinute.coerceIn(-720.0,720.0),2)},A")

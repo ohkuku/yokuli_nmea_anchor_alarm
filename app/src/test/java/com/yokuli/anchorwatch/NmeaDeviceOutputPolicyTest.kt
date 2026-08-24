@@ -7,6 +7,7 @@ import com.yokuli.anchorwatch.data.nmea.output.NmeaOutputEndpointPolicy
 import com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaTcpClient
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
+import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
@@ -23,6 +24,11 @@ class NmeaDeviceOutputPolicyTest{
         assertEquals("192.168.20.50" to 10111,NmeaOutputEndpointPolicy.resolved(settings,input))
     }
 
+    @Test fun firstUseCannotEnableStreamsBeforeTransportChoice(){
+        assertFalse(NmeaDeviceOutputSettings(phoneHeadingEnabled=true).anyEnabled)
+        assertTrue(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true).anyEnabled)
+    }
+
     @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(),input))
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port),input))
@@ -33,6 +39,26 @@ class NmeaDeviceOutputPolicyTest{
         guard.record(listOf(sentence),1_000)
         assertTrue(guard.isRecentOutbound(sentence,2_000))
         assertFalse(guard.isRecentOutbound(sentence,7_001))
+    }
+
+    @Test fun semanticEchoWithAnotherTalkerAndChecksumIsStillQuarantined(){
+        val guard=NmeaOutboundLoopGuard()
+        guard.record(listOf("\$IIHDT,123.00,T*00\r\n"),1_000)
+        guard.record(listOf("\$IIHDT,123.02,T*00\r\n"),1_200)
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",2_000))
+        assertFalse(guard.isRecentOutbound("\$HCHDT,124.00,T*7F",2_000))
+    }
+
+    @Test fun semanticCoincidenceNeverPermanentlyHidesARealSource(){
+        val guard=NmeaOutboundLoopGuard()
+        guard.record(listOf("\$IIHDT,123.00,T*00"),1_000)
+        guard.record(listOf("\$IIHDT,123.02,T*00"),1_200)
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",2_000))
+        // The phone heartbeat continues, but the bounded semantic quarantine
+        // expires so an independent instrument with the same value is visible.
+        guard.record(listOf("\$IIHDT,123.00,T*00"),6_500)
+        guard.record(listOf("\$IIHDT,123.01,T*00"),6_700)
+        assertFalse(guard.isRecentOutbound("\$HCHDT,123.02,T*7F",7_100))
     }
 
 

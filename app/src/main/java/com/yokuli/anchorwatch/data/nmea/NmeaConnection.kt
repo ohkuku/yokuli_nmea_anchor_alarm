@@ -8,7 +8,7 @@ import java.io.EOFException
 import java.net.*
 
 enum class Protocol { TCP, UDP }
-data class ConnectionProfile(val name:String="Boat",val protocol:Protocol=Protocol.TCP,val host:String="192.168.1.100",val port:Int=10110,val requireChecksum:Boolean=true,val autoReconnect:Boolean=true,val connectAutomatically:Boolean=false,val noDataTimeoutSeconds:Int=10)
+data class ConnectionProfile(val name:String="Boat",val protocol:Protocol=Protocol.TCP,val host:String="192.168.1.100",val port:Int=10110,val requireChecksum:Boolean=true,val autoReconnect:Boolean=true,val connectAutomatically:Boolean=false,val noDataTimeoutSeconds:Int=10,val stableId:String="boat-primary")
 
 data class NmeaTransportDiagnostics(
  val connectionGeneration:Long=0,
@@ -55,6 +55,7 @@ class NmeaConnectionManager(private val scope:CoroutineScope,private val onGener
   if(socket.isClosed||!socket.isConnected)return false
   return runCatching{synchronized(socket){val output=socket.getOutputStream();sentences.forEach{line->output.write(line.toByteArray(Charsets.US_ASCII))};output.flush()};true}.getOrDefault(false)
  }
+ fun hasOpenTransport():Boolean=synchronized(guard){transport!=null&&job?.isActive==true}
  fun disconnect(){synchronized(guard){generation++;transportGeneration++;onGenerationStarted();profile=null;job?.cancel();job=null;closeTransportLocked();_state.value=NmeaConnectionState.DISCONNECTED;_diagnostics.value=NmeaTransportDiagnostics(connectionGeneration=transportGeneration,lastDisconnectReason="USER_DISCONNECT")}}
  fun reportValidFix(){synchronized(guard){if(job?.isActive==true)_state.value=NmeaConnectionState.CONNECTED}}
  fun reportStaleFix(){synchronized(guard){if(job?.isActive==true&&_state.value!=NmeaConnectionState.CONNECTED_NO_DATA)_state.value=NmeaConnectionState.STALE}}
