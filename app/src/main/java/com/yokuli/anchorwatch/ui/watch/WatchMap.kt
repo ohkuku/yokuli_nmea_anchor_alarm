@@ -108,11 +108,12 @@ internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFi
     }==true
     val windHeading=if(freshNmeaWind)WindAnchorEvidence.summarize(points.takeLast(300).map{point->WindAnchorEvidence.Sample(point.timestamp,point.latitude,point.longitude,point.sog,point.cog,point.heading.takeIf{point.headingMeasured},point.windDirectionTrue,point.trueWindAngle,point.apparentWindAngle,point.trueWindSpeedKnots,point.apparentWindSpeedKnots,point.headingSampleSequence,point.windSampleSequence)}).observations.lastOrNull{it.source !in setOf(WindAnchorEvidence.Source.NMEA_PHYSICAL_HEADING,WindAnchorEvidence.Source.PHONE_HEADING,WindAnchorEvidence.Source.BACKDOWN_COG)}?.headingToAnchorDegrees else null
     if(windHeading!=null)return windHeading
-    // Boat/bow presentation is intentionally separate from the handheld phone
-    // direction used by anchorage approach guidance. Only integrity-gated phone
-    // heading evidence may participate here.
-    val phoneFresh=livePhoneHeading?.trueHeadingDegrees!=null&&livePhoneHeading.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true
-    if(phoneFresh)return livePhoneHeading?.trueHeadingDegrees
+    // Presentation deliberately uses the responsive phone channel when no
+    // physical NMEA heading or trusted NMEA course is available. The Anchor
+    // estimator still receives only its independently integrity-gated channel.
+    val phoneDisplayHeading=livePhoneHeading?.liveTrueHeadingDegrees?:livePhoneHeading?.trueHeadingDegrees
+    val phoneFresh=phoneDisplayHeading!=null&&livePhoneHeading?.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true
+    if(phoneFresh)return phoneDisplayHeading
     val selectedHeadingFresh=fix.headingTrueDegrees!=null&&(fix.headingReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{nowElapsed-it in 0L..3_000L}
     if(selectedHeadingFresh)return fix.headingTrueDegrees
     val selectedCogFresh=fix.positionProvider!=com.yokuli.anchorwatch.domain.model.PositionProvider.NMEA&&fix.cogTrueDegrees!=null&&

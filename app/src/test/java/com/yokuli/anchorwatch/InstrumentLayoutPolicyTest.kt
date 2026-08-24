@@ -6,6 +6,8 @@ import com.yokuli.anchorwatch.domain.vessel.TripInstrumentPreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import com.yokuli.anchorwatch.data.trip.InstrumentTileSize
+import org.junit.Assert.assertTrue
 
 class InstrumentLayoutPolicyTest {
     @Test fun eachPresetHasAnIndependentUsefulDefault(){
@@ -14,6 +16,8 @@ class InstrumentLayoutPolicyTest {
         assertEquals(emptyList<InstrumentTileId>(),layouts.getValue(TripInstrumentPreset.CUSTOM))
         assertEquals(InstrumentTileId.SOG,layouts.getValue(TripInstrumentPreset.NAV).first())
         assertEquals(InstrumentTileId.PRESSURE,layouts.getValue(TripInstrumentPreset.WEATHER).first())
+        assertTrue(layouts.getValue(TripInstrumentPreset.SAILING).contains(InstrumentTileId.TRUE_WIND_DIRECTION))
+        assertEquals(listOf("SMALL","MEDIUM","WIDE","LARGE","HERO"),InstrumentTileSize.entries.map{it.name})
     }
 
     @Test fun normalizationKeepsUserOrderRemovesDuplicatesAndRejectsForeignTiles(){

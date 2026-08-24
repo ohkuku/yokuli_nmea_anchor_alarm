@@ -7,7 +7,7 @@ enum class VesselSourcePreference { AUTO, BOAT, PHONE }
 enum class WatchWorkspaceMode { ANCHOR, TRIP }
 enum class TripInstrumentPreset { SAILING, NAV, MOTION, WEATHER, CUSTOM }
 enum class InstrumentTileId {
-    SOG, COG, HEADING, DEPTH, UKC, POSITION, BOAT_SPEED, TRUE_WIND_SPEED,
+    SOG, COG, HEADING, DEPTH, UKC, POSITION, BOAT_SPEED, TRUE_WIND_SPEED, TRUE_WIND_DIRECTION,
     APPARENT_WIND_SPEED, APPARENT_WIND_ANGLE, TRUE_WIND_ANGLE,
     HEEL, PITCH, ROLL_RATE, PITCH_RATE, ROLL_PERIOD, MOTION_SCORE,
     IMPACT_COUNT, PRESSURE, PRESSURE_TREND_1H, PRESSURE_TREND_3H,
@@ -19,7 +19,7 @@ enum class InstrumentTileId {
 object InstrumentLayoutPolicy {
     fun defaults(preset:TripInstrumentPreset):List<InstrumentTileId> = when(preset){
         TripInstrumentPreset.NAV->listOf(InstrumentTileId.SOG,InstrumentTileId.COG,InstrumentTileId.HEADING,InstrumentTileId.BOAT_SPEED,InstrumentTileId.DEPTH,InstrumentTileId.UKC,InstrumentTileId.POSITION,InstrumentTileId.WAYPOINT_BEARING,InstrumentTileId.WAYPOINT_DISTANCE,InstrumentTileId.CROSS_TRACK_ERROR)
-        TripInstrumentPreset.SAILING->listOf(InstrumentTileId.APPARENT_WIND_SPEED,InstrumentTileId.APPARENT_WIND_ANGLE,InstrumentTileId.TRUE_WIND_SPEED,InstrumentTileId.TRUE_WIND_ANGLE,InstrumentTileId.BOAT_SPEED,InstrumentTileId.SOG,InstrumentTileId.VMG,InstrumentTileId.HEEL)
+        TripInstrumentPreset.SAILING->listOf(InstrumentTileId.APPARENT_WIND_SPEED,InstrumentTileId.APPARENT_WIND_ANGLE,InstrumentTileId.TRUE_WIND_SPEED,InstrumentTileId.TRUE_WIND_DIRECTION,InstrumentTileId.TRUE_WIND_ANGLE,InstrumentTileId.BOAT_SPEED,InstrumentTileId.SOG,InstrumentTileId.VMG,InstrumentTileId.HEEL)
         TripInstrumentPreset.MOTION->listOf(InstrumentTileId.HEEL,InstrumentTileId.PITCH,InstrumentTileId.ROLL_RATE,InstrumentTileId.PITCH_RATE,InstrumentTileId.ROLL_PERIOD,InstrumentTileId.MOTION_SCORE,InstrumentTileId.IMPACT_COUNT)
         TripInstrumentPreset.WEATHER->listOf(InstrumentTileId.PRESSURE,InstrumentTileId.PRESSURE_TREND_1H,InstrumentTileId.PRESSURE_TREND_3H,InstrumentTileId.PRESSURE_TREND_6H,InstrumentTileId.AIR_TEMPERATURE,InstrumentTileId.WATER_TEMPERATURE)
         TripInstrumentPreset.CUSTOM->emptyList()

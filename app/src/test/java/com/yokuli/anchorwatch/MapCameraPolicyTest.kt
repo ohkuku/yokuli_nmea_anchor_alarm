@@ -65,10 +65,10 @@ class MapCameraPolicyTest {
         assertEquals(211.0,displayHeading(fix,null,emptyList(),PhoneHeadingSample(trueHeadingDegrees=211.0,receivedElapsedRealtime=500),nowElapsed=500)!!,0.001)
     }
 
-    @Test fun handheldApproachDirectionNeverLeaksIntoBoatHeading(){
+    @Test fun responsivePhoneHeadingTurnsTheBoatWhenNoNmeaHeadingExists(){
         val fix=NavigationFix(-36.8,175.1,receivedElapsedRealtime=500,sourceSentence="ANDROID",valid=true,cogTrueDegrees=42.0,sogKnots=1.2)
         val phone=PhoneHeadingSample(liveTrueHeadingDegrees=211.0,trueHeadingDegrees=null,receivedElapsedRealtime=500)
-        assertEquals(42.0,displayHeading(fix,null,emptyList(),phone,nowElapsed=500)!!,0.001)
+        assertEquals(211.0,displayHeading(fix,null,emptyList(),phone,nowElapsed=500)!!,0.001)
     }
 
     @Test fun freshPhysicalNmeaHeadingRemainsAuthoritativeOverPhone(){

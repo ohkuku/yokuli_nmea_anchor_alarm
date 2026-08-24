@@ -70,6 +70,8 @@ class NmeaOutputMux @Inject constructor() {
     }
 
     fun phoneHeading(trueHeadingDegrees:Double):String=sentence("IIHDT,${f(normalizeDegrees(trueHeadingDegrees),2)},T")
+    fun diagnostic():String=sentence("PYOK,TEST,ANCHOR_WATCH,1")
+    fun diagnosticMagneticHeading(headingDegrees:Double=123.4):String=sentence("IIHDG,${f(normalizeDegrees(headingDegrees),2)},,,,")
     fun phoneRateOfTurn(degreesPerMinute:Double):String=sentence("IIROT,${f(degreesPerMinute.coerceIn(-720.0,720.0),2)},A")
     fun phoneXdr(attitude:VesselAttitude?,pressureHpa:Double?):String?{
         val groups=buildList{

@@ -6,6 +6,9 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.pow
+import kotlin.math.atan2
+import kotlin.math.sin
+import kotlin.math.asin
 
 data class MapScaleBar(
     val distanceMeters: Double,
@@ -40,6 +43,32 @@ object MapDistanceTools {
 
     fun distanceMeters(firstLatitude: Double, firstLongitude: Double, secondLatitude: Double, secondLongitude: Double): Double =
         AnchorGeometry.distanceMeters(firstLatitude, firstLongitude, secondLatitude, secondLongitude)
+
+    fun initialBearingDegrees(firstLatitude:Double,firstLongitude:Double,secondLatitude:Double,secondLongitude:Double):Double{
+        val first=Math.toRadians(firstLatitude);val second=Math.toRadians(secondLatitude);val longitudeDelta=Math.toRadians(secondLongitude-firstLongitude)
+        val east=sin(longitudeDelta)*cos(second)
+        val north=cos(first)*sin(second)-sin(first)*cos(second)*cos(longitudeDelta)
+        return (Math.toDegrees(atan2(east,north))+360.0)%360.0
+    }
+
+    fun midpoint(firstLatitude:Double,firstLongitude:Double,secondLatitude:Double,secondLongitude:Double)=
+        ((firstLatitude+secondLatitude)/2.0) to ((firstLongitude+secondLongitude)/2.0)
+
+    /** Move the whole ruler around a new midpoint while retaining its geodesic
+     * length and initial true bearing. */
+    fun translateRuler(firstLatitude:Double,firstLongitude:Double,secondLatitude:Double,secondLongitude:Double,newMidLatitude:Double,newMidLongitude:Double):Pair<Pair<Double,Double>,Pair<Double,Double>>{
+        val distance=distanceMeters(firstLatitude,firstLongitude,secondLatitude,secondLongitude)
+        val bearing=initialBearingDegrees(firstLatitude,firstLongitude,secondLatitude,secondLongitude)
+        val translatedStart=destination(newMidLatitude,newMidLongitude,(bearing+180.0)%360.0,distance/2.0)
+        return translatedStart to destination(translatedStart.first,translatedStart.second,bearing,distance)
+    }
+
+    private fun destination(latitude:Double,longitude:Double,bearingDegrees:Double,distanceMeters:Double):Pair<Double,Double>{
+        val angularDistance=distanceMeters/6_371_000.0;val bearing=Math.toRadians(bearingDegrees);val startLatitude=Math.toRadians(latitude);val startLongitude=Math.toRadians(longitude)
+        val latitudeResult=asin(sin(startLatitude)*cos(angularDistance)+cos(startLatitude)*sin(angularDistance)*cos(bearing))
+        val longitudeResult=startLongitude+atan2(sin(bearing)*sin(angularDistance)*cos(startLatitude),cos(angularDistance)-sin(startLatitude)*sin(latitudeResult))
+        return Math.toDegrees(latitudeResult) to (((Math.toDegrees(longitudeResult)+540.0)%360.0)-180.0)
+    }
 
     fun measurementLabel(distanceMeters: Double): String = when {
         !distanceMeters.isFinite() || distanceMeters < 0.0 -> "—"

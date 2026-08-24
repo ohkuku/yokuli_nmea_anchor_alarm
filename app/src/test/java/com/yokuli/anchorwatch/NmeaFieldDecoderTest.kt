@@ -24,8 +24,11 @@ class NmeaFieldDecoderTest {
     }
 
     @Test fun xdrKeepsStableTransducerIdentity(){
-        val result=NmeaFieldDecoder.decode(NmeaChecksum.append("IIXDR,A,12.4,D,RUDDER,C,19.3,C,WATER"),123)
+        val result=NmeaFieldDecoder.decode(NmeaChecksum.append("IIXDR,A,12.4,D,RUDDER,A,-3.2,D,PHONE_HEEL,A,1.7,D,PHONE_PITCH,A,99.0,D,OTHER,C,19.3,C,WATER"),123)
         assertTrue(result.any{it.key.transducerName=="RUDDER"&&it.key.semantic==NmeaFieldSemantic.RUDDER_ANGLE})
+        assertTrue(result.any{it.key.transducerName=="PHONE_HEEL"&&it.key.semantic==NmeaFieldSemantic.HEEL})
+        assertTrue(result.any{it.key.transducerName=="PHONE_PITCH"&&it.key.semantic==NmeaFieldSemantic.PITCH})
+        assertTrue(result.any{it.key.transducerName=="OTHER"&&it.key.semantic==NmeaFieldSemantic.RAW_ANGULAR})
         assertTrue(result.any{it.key.transducerName=="WATER"&&it.key.semantic==NmeaFieldSemantic.WATER_TEMPERATURE})
     }
 }

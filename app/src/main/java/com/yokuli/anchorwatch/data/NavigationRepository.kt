@@ -1,6 +1,7 @@
 package com.yokuli.anchorwatch.data
 import android.os.SystemClock
 import com.yokuli.anchorwatch.data.nmea.*
+import com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard
 import com.yokuli.anchorwatch.domain.model.*
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
 import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
@@ -21,6 +22,7 @@ data class NmeaInstrumentState(
 @Singleton class NavigationRepository @Inject constructor(
  private val liveDepth:LiveDepthRepository,
  private val liveWind:LiveWindRepository,
+ private val outboundLoopGuard:NmeaOutboundLoopGuard,
 ){
  private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val connection=NmeaConnectionManager(scope,::resetHeldMeasurements)
  private val requestGuard=Any();private var appConnectionRequested=false;private var backgroundConnectionRequested=false
@@ -73,8 +75,12 @@ data class NmeaInstrumentState(
  fun accept(line:String,requireChecksum:Boolean=true){
   var reportValidFix=false
   synchronized(this){
-   val normalized=line.trim();if(NmeaChecksum.validate(normalized,requireChecksum))_validRawSentences.tryEmit(normalized)
-   val now=SystemClock.elapsedRealtime();val u=parser.parse(normalized,requireChecksum,now);val old=_diagnostics.value;val raw=(old.raw+normalized).takeLast(200)
+   val normalized=line.trim();val now=SystemClock.elapsedRealtime();val checksumValid=NmeaChecksum.validate(normalized,requireChecksum);val old=_diagnostics.value;val raw=(old.raw+normalized).takeLast(200)
+   // Preserve transport diagnostics, but never let an echoed App-generated
+   // sentence become independent boat position/heading/wind evidence.
+   if(checksumValid&&outboundLoopGuard.isRecentOutbound(normalized,now)){_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,validSentences=old.validSentences+1,lastPacketElapsed=now,raw=raw);return}
+   if(checksumValid)_validRawSentences.tryEmit(normalized)
+   val u=parser.parse(normalized,requireChecksum,now)
    if(u==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
    liveWind.accept(u,now);u.depthObservation?.let{liveDepth.accept(it)}
    if(u.trueHeading!=null){headingTrue=u.trueHeading to now;headingSampleSequence++};u.magneticHeading?.let{headingMag=it to now};u.depth?.let{depth=it to now};u.depthObservation?.let(_depthObservations::tryEmit);u.speedThroughWaterKnots?.let{speedThroughWater=it to now};u.sog?.let{sog=it to now};u.cog?.let{cog=it to now};u.hdop?.let{hdop=it to now};u.fixQuality?.let{fixQuality=it to now};u.satellites?.let{satellites=it to now};u.position?.altitudeMeters?.let{altitude=it to now}

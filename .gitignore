@@ -10,3 +10,5 @@ captures/
 .signing/
 __pycache__/
 *.pyc
+hs_err_pid*.log
+replay_pid*.log

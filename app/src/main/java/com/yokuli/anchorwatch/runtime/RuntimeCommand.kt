@@ -34,6 +34,7 @@ sealed interface RuntimeCommand {
     data object PauseWatchAndDisconnect:RuntimeCommand
     data object StopNmeaDependenciesAndDisconnect:RuntimeCommand
     data class Candidate(val action:CandidateAction,val sessionId:Long,val candidateId:Long):RuntimeCommand
+    data class ResetCentreAnalysis(val sessionId:Long):RuntimeCommand
     data class ApplyRecalculatedCentre(val sessionId:Long,val expectedCurrentLatitude:Double,val expectedCurrentLongitude:Double,val latitude:Double,val longitude:Double,val uncertaintyMeters:Double,val trackDiameterMeters:Double,val fitRadiusMeters:Double?,val shiftMeters:Double):RuntimeCommand
     data class UpdatePhoneHeading(val enabled:Boolean):RuntimeCommand
     data class UpdateConditionGuards(val config:ConditionGuardConfig):RuntimeCommand
@@ -87,6 +88,7 @@ object RuntimeCommandParser {
             AnchorForegroundService.ACCEPT_ESTIMATED_CENTER->candidate(intent,CandidateAction.ACCEPT)
             AnchorForegroundService.KEEP_CURRENT_CENTER->candidate(intent,CandidateAction.KEEP_CURRENT)
             AnchorForegroundService.CONTINUE_ESTIMATING_CENTER->candidate(intent,CandidateAction.CONTINUE_ESTIMATING)
+            AnchorForegroundService.RESET_CENTRE_ANALYSIS->RuntimeCommand.ResetCentreAnalysis(intent.getLongExtra("sessionId",-1))
             AnchorForegroundService.APPLY_RECALCULATED_CENTRE->RuntimeCommand.ApplyRecalculatedCentre(intent.getLongExtra("sessionId",-1),intent.getDoubleExtra("expectedCurrentLatitude",Double.NaN),intent.getDoubleExtra("expectedCurrentLongitude",Double.NaN),intent.getDoubleExtra("latitude",Double.NaN),intent.getDoubleExtra("longitude",Double.NaN),intent.getDoubleExtra("uncertainty",Double.NaN),intent.getDoubleExtra("trackDiameter",Double.NaN),intent.getDoubleExtra("fitRadius",Double.NaN).takeUnless(Double::isNaN),intent.getDoubleExtra("shift",Double.NaN))
             AnchorForegroundService.UPDATE_PHONE_HEADING->RuntimeCommand.UpdatePhoneHeading(intent.getBooleanExtra("enabled",false))
             AnchorForegroundService.UPDATE_CONDITION_GUARDS->RuntimeCommand.UpdateConditionGuards(ConditionGuardConfig(

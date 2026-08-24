@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 16
+const val DATABASE_SCHEMA_VERSION = 17
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -65,6 +65,11 @@ data class AnchorSessionEntity(
     @ColumnInfo(defaultValue = "0") val candidateDirectionEvidenceConsistent: Boolean = false,
     @ColumnInfo(defaultValue = "0") val maxDistanceMeters: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val alarmCount: Int = 0,
+    /** Estimator may continue learning without mutating the adopted safety centre. */
+    @ColumnInfo(defaultValue = "0") val estimationEpoch:Long=0L,
+    val estimationEpochStartedAt:Long?=null,
+    @ColumnInfo(defaultValue = "0") val adoptedCenterEpoch:Long=0L,
+    @ColumnInfo(defaultValue = "0") val latestEstimateEpoch:Long=0L,
     /** Explicit setup provenance only; never used as the authoritative anchor coordinate. */
     val savedAnchorageId:Long?=null,
     @ColumnInfo(defaultValue = "0") val depthGuardEnabled:Boolean=false,
@@ -188,6 +193,9 @@ data class TripSampleEntity(
  val trueWindSpeedKnots:Double?,val trueWindDirectionDegrees:Double?,val trueWindAngleDegrees:Double?,val apparentWindSpeedKnots:Double?,val apparentWindAngleDegrees:Double?,val windSource:String?,val windAgeMillis:Long?,
  val heelDegrees:Double?,val pitchDegrees:Double?,val rollRateDegPerSec:Double?,val pitchRateDegPerSec:Double?,val yawRateDegPerSec:Double?,val motionScore:Double?,val rollPeriodSeconds:Double?,val rollPeriodConfidence:String?,val attitudeAgeMillis:Long?,
  val pressureHpa:Double?,val pressureAgeMillis:Long?,val ukcMeters:Double?,val sourceFlags:Int=0,
+ val sogAgeMillis:Long?=null,val cogAgeMillis:Long?=null,
+ val trueWindSpeedAgeMillis:Long?=null,val trueWindDirectionAgeMillis:Long?=null,val trueWindAngleAgeMillis:Long?=null,val apparentWindSpeedAgeMillis:Long?=null,val apparentWindAngleAgeMillis:Long?=null,
+ @ColumnInfo(defaultValue="'UNKNOWN'")val attitudeQuality:String="UNKNOWN",@ColumnInfo(defaultValue="0")val attitudeMountSuspect:Boolean=false,
 )
 
 @Entity(tableName="trip_events",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])

@@ -52,6 +52,10 @@ class CandidateDriftDetector(
         warningReported = alreadyReported
     }
 
+    /** Once a directional drag trend is reported, centre adoption stays gated
+     * until an explicit analysis reset starts a new epoch. */
+    fun refinementSuppressed(): Boolean = warningReported
+
     fun add(observation: CandidateCenterObservation): CandidateDriftUpdate {
         val last = observations.lastOrNull()
         if (last != null && observation.timestamp <= last.timestamp) return CandidateDriftUpdate.IGNORED

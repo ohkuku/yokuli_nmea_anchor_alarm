@@ -90,6 +90,7 @@ class AnchorForegroundService : Service() {
         const val ACCEPT_ESTIMATED_CENTER = "com.yokuli.anchorwatch.ACCEPT_ESTIMATED_CENTER"
         const val KEEP_CURRENT_CENTER = "com.yokuli.anchorwatch.KEEP_CURRENT_CENTER"
         const val CONTINUE_ESTIMATING_CENTER = "com.yokuli.anchorwatch.CONTINUE_ESTIMATING_CENTER"
+        const val RESET_CENTRE_ANALYSIS = "com.yokuli.anchorwatch.RESET_CENTRE_ANALYSIS"
         const val APPLY_RECALCULATED_CENTRE = "com.yokuli.anchorwatch.APPLY_RECALCULATED_CENTRE"
         const val UPDATE_PHONE_HEADING = "com.yokuli.anchorwatch.UPDATE_PHONE_HEADING"
         const val UPDATE_CONDITION_GUARDS = "com.yokuli.anchorwatch.UPDATE_CONDITION_GUARDS"

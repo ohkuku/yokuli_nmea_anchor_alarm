@@ -23,4 +23,20 @@ class MapDistanceToolsTest {
         val result = MapDistanceTools.distanceMeters(-36.8420, 174.7510, -36.8420, 174.7622)
         assertTrue(result in 990.0..1_010.0)
     }
+
+    @Test fun rulerReportsBearingAndStableMidpoint(){
+        assertEquals(90.0,MapDistanceTools.initialBearingDegrees(0.0,0.0,0.0,1.0),.01)
+        val midpoint=MapDistanceTools.midpoint(-36.0,174.0,-38.0,176.0)
+        assertEquals(-37.0,midpoint.first,.0001);assertEquals(175.0,midpoint.second,.0001)
+    }
+
+    @Test fun wholeRulerTranslationPreservesDistanceAndBearing(){
+        val beforeDistance=MapDistanceTools.distanceMeters(-36.85,174.76,-36.845,174.77)
+        val beforeBearing=MapDistanceTools.initialBearingDegrees(-36.85,174.76,-36.845,174.77)
+        val moved=MapDistanceTools.translateRuler(-36.85,174.76,-36.845,174.77,-35.0,175.0)
+        val afterDistance=MapDistanceTools.distanceMeters(moved.first.first,moved.first.second,moved.second.first,moved.second.second)
+        val afterBearing=MapDistanceTools.initialBearingDegrees(moved.first.first,moved.first.second,moved.second.first,moved.second.second)
+        assertEquals(beforeDistance,afterDistance,.05)
+        assertEquals(beforeBearing,afterBearing,.01)
+    }
 }

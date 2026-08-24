@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertCountEquals
@@ -16,6 +17,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.content.ContextCompat
@@ -268,6 +271,29 @@ class AnchorSafetyFlowTest {
         }
     }
 
+    @Test fun sailMfdKeepsCoreInstrumentsInTheFirstViewportAndCockpitReallyLocks() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithTag("nav_sail").performClick()
+            compose.onNodeWithTag("mfd_page_SAILING").assertIsDisplayed()
+            listOf("Boat speed","SOG","Heel","VMG to wind","Apparent wind","True wind").forEach{title->compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed()}
+            compose.onNodeWithTag("mfd_page_SAILING").performTouchInput{swipeLeft()}
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("mfd_page_NAV").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("mfd_page_NAV").assertIsDisplayed()
+            compose.onNodeWithTag("trip_cockpit_mode").performClick()
+            compose.onNodeWithTag("nav_anchor").assertDoesNotExist()
+            compose.onNodeWithTag("start_trip").assertDoesNotExist()
+            compose.onNodeWithTag("trip_touch_lock").performClick()
+            compose.onNodeWithTag("trip_touch_lock").performTouchInput {
+                down(center)
+                advanceEventTime(1_600L)
+                up()
+            }
+            compose.onNodeWithTag("trip_cockpit_mode").performClick()
+            compose.onNodeWithTag("nav_anchor").assertExists()
+        }
+    }
+
     @Test fun mapCanSwitchBetweenLockedFollowAndFreeBrowsing() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
@@ -493,7 +519,7 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithText("Captain",substring=true).assertExists()
             compose.onNodeWithTag("onboarding_crew_lili").assertExists()
             compose.onNodeWithTag("onboarding_continue").performClick()
-            compose.onNodeWithTag("nav_watch").assertExists()
+            compose.onNodeWithTag("nav_anchor").assertExists()
             assertTrue(preferences.settings.first().onboardingCompleted)
         }
     }

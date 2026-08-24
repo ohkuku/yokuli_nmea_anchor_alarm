@@ -28,6 +28,15 @@ data class PhoneHeadingSample(
     val epoch: Long = 0L,
     val sequence: Long = 0L,
     val receivedElapsedRealtime: Long? = null,
+    /** HDT may only be emitted when this is true. */
+    val declinationReferenceReady: Boolean = false,
+)
+
+data class DeclinationReferenceState(
+    val ready:Boolean=false,
+    val latitude:Double?=null,
+    val longitude:Double?=null,
+    val updatedAtUtcMillis:Long?=null,
 )
 
 @Suppress("DEPRECATION")
@@ -48,6 +57,8 @@ class PhoneHeadingRepository @Inject constructor(
     private val gyroscope = sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val _sample = MutableStateFlow(PhoneHeadingSample())
     val sample = _sample.asStateFlow()
+    private val _declinationReference=MutableStateFlow(DeclinationReferenceState())
+    val declinationReference=_declinationReference.asStateFlow()
 
     private var running = false
     private var runtimeDemand = false
@@ -77,10 +88,12 @@ class PhoneHeadingRepository @Inject constructor(
         (accelerometer != null && magnetometer != null) || legacyOrientation != null
 
     fun setPosition(latitude: Double, longitude: Double, altitudeMeters: Double?, wallTimeMillis: Long?) {
+        if(!latitude.isFinite()||!longitude.isFinite()||latitude !in -90.0..90.0||longitude !in -180.0..180.0)return
         this.latitude = latitude
         this.longitude = longitude
         altitude = altitudeMeters ?: 0.0
         wallTime = wallTimeMillis ?: System.currentTimeMillis()
+        _declinationReference.value=DeclinationReferenceState(true,latitude,longitude,wallTime)
     }
 
     /** Safety-runtime ownership; display and approach use independent demands. */
@@ -195,7 +208,7 @@ class PhoneHeadingRepository @Inject constructor(
         sensorAccuracy: Int,
         allowEstimatorEvidence: Boolean = true,
     ) {
-        val declination = GeomagneticField(latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), wallTime).declination
+        val declination = if(_declinationReference.value.ready)GeomagneticField(latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), wallTime).declination else 0f
         val trueHeading = (magnetic + declination + 360.0) % 360.0
         val nowElapsed=SystemClock.elapsedRealtime()
         val observation = if (allowEstimatorEvidence) {
@@ -236,6 +249,7 @@ class PhoneHeadingRepository @Inject constructor(
             epoch = epoch,
             sequence = sequence,
             receivedElapsedRealtime = nowElapsed,
+            declinationReferenceReady = _declinationReference.value.ready,
         )
     }
 

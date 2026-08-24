@@ -201,7 +201,7 @@ class YokuliBackupManager @Inject constructor(
     private val vesselSettingsRepository:VesselSettingsRepository,
     private val outputSettingsRepository:OutputSettingsRepository,
     private val mountCalibrationRepository:VesselMountCalibrationRepository,
-    private val navigation:NavigationRepository=NavigationRepository(LiveDepthRepository(settingsRepository),LiveWindRepository()),
+    private val navigation:NavigationRepository=NavigationRepository(LiveDepthRepository(settingsRepository),LiveWindRepository(),com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard()),
     private val mockGps:GlobalMockLocationManager=GlobalMockLocationManager(context,LocationServices.getFusedLocationProviderClient(context)),
     private val sharingServer:NmeaSharingServer=NmeaSharingServer(NetworkAddressProvider()),
 ){

@@ -63,9 +63,11 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
-    var tab by remember{mutableStateOf(0)}
+internal fun HistoryPage(state:MainUiState,vm:MainViewModel,fixedTab:Int?=null){
+    var selectedTab by remember(fixedTab){mutableStateOf(fixedTab?:0)}
+    val tab=fixedTab?:selectedTab
     var expanded by remember{mutableStateOf<Long?>(null)}
+    var expandedTrip by remember{mutableStateOf<Long?>(null)}
     var pendingDelete by remember{mutableStateOf<AnchorSessionEntity?>(null)}
     var pendingTripDelete by remember{mutableStateOf<TripSessionEntity?>(null)}
     var reportTrip by remember{mutableStateOf<TripSessionEntity?>(null)}
@@ -79,14 +81,14 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
     var detailAnchorage by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
     var showQrScanner by remember{mutableStateOf(false)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-        item{PageHeader(tr("History","历史"),tr("Anchor sessions, saved anchorages and recorded trips stay separate and local.","锚泊会话、收藏锚地和航程记录彼此独立，并保存在本机。"));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(tab==0,{tab=0},label={Text(tr("Anchors","锚泊"))});FilterChip(tab==1,{tab=1},label={Text(tr("Anchorages","收藏锚地"))});FilterChip(tab==2,{tab=2},label={Text(tr("Trips","航程"))})}}
+        if(fixedTab==null)item{PageHeader(tr("History","历史"),tr("Anchor sessions, saved anchorages and recorded trips stay separate and local.","锚泊会话、收藏锚地和航程记录彼此独立，并保存在本机。"));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(tab==0,{selectedTab=0},label={Text(tr("Anchors","锚泊"))});FilterChip(tab==1,{selectedTab=1},label={Text(tr("Anchorages","收藏锚地"))});FilterChip(tab==2,{selectedTab=2},label={Text(tr("Trips","航程"))})}}
         if(tab==1)item{OutlinedButton({showQrScanner=true},Modifier.fillMaxWidth().testTag("scan_anchorage_qr")){Icon(Icons.Default.QrCodeScanner,null);Spacer(Modifier.width(8.dp));Text(tr("Scan anchorage QR","扫描锚地二维码"))}}
         if(tab==0&&state.sessions.isEmpty())item{Text(tr("No anchor sessions recorded.","还没有锚泊记录。"),color=MaterialTheme.colorScheme.onSurfaceVariant)}
         if(tab==0)items(state.sessions,key={"session-${it.id}"}){session->
             val events=state.eventsBySession[session.id].orEmpty()
             val savePosition=AnchorageSavePositionPolicy.resolve(session)
             val alreadySaved=state.savedAnchorages.firstOrNull{saved->AnchorGeometry.distanceMeters(savePosition.latitude,savePosition.longitude,saved.latitude,saved.longitude)<=com.yokuli.anchorwatch.data.anchorage.AnchorageRepository.DUPLICATE_RADIUS_METERS}
-            Card(Modifier.fillMaxWidth().clickable{val next=if(expanded==session.id)null else session.id;expanded=next;if(next!=null)vm.loadHistoryEvents(next)}){
+            Card(Modifier.fillMaxWidth()){
                 Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                     Row(verticalAlignment=Alignment.CenterVertically){
                         Column(Modifier.weight(1f)){
@@ -94,23 +96,17 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
                             Text("${when{!session.active->tr("LIFTED","已起锚");session.paused->tr("PAUSED","已暂停");else->tr("ACTIVE","监控中")}} · ${historySourceLabel(session.positionSource)} · ${historyCenterLabel(session.centerSource)}",style=MaterialTheme.typography.bodySmall)
                             Text("${"%.5f".format(session.anchorLatitude)}, ${"%.5f".format(session.anchorLongitude)} · ${session.alarmRadiusMeters.toInt()} m · ${tr("max","最大")} ${session.maxDistanceMeters.toInt()} m",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Icon(if(expanded==session.id)Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)
-                    }
-                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                        OutlinedButton({reportAnchor=session}){Text(tr("Report","报告"))}
-                        OutlinedButton({vm.exportCsv(session)}){Text("CSV")}
-                        OutlinedButton({vm.exportGpx(session)}){Text("GPX")}
-                        Text(tr("${session.alarmCount+session.depthAlarmCount+session.windAlarmCount} alarms","${session.alarmCount+session.depthAlarmCount+session.windAlarmCount} 次报警"),style=MaterialTheme.typography.labelMedium,modifier=Modifier.align(Alignment.CenterVertically))
-                        Spacer(Modifier.weight(1f))
                         if(!session.active)IconButton({pendingDelete=session}){Icon(Icons.Default.DeleteForever,tr("Delete session","删除会话"),tint=MaterialTheme.colorScheme.error)}
                     }
-                    if(!session.active)OutlinedButton({pendingAiAnchor=session},Modifier.fillMaxWidth()){Text(tr("Export data for AI","导出源数据给 AI"))}
-                    if(session.minObservedDepthMeters!=null||session.maxObservedWindKnots!=null)Text(buildString{session.minObservedDepthMeters?.let{append(tr("Depth","水深")+" ${"%.1f".format(it)}–${"%.1f".format(session.maxObservedDepthMeters?:it)} m")};session.maxObservedWindKnots?.let{if(isNotEmpty())append(" · ");append(tr("Wind max","最大风速")+" ${"%.1f".format(it)} kn ${session.maxObservedWindSource?:""}")};if(session.depthAlarmCount+session.windAlarmCount>0){append("\n");append(tr("Anchor ${session.alarmCount} · Depth ${session.depthAlarmCount} · Wind ${session.windAlarmCount}","锚警 ${session.alarmCount} · 水深 ${session.depthAlarmCount} · 风 ${session.windAlarmCount}"))}},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(alreadySaved==null)OutlinedButton({saveSession=session},Modifier.fillMaxWidth()){Text(if(session.centerStatus==AnchorCenterStatus.RESOLVED.name)tr("☆ Save anchorage","☆ 收藏锚地")else tr("☆ Save approximate reference","☆ 收藏估算参考位置"))}
-                    else OutlinedButton({detailAnchorage=alreadySaved},Modifier.fillMaxWidth()){Text(tr("Already saved · View details","已收藏 · 查看详情"))}
-                    if(!session.active||session.centerStatus==AnchorCenterStatus.RESOLVED.name)OutlinedButton({vm.recalculateCentreFromTrack(session)},Modifier.fillMaxWidth().testTag("analyze_centre_from_track_${session.id}")){Text(if(session.active)tr("Recalculate centre from track","根据轨迹重新计算中心")else tr("Analyze centre from track","按轨迹分析中心"))}
+                    Text(tr("Max radius ${session.maxDistanceMeters.toInt()} m · ${session.alarmCount+session.depthAlarmCount+session.windAlarmCount} alarms","最大半径 ${session.maxDistanceMeters.toInt()} 米 · ${session.alarmCount+session.depthAlarmCount+session.windAlarmCount} 次报警"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button({val next=if(expanded==session.id)null else session.id;expanded=next;if(next!=null)vm.loadHistoryEvents(next)},Modifier.fillMaxWidth()){Text(if(expanded==session.id)tr("Close details","收起详情")else tr("Open","打开"))}
                     if(expanded==session.id){
-                        HorizontalDivider();Text(tr("Event timeline","事件时间线"),style=MaterialTheme.typography.labelLarge)
+                        HorizontalDivider()
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton({reportAnchor=session},Modifier.weight(1f)){Text(tr("Report","报告"))};OutlinedButton({vm.exportCsv(session)},Modifier.weight(1f)){Text("CSV")};OutlinedButton({vm.exportGpx(session)},Modifier.weight(1f)){Text("GPX")}}
+                        if(!session.active)OutlinedButton({pendingAiAnchor=session},Modifier.fillMaxWidth()){Text(tr("Export data for AI","导出源数据给 AI"))}
+                        if(alreadySaved==null)OutlinedButton({saveSession=session},Modifier.fillMaxWidth()){Text(if(session.centerStatus==AnchorCenterStatus.RESOLVED.name)tr("☆ Save anchorage","☆ 收藏锚地")else tr("☆ Save approximate reference","☆ 收藏估算参考位置"))}else OutlinedButton({detailAnchorage=alreadySaved},Modifier.fillMaxWidth()){Text(tr("Already saved · View details","已收藏 · 查看详情"))}
+                        if(!session.active||session.centerStatus==AnchorCenterStatus.RESOLVED.name)OutlinedButton({vm.recalculateCentreFromTrack(session)},Modifier.fillMaxWidth().testTag("analyze_centre_from_track_${session.id}")){Text(if(session.active)tr("Recalculate centre from track","根据轨迹重新计算中心")else tr("Analyze centre from track","按轨迹分析中心"))}
+                        Text(tr("Event timeline","事件时间线"),style=MaterialTheme.typography.labelLarge)
                         if(events.isEmpty())Text(tr("No recorded events.","没有事件记录。"),style=MaterialTheme.typography.bodySmall)
                         else events.sortedByDescending{it.timestamp}.take(30).forEach{event->
                             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -145,8 +141,8 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
                     }
                     Text(tr("${"%.2f".format(trip.distanceMeters/1000.0)} km · ${trip.sampleCount} samples · ${trip.waypointCount} waypoints","${"%.2f".format(trip.distanceMeters/1000.0)} 公里 · ${trip.sampleCount} 个样本 · ${trip.waypointCount} 个航点"),style=MaterialTheme.typography.bodyMedium)
                     Text(listOfNotNull(trip.maxSogKnots?.let{tr("Max SOG ${"%.1f".format(it)} kn","最大对地航速 ${"%.1f".format(it)} 节")},trip.maxAbsHeelDegrees?.let{tr("Max heel ${"%.1f".format(it)}°","最大横倾 ${"%.1f".format(it)}°")},trip.minDepthMeters?.let{tr("Min depth ${"%.1f".format(it)} m","最小水深 ${"%.1f".format(it)} 米")}).joinToString(" · ").ifBlank{tr("No summary metrics yet","暂无汇总指标")},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(!trip.active){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({reportTrip=trip},Modifier.weight(1f)){Text(tr("Report","报告"))};OutlinedButton({vm.exportTripCsv(trip)},Modifier.weight(1f)){Text("CSV")};OutlinedButton({vm.exportTripGpx(trip)},Modifier.weight(1f)){Text("GPX")}};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({vm.exportTripKml(trip)},Modifier.weight(1f)){Text("KML")};OutlinedButton({vm.exportTripKmz(trip)},Modifier.weight(1f)){Text("KMZ")};OutlinedButton({vm.shareTripReportSnapshot(trip)},Modifier.weight(1f)){Text(tr("Image","图片"))}};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){TextButton({vm.exportTripEvents(trip)},Modifier.weight(1f)){Text(tr("Events CSV","事件 CSV"))};TextButton({vm.exportTripWaypoints(trip)},Modifier.weight(1f)){Text(tr("Waypoints CSV","航点 CSV"))};TextButton({vm.exportTripCustomMetrics(trip)},Modifier.weight(1f)){Text(tr("Custom CSV","自定义 CSV"))}};OutlinedButton({replayTrip=trip},Modifier.fillMaxWidth()){Text(tr("Replay trip","回放航程"))};OutlinedButton({pendingAiTrip=trip},Modifier.fillMaxWidth()){Text(tr("Export data for AI","导出源数据给 AI"))}}
-                    if(trip.active)OutlinedButton({vm.setWatchWorkspace(com.yokuli.anchorwatch.domain.vessel.WatchWorkspaceMode.TRIP);vm.page(0)},Modifier.fillMaxWidth()){Text(tr("Open Trip Watch","打开航程监控"))}
+                    if(!trip.active){Button({expandedTrip=if(expandedTrip==trip.id)null else trip.id},Modifier.fillMaxWidth()){Text(if(expandedTrip==trip.id)tr("Close details","收起详情")else tr("Open","打开"))};if(expandedTrip==trip.id){HorizontalDivider();Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({reportTrip=trip},Modifier.weight(1f)){Text(tr("Report","报告"))};OutlinedButton({replayTrip=trip},Modifier.weight(1f)){Text(tr("Replay","回放"))}};Text(tr("Export","导出"),style=MaterialTheme.typography.labelLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){OutlinedButton({vm.exportTripCsv(trip)},Modifier.weight(1f)){Text("CSV")};OutlinedButton({vm.exportTripGpx(trip)},Modifier.weight(1f)){Text("GPX")};OutlinedButton({vm.exportTripKml(trip)},Modifier.weight(1f)){Text("KML")};OutlinedButton({vm.exportTripKmz(trip)},Modifier.weight(1f)){Text("KMZ")}};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){TextButton({vm.shareTripReportSnapshot(trip)},Modifier.weight(1f)){Text(tr("Image","图片"))};TextButton({vm.exportTripEvents(trip)},Modifier.weight(1f)){Text(tr("Events","事件"))};TextButton({vm.exportTripWaypoints(trip)},Modifier.weight(1f)){Text(tr("Waypoints","航点"))}};TextButton({pendingAiTrip=trip},Modifier.fillMaxWidth()){Text(tr("AI source ZIP","AI 源数据 ZIP"))}}}
+                    if(trip.active)OutlinedButton({vm.page(1)},Modifier.fillMaxWidth()){Text(tr("Open Sail Live","打开实时航行"))}
                 }
             }
         }
@@ -158,7 +154,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel){
     replayTrip?.let{trip->TripReplayDialog(trip,vm){replayTrip=null}}
     pendingAiTrip?.let{trip->AiExportPrivacyDialog({pendingAiTrip=null}){pendingAiTrip=null;vm.exportTripAiSource(trip)}}
     pendingAiAnchor?.let{session->AiExportPrivacyDialog({pendingAiAnchor=null}){pendingAiAnchor=null;vm.exportAnchorAiSource(session)}}
-    saveSession?.let{session->val position=AnchorageSavePositionPolicy.resolve(session);AnchorageEditor(initial=SavedAnchorageEntity(name="",latitude=position.latitude,longitude=position.longitude,createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis(),preferredAlarmRadiusMeters=session.alarmRadiusMeters,typicalWaterDepthMeters=session.waterDepthMeters?:session.minObservedDepthMeters,typicalRodeLengthMeters=session.rodeLengthMeters,sourceSessionId=session.id,coordinateSource=position.source.name,coordinateUncertaintyMeters=position.uncertaintyMeters),dismiss={saveSession=null}){value->vm.saveAnchorage(value);saveSession=null;tab=1}}
+    saveSession?.let{session->val position=AnchorageSavePositionPolicy.resolve(session);AnchorageEditor(initial=SavedAnchorageEntity(name="",latitude=position.latitude,longitude=position.longitude,createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis(),preferredAlarmRadiusMeters=session.alarmRadiusMeters,typicalWaterDepthMeters=session.waterDepthMeters?:session.minObservedDepthMeters,typicalRodeLengthMeters=session.rodeLengthMeters,sourceSessionId=session.id,coordinateSource=position.source.name,coordinateUncertaintyMeters=position.uncertaintyMeters),dismiss={saveSession=null}){value->vm.saveAnchorage(value);saveSession=null;if(fixedTab==null)selectedTab=1}}
     editingAnchorage?.let{value->AnchorageEditor(value,{editingAnchorage=null}){vm.saveAnchorage(it);editingAnchorage=null}}
     detailAnchorage?.let{saved->AnchorageDetailDialog(saved,{detailAnchorage=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{detailAnchorage=null;vm.approachSavedAnchorage(saved.id)},approachEnabled=state.active==null)}
     pendingAnchorageDelete?.let{value->AlertDialog(onDismissRequest={pendingAnchorageDelete=null},title={Text(tr("Delete saved anchorage?","删除收藏锚地？"))},text={Text(tr("This removes only the saved place. Anchor session history is unchanged.","只会删除收藏地点，不影响锚泊会话历史。"))},confirmButton={Button({vm.deleteAnchorage(value.id);pendingAnchorageDelete=null},colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Delete","删除"))}},dismissButton={TextButton({pendingAnchorageDelete=null}){Text(tr("Cancel","取消"))}})}
@@ -249,7 +245,7 @@ private fun TripReportDialog(session:TripSessionEntity,vm:MainViewModel,dismiss:
             ReportLine(tr("Position / heading source changes","位置 / 航向来源切换"),"${value.positionSourceChangeCount} / ${value.headingSourceChangeCount}")
             if(value.findings.isNotEmpty()){ReportHeading(tr("Issues & observations","问题与观察"));value.findings.forEach{finding->Text("${finding.severity} · ${finding.title}\n${finding.detail}",style=MaterialTheme.typography.bodySmall)}}
             ReportHeading(tr("Data quality","数据质量"))
-            Text(tr("Position ${value.positionCoveragePercent.toInt()}% · depth ${value.depthCoveragePercent.toInt()}% · attitude ${value.attitudeCoveragePercent.toInt()}% · wind ${value.windCoveragePercent.toInt()}%","位置 ${value.positionCoveragePercent.toInt()}% · 水深 ${value.depthCoveragePercent.toInt()}% · 姿态 ${value.attitudeCoveragePercent.toInt()}% · 风 ${value.windCoveragePercent.toInt()}%"),style=MaterialTheme.typography.bodySmall)
+            Text(tr("Position ${value.positionCoveragePercent.toInt()}% · depth ${value.depthCoveragePercent.toInt()}% · attitude ${value.attitudeCoveragePercent.toInt()}% · true/apparent wind ${value.trueWindCoveragePercent.toInt()}%/${value.apparentWindCoveragePercent.toInt()}%","位置 ${value.positionCoveragePercent.toInt()}% · 水深 ${value.depthCoveragePercent.toInt()}% · 姿态 ${value.attitudeCoveragePercent.toInt()}% · 真风/视风 ${value.trueWindCoveragePercent.toInt()}%/${value.apparentWindCoveragePercent.toInt()}%"),style=MaterialTheme.typography.bodySmall)
             Text("${value.reportEngineVersion} · ${value.motionAlgorithmVersion}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     })

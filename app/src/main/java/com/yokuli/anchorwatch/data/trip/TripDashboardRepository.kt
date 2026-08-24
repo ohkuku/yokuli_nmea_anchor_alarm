@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.UUID
 
-enum class InstrumentTileSize { SMALL, MEDIUM, LARGE }
+enum class InstrumentTileSize { SMALL, MEDIUM, WIDE, LARGE, HERO }
 data class DashboardTileBinding(
     val tileId:InstrumentTileId?=null,
     val nmeaFieldId:String?=null,

@@ -44,7 +44,11 @@ data class NmeaDeviceOutputSettings(
     val phoneMotionEnabled:Boolean=false,
     val phonePressureEnabled:Boolean=false,
     val proprietaryStatusEnabled:Boolean=false,
+    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
+    val outputHost:String="",
+    val outputPort:Int=10110,
 )
+enum class NmeaOutputTransportMode { SAME_AS_INPUT_CONNECTION, DEDICATED_TCP }
 val NmeaDeviceOutputSettings.anyEnabled:Boolean get()=phonePositionEnabled||phoneHeadingEnabled||phoneMotionEnabled||phonePressureEnabled||proprietaryStatusEnabled
 
 @Singleton
@@ -68,7 +72,7 @@ class VesselSettingsRepository @Inject constructor(@ApplicationContext private v
 
 @Singleton
 class OutputSettingsRepository @Inject constructor(@ApplicationContext private val context:Context){
-    private object K{val phonePosition=booleanPreferencesKey("phone_position_enabled");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val proprietary=booleanPreferencesKey("phone_proprietary_enabled")}
-    val settings=context.outputSettingsStore.data.map{p->NmeaDeviceOutputSettings(p[K.phonePosition]?:false,p[K.phoneHeading]?:false,p[K.phoneMotion]?:false,p[K.phonePressure]?:false,p[K.proprietary]?:false)}
-    suspend fun save(value:NmeaDeviceOutputSettings)=context.outputSettingsStore.edit{it[K.phonePosition]=value.phonePositionEnabled;it[K.phoneHeading]=value.phoneHeadingEnabled;it[K.phoneMotion]=value.phoneMotionEnabled;it[K.phonePressure]=value.phonePressureEnabled;it[K.proprietary]=value.proprietaryStatusEnabled}
+    private object K{val phonePosition=booleanPreferencesKey("phone_position_enabled");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val proprietary=booleanPreferencesKey("phone_proprietary_enabled");val mode=stringPreferencesKey("transport_mode");val host=stringPreferencesKey("output_host");val port=intPreferencesKey("output_port")}
+    val settings=context.outputSettingsStore.data.map{p->NmeaDeviceOutputSettings(p[K.phonePosition]?:false,p[K.phoneHeading]?:false,p[K.phoneMotion]?:false,p[K.phonePressure]?:false,p[K.proprietary]?:false,p[K.mode]?.let{runCatching{NmeaOutputTransportMode.valueOf(it)}.getOrNull()}?:NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,p[K.host].orEmpty(),p[K.port]?:10110)}
+    suspend fun save(value:NmeaDeviceOutputSettings)=context.outputSettingsStore.edit{it[K.phonePosition]=value.phonePositionEnabled;it[K.phoneHeading]=value.phoneHeadingEnabled;it[K.phoneMotion]=value.phoneMotionEnabled;it[K.phonePressure]=value.phonePressureEnabled;it[K.proprietary]=value.proprietaryStatusEnabled;it[K.mode]=value.transportMode.name;it[K.host]=value.outputHost.trim();it[K.port]=value.outputPort.coerceIn(1,65535)}
 }

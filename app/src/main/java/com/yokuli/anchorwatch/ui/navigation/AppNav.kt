@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Sailing
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.StopCircle
@@ -13,6 +14,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -27,6 +32,7 @@ import com.yokuli.anchorwatch.ui.about.OnboardingMakerScreen
 
 private data class Destination(val label:String,val icon:ImageVector)
 internal val LocalAppLanguage=compositionLocalOf{AppLanguage.ENGLISH}
+internal val LocalSailCockpitMode=compositionLocalOf<MutableState<Boolean>?>{null}
 
 @Composable internal fun tr(english:String,chinese:String)=localized(LocalAppLanguage.current,english,chinese)
 
@@ -34,7 +40,9 @@ internal val LocalAppLanguage=compositionLocalOf{AppLanguage.ENGLISH}
 @OptIn(ExperimentalMaterial3Api::class)
 fun AnchorApp(vm:MainViewModel){
     val state by vm.ui.collectAsState()
-    CompositionLocalProvider(LocalAppLanguage provides state.settings.appLanguage){
+    val sailCockpitMode=remember{mutableStateOf(false)}
+    LaunchedEffect(state.page){if(state.page!=1)sailCockpitMode.value=false}
+    CompositionLocalProvider(LocalAppLanguage provides state.settings.appLanguage,LocalSailCockpitMode provides sailCockpitMode){
         if(!state.settingsReady){
             Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
             return@CompositionLocalProvider
@@ -44,15 +52,15 @@ fun AnchorApp(vm:MainViewModel){
             return@CompositionLocalProvider
         }
         val destinations=listOf(
-            Destination(tr("Watch","监控"),Icons.Default.Map),
+            Destination(tr("Anchor","锚泊"),Icons.Default.Map),
+            Destination(tr("Sail","航行"),Icons.Default.Sailing),
             Destination(tr("Data","数据"),Icons.Default.DataObject),
-            Destination(tr("History","历史"),Icons.AutoMirrored.Filled.List),
             Destination(tr("Settings","设置"),Icons.Default.Settings),
         )
-        val destinationTags=listOf("nav_watch","nav_data","nav_history","nav_settings")
-        Scaffold(bottomBar={NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
+        val destinationTags=listOf("nav_anchor","nav_sail","nav_data","nav_settings")
+        Scaffold(bottomBar={if(!sailCockpitMode.value)NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
             Box(Modifier.fillMaxSize().padding(padding)){
-                when(state.page){0->WatchPage(state,vm);1->DataPage(state,vm);2->HistoryPage(state,vm);else->SettingsScreen(state,vm)}
+                when(state.page){0->AnchorRootPage(state,vm);1->SailRootPage(state,vm);2->DataPage(state,vm);else->SettingsScreen(state,vm)}
                 AlarmTestBanner(state,vm,Modifier.align(Alignment.TopCenter))
             }
         }

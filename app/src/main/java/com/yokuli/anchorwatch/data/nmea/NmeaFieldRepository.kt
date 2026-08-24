@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 enum class NmeaFieldSemantic {
-    ROT, RUDDER_ANGLE, WATER_TEMPERATURE, AIR_TEMPERATURE, AIR_PRESSURE,
+    ROT, RUDDER_ANGLE, HEEL, PITCH, RAW_ANGULAR, WATER_TEMPERATURE, AIR_TEMPERATURE, AIR_PRESSURE,
     CURRENT_SET_TRUE, CURRENT_DRIFT, CROSS_TRACK_ERROR, BEARING_TO_WAYPOINT,
     DISTANCE_TO_WAYPOINT, DESTINATION_WAYPOINT, TOTAL_LOG, TRIP_LOG,
     APPARENT_WIND_ANGLE, APPARENT_WIND_SPEED, TRUE_WIND_ANGLE, TRUE_WIND_SPEED, TRUE_WIND_DIRECTION,
@@ -101,7 +101,12 @@ object NmeaFieldDecoder {
                 val semantic=when{
                     fields[index].equals("C",true)&&unit.equals("C",true)&&name?.contains("WATER",true)==true->NmeaFieldSemantic.WATER_TEMPERATURE
                     fields[index].equals("C",true)&&unit.equals("C",true)->NmeaFieldSemantic.AIR_TEMPERATURE
-                    fields[index].equals("A",true)->NmeaFieldSemantic.RUDDER_ANGLE
+                    fields[index].equals("A",true)->when(name?.trim()?.uppercase(Locale.US)){
+                        "PHONE_HEEL","ROLL","HEEL"->NmeaFieldSemantic.HEEL
+                        "PHONE_PITCH","PITCH"->NmeaFieldSemantic.PITCH
+                        "RUDDER","RUDDER_ANGLE"->NmeaFieldSemantic.RUDDER_ANGLE
+                        else->NmeaFieldSemantic.RAW_ANGULAR
+                    }
                     else->NmeaFieldSemantic.RAW
                 }
                 result+=NmeaFieldObservation(NmeaFieldKey(talker,type,index+1,semantic,name),value=value,unit=unit,receivedElapsedRealtime=elapsed,rawSentence=raw)

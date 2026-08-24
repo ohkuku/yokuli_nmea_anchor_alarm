@@ -40,6 +40,7 @@ import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
 import com.yokuli.anchorwatch.data.condition.LiveWindRepository
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
+import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictPolicy
 import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictState
@@ -238,6 +239,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
    RuntimeCommand.PauseWatchAndDisconnect->launchCommand{stopWatchAndDisconnect()}
    RuntimeCommand.StopNmeaDependenciesAndDisconnect->launchCommand{stopNmeaDependenciesAndDisconnect()}
    is RuntimeCommand.Candidate->launchCommand{anchorActor.execute{when(command.action){CandidateAction.ACCEPT->acceptCandidate(command.sessionId,command.candidateId);CandidateAction.KEEP_CURRENT->keepCurrentCenter(command.sessionId,command.candidateId);CandidateAction.CONTINUE_ESTIMATING->continueEstimating(command.sessionId,command.candidateId)}}}
+   is RuntimeCommand.ResetCentreAnalysis->launchCommand{anchorActor.execute{resetCentreAnalysis(command.sessionId)}}
    is RuntimeCommand.ApplyRecalculatedCentre->launchCommand{anchorActor.execute{applyRecalculatedCentre(command.sessionId,command.expectedCurrentLatitude,command.expectedCurrentLongitude,command.latitude,command.longitude,command.uncertaintyMeters,command.trackDiameterMeters,command.fitRadiusMeters,command.shiftMeters)}}
    is RuntimeCommand.UpdatePhoneHeading->launchCommand{anchorActor.execute{updatePhoneHeading(command.enabled)}}
    is RuntimeCommand.UpdateConditionGuards->launchCommand{anchorActor.execute{
@@ -518,16 +520,22 @@ class YokuliRuntimeCoordinator @Inject constructor(
   refreshNotification()
  }
  private suspend fun configurePhoneOutput(requested:NmeaDeviceOutputSettings,selected:GpsDataSource,activeSource:GpsDataSource?){
-  if(!requested.anyEnabled){phonePositionOutput.configure(NmeaDeviceOutputSettings());nmeaRuntime.releaseIfUnowned();return}
+  val appSettings=preferences.settings.first()
+  if(!requested.anyEnabled){phonePositionOutput.configure(requested,appSettings.profile);nmeaRuntime.releaseIfUnowned();return}
   var effective=requested
   val allowed=PositionSourceConflictPolicy.canEnablePhonePositionOutput(PositionSourceConflictState(requested.phonePositionEnabled,selected,activeSource))
   if(requested.phonePositionEnabled&&!allowed){effective=effective.copy(phonePositionEnabled=false);outputSettings.save(effective);notifySeparate("Phone GPS output blocked","NMEA Position is the App GPS source. Other enabled phone vessel sensors may continue.",true)}
-  val settings=preferences.settings.first();val writable=settings.profile.protocol==Protocol.TCP&&navigation.connectionState.value in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
-  if(!writable){phonePositionOutput.configure(NmeaDeviceOutputSettings());outputSettings.save(NmeaDeviceOutputSettings());notifySeparate("Phone sensor output blocked","Connect a writable TCP NMEA endpoint before enabling device output.",true);return}
-  // Claim the exact already-connected transport for background ownership. The
-  // writable check above prevents this from silently opening a saved endpoint.
-  nmeaRuntime.ensureConnected(settings.profile)
-  phonePositionOutput.configure(effective);refreshNotification()
+  if(effective.transportMode==NmeaOutputTransportMode.DEDICATED_TCP){
+   if(effective.outputHost.isBlank()||effective.outputPort !in 1..65535){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("NMEA output needs an endpoint","Enter a valid dedicated TCP host and port.",true);return}
+   // Dedicated TX is write-only. It must never claim RX ownership or inherit
+   // the receiver's no-data timeout/state machine.
+   phonePositionOutput.configure(effective,appSettings.profile)
+  }else{
+   if(appSettings.profile.protocol!=Protocol.TCP){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("Phone sensor output blocked","Same-as-input output requires a TCP NMEA input profile.",true);return}
+   nmeaRuntime.ensureConnected(appSettings.profile)
+   phonePositionOutput.configure(effective,appSettings.profile)
+  }
+  refreshNotification()
  }
  private fun releaseIfIdle(){
   // An empty in-memory runtime before restore is not evidence that the service

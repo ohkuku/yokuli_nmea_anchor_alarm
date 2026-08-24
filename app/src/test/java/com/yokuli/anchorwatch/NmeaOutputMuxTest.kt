@@ -95,4 +95,15 @@ class NmeaOutputMuxTest {
         assertTrue(output[2].contains("PHONE_HEEL")&&output[2].contains("PHONE_BARO"))
         assertTrue(output[3].contains(",42.5,"))
     }
+
+    @Test fun defaultOutputDiagnosticCannotBeMistakenForNavigation(){
+        val sentence=mux.diagnostic()
+        assertEquals("YOK",mux.sentenceType(sentence));assertTrue(NmeaChecksum.validate(sentence,true))
+        assertTrue(listOf("RMC","GGA","VTG","HDT","HDG").none{sentence.contains(it)})
+    }
+
+    @Test fun knownGoodHdgDiagnosticMatchesTheFiveSentenceContract(){
+        val output=List(5){mux.diagnosticMagneticHeading()}
+        assertEquals(5,output.size);assertTrue(output.all{mux.sentenceType(it)=="HDG"&&it.contains("IIHDG,123.40,,,,")&&NmeaChecksum.validate(it,true)})
+    }
 }

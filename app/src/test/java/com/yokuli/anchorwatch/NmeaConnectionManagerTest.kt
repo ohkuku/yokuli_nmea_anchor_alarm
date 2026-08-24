@@ -2,6 +2,7 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionManager
+import com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaTcpClient
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -13,6 +14,34 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class NmeaConnectionManagerTest {
+    @Test fun dedicatedTxUsesAnotherPortWithoutInterruptingRx() = runBlocking {
+        val rxServer=ServerSocket(0);val txServer=ServerSocket(0)
+        val rxAccepted=CompletableDeferred<Unit>();val txReceived=CompletableDeferred<String>()
+        val rxJob=launch(Dispatchers.IO){runCatching{rxServer.accept().use{socket->rxAccepted.complete(Unit);socket.getOutputStream().write("\$PYOK,RX*00\r\n".toByteArray());socket.getOutputStream().flush();awaitCancellation()}}}
+        val txJob=launch(Dispatchers.IO){runCatching{txServer.accept().use{socket->txReceived.complete(socket.getInputStream().bufferedReader().readLine())}}}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope);val txClient=DedicatedNmeaTcpClient()
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=rxServer.localPort,autoReconnect=false)))
+            withTimeout(3_000){rxAccepted.await()}
+            val result=txClient.write("127.0.0.1",txServer.localPort,listOf("\$PYOK,TX*00\r\n"))
+            assertTrue(result.success);assertEquals("\$PYOK,TX*00",withTimeout(3_000){txReceived.await()})
+            assertTrue(manager.state.value !in setOf(NmeaConnectionState.DISCONNECTED,NmeaConnectionState.ERROR))
+        }finally{
+            txClient.close();manager.disconnect();managerScope.cancel();runCatching{rxServer.close()};runCatching{txServer.close()};rxJob.cancelAndJoin();txJob.cancelAndJoin()
+        }
+    }
+
+    @Test fun sameTcpSocketCanReceiveAndWrite(){runBlocking{
+        val server=ServerSocket(0);val received=CompletableDeferred<String>();val serverJob=launch(Dispatchers.IO){runCatching{server.accept().use{socket->received.complete(socket.getInputStream().bufferedReader().readLine())}}}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort,autoReconnect=false)))
+            withTimeout(3_000){while(manager.state.value==NmeaConnectionState.CONNECTING)delay(10)}
+            assertTrue(manager.write(listOf("\$PYOK,SAME*00\r\n")))
+            assertEquals("\$PYOK,SAME*00",withTimeout(3_000){received.await()})
+        }finally{manager.disconnect();managerScope.cancel();runCatching{server.close()};serverJob.cancelAndJoin()}
+    }}
+
     @Test fun quietTcpStreamReportsNoDataWithoutOpeningAnotherSocket() = runBlocking {
         val server=ServerSocket(0);val accepted=AtomicInteger();val clients=CopyOnWriteArrayList<Socket>()
         val serverJob=launch(Dispatchers.IO){runCatching{while(isActive)server.accept().also{clients+=it;accepted.incrementAndGet()}}}

@@ -19,6 +19,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -46,6 +48,8 @@ import com.yokuli.anchorwatch.data.nmea.Protocol
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
+import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
+import com.yokuli.anchorwatch.domain.vessel.VesselObservation
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchor.AnchorRangeCalculator
 import com.yokuli.anchorwatch.domain.anchor.CoordinateParser
@@ -83,20 +87,73 @@ import com.yokuli.anchorwatch.map.TrailVisibilityPolicy
 import com.yokuli.anchorwatch.map.SonarTileDiagnostics
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
+import kotlinx.coroutines.launch
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 internal fun DataPage(state:MainUiState,vm:MainViewModel){
-    var section by remember{mutableIntStateOf(0)}
+    val pager=rememberPagerState(initialPage=state.dataSection,pageCount={4});val scope=rememberCoroutineScope()
+    LaunchedEffect(state.dataSection){if(pager.currentPage!=state.dataSection)pager.scrollToPage(state.dataSection)}
+    LaunchedEffect(pager){snapshotFlow{pager.currentPage}.collect(vm::rememberDataSection)}
     Column(Modifier.fillMaxSize().testTag("data_page")){
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)){
-            SegmentedButton(section==0,{section=0},shape=SegmentedButtonDefaults.itemShape(0,3)){Text(tr("NMEA","连接"))}
-            SegmentedButton(section==1,{section=1},shape=SegmentedButtonDefaults.itemShape(1,3)){Text(tr("Raw data","原始数据"))}
-            SegmentedButton(section==2,{section=2},shape=SegmentedButtonDefaults.itemShape(2,3)){Text(tr("Sonar","声呐"))}
+            SegmentedButton(pager.currentPage==0,{scope.launch{pager.animateScrollToPage(0)}},shape=SegmentedButtonDefaults.itemShape(0,4)){Text(tr("Vessel","船舶"))}
+            SegmentedButton(pager.currentPage==1,{scope.launch{pager.animateScrollToPage(1)}},shape=SegmentedButtonDefaults.itemShape(1,4)){Text("NMEA")}
+            SegmentedButton(pager.currentPage==2,{scope.launch{pager.animateScrollToPage(2)}},shape=SegmentedButtonDefaults.itemShape(2,4)){Text(tr("Sonar","声呐"))}
+            SegmentedButton(pager.currentPage==3,{scope.launch{pager.animateScrollToPage(3)}},shape=SegmentedButtonDefaults.itemShape(3,4)){Text(tr("Output","输出"))}
         }
-        Box(Modifier.weight(1f)){when(section){1->NmeaDataPage(state,vm);2->SonarSurveyPage(state,vm);else->ConnectionPage(state,vm)}}
+        HorizontalPager(pager,Modifier.weight(1f)){section->when(section){0->VesselDataSourcesPage(state,vm);1->NmeaWorkspacePage(state,vm);2->SonarSurveyPage(state,vm);else->DataOutputSettingsPage(state,vm)}}
     }
 }
+
+@Composable private fun NmeaWorkspacePage(state:MainUiState,vm:MainViewModel){
+    var raw by remember{mutableStateOf(false)}
+    Column(Modifier.fillMaxSize()){
+        Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            FilterChip(!raw,{raw=false},label={Text(tr("Connection","连接"))},modifier=Modifier.weight(1f))
+            FilterChip(raw,{raw=true},label={Text(tr("Raw & health","原始数据与健康"))},modifier=Modifier.weight(1f))
+        }
+        Box(Modifier.weight(1f)){if(raw)NmeaDataPage(state,vm)else ConnectionPage(state,vm)}
+    }
+}
+
+@Composable private fun VesselDataSourcesPage(state:MainUiState,vm:MainViewModel){
+    val data=state.vesselData
+    LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        item{PageHeader(tr("Vessel data sources","船舶数据源"),tr("Choose presentation sources without changing Anchor Watch's safety GPS source.","选择仪表显示来源；这里不会改变锚警的安全 GPS 来源。"))}
+        item{SourceRoutingCard(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){vm.updateVesselDataSettings(state.vesselSettings.copy(positionPreference=it))}}
+        item{SourceRoutingCard(tr("Heading source","船首向来源"),state.vesselSettings.headingPreference,data.headingTrueDegrees){vm.updateVesselDataSettings(state.vesselSettings.copy(headingPreference=it))}}
+        item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text(tr("Live vessel data","实时船舶数据"),style=MaterialTheme.typography.titleMedium)
+            VesselSourceRow(tr("Position","位置"),data.position.value?.let{"%.5f, %.5f".format(it.latitude,it.longitude)}?:"—",data.position)
+            VesselSourceRow(tr("Heading","船首向"),data.headingTrueDegrees.value?.let{"%03.0f°T".format(it)}?:"—",data.headingTrueDegrees)
+            VesselSourceRow("SOG",data.sogKnots.value?.let{"%.1f kn".format(it)}?:"—",data.sogKnots)
+            VesselSourceRow("STW",data.speedThroughWaterKnots.value?.let{"%.1f kn".format(it)}?:"—",data.speedThroughWaterKnots)
+            VesselSourceRow(tr("Apparent wind","视风"),listOfNotNull(data.apparentWind.angleDegrees.value?.let{windDataAngle(it)},data.apparentWind.speedKnots.value?.let{"%.1f kn".format(it)}).joinToString(" · ").ifBlank{"—"},data.apparentWind.angleDegrees.takeIf{it.value!=null}?:data.apparentWind.speedKnots)
+            VesselSourceRow(tr("True wind","真风"),listOfNotNull(data.trueWind.angleDegrees.value?.let{windDataAngle(it)},data.trueWind.speedKnots.value?.let{"%.1f kn".format(it)},data.trueWind.directionDegrees.value?.let{"%03.0f°T".format(it)}).joinToString(" · ").ifBlank{"—"},data.trueWind.directionDegrees.takeIf{it.value!=null}?:data.trueWind.speedKnots)
+            VesselSourceRow(tr("Heel","横倾"),data.attitude.value?.heelDegrees?.let{"%+.1f°".format(it)}?:"—",data.attitude)
+            VesselSourceRow(tr("Pressure","气压"),data.pressureHpa.value?.let{"%.1f hPa".format(it)}?:"—",data.pressureHpa)
+            VesselSourceRow(tr("Depth","水深"),data.depthMeters.value?.let{"%.1f m".format(it)}?:"—",data.depthMeters)
+            Text(tr("Held values keep their original receive time; a blank NMEA field never erases the last observation.","保留值始终携带原始接收时间；NMEA 空字段不会清除上一条观测。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }}}
+    }
+}
+
+@Composable private fun SourceRoutingCard(title:String,value:VesselSourcePreference,current:VesselObservation<*>,onChange:(VesselSourcePreference)->Unit){
+    Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Text(title,fontWeight=FontWeight.SemiBold)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){VesselSourcePreference.entries.forEachIndexed{index,preference->SegmentedButton(value==preference,{onChange(preference)},shape=SegmentedButtonDefaults.itemShape(index,VesselSourcePreference.entries.size)){Text(when(preference){VesselSourcePreference.AUTO->tr("Auto","自动");VesselSourcePreference.BOAT->tr("Boat","船载");VesselSourcePreference.PHONE->tr("Phone","手机")})}}}
+        Text("${if(value==VesselSourcePreference.AUTO)tr("AUTO → ","自动 → ")else ""}${vesselSourceLabel(current)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
+    }}
+}
+
+@Composable private fun VesselSourceRow(label:String,display:String,value:VesselObservation<*>){
+    val age=value.receivedElapsedRealtime?.let{(android.os.SystemClock.elapsedRealtime()-it).coerceAtLeast(0L)/100.0/10.0}
+    Column(Modifier.fillMaxWidth()){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(label,Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(display,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)};Text("${vesselSourceLabel(value)}${age?.let{" · %.1fs".format(it)}.orEmpty()} · ${value.quality.name} · ${value.freshness.name}",style=MaterialTheme.typography.labelSmall,color=if(value.value!=null)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error);HorizontalDivider(Modifier.padding(top=8.dp))}
+}
+
+@Composable private fun vesselSourceLabel(value:VesselObservation<*>):String{val source=when(value.source){com.yokuli.anchorwatch.domain.vessel.VesselDataSource.BOAT_NMEA->tr("Boat NMEA","船载 NMEA");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_GNSS->tr("Phone GNSS","手机 GNSS");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_IMU->tr("Phone IMU","手机 IMU");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_MAGNETOMETER->tr("Phone compass","手机罗盘");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_BAROMETER->tr("Phone barometer","手机气压计");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.DERIVED->tr("Derived","推算");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.DEMO->tr("Demo","演示");else->tr("No source","无来源")};return listOfNotNull(source,value.provenance?.takeIf{it.isNotBlank()}).joinToString(" · ")}
+private fun windDataAngle(value:Double)="%.0f°%s".format(kotlin.math.abs(value),if(value<0)"P" else "S")
 
 @Composable
 private fun SonarSurveyPage(state:MainUiState,vm:MainViewModel){
@@ -251,7 +308,7 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
             if(testing&&!connectionRunning)Text(tr("The app must receive at least one valid NMEA sentence before it will connect.","应用必须收到至少一条有效 NMEA 语句后才会正式连接。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(state.settings.nmeaSharingEnabled)Text(tr("NMEA Sharing never auto-opens a saved endpoint. When its selected output uses NMEA, it keeps an already-connected upstream in use; otherwise the server stays up and waits for accepted input.","NMEA 共享不会自动打开已保存端点；当共享输出使用 NMEA 时，它会继续占用已经连接的上游，否则共享服务器会保持运行并等待可信输入。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
-        item { ConnectionResultCard(state, vm) }
+        item { ConnectionResultCard(state) }
         item { GpsProxyCard(state,vm) }
         item { NmeaSharingCard(state,vm) }
     }
@@ -301,10 +358,67 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
  )
 }
 
-@Composable private fun ConnectionResultCard(state: MainUiState, vm: MainViewModel) { Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(tr("Live status","实时状态"), style = MaterialTheme.typography.titleMedium); Text(connectionStateLabel(state.connection), color = if(state.connection==NmeaConnectionState.CONNECTED)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
-    HorizontalDivider(); Text(tr("${state.diagnostics.validSentences} valid sentences • ${state.diagnostics.invalidSentences} invalid","${state.diagnostics.validSentences} 条有效语句 · ${state.diagnostics.invalidSentences} 条无效语句")); state.nmeaFix?.let { Text(tr("Latest position  ${"%.6f".format(it.latitude)}, ${"%.6f".format(it.longitude)}","最新位置  ${"%.6f".format(it.latitude)}, ${"%.6f".format(it.longitude)}")) } ?: Text(tr("No parsed GPS position yet","暂时没有解析出的 GPS 位置"));Text(tr("Open Raw data above for the NMEA stream.","可在上方切换到“原始数据”查看 NMEA 数据流。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-} } }
+@Composable
+private fun ConnectionResultCard(state: MainUiState) {
+    val now = android.os.SystemClock.elapsedRealtime()
+    fun age(value: Long?): String = value
+        ?.let { "%.1fs".format((now - it).coerceAtLeast(0L) / 1_000.0) }
+        ?: "—"
+
+    Card {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(tr("Live status", "实时状态"), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        connectionStateLabel(state.connection),
+                        color = if (state.connection == NmeaConnectionState.CONNECTED) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+            HorizontalDivider()
+            DiagnosticsRow(
+                tr("Input endpoint", "输入端点"),
+                "${state.settings.profile.protocol} · ${state.settings.profile.host}:${state.settings.profile.port}",
+            )
+            DiagnosticsRow(
+                tr("Last bytes / sentence / GPS", "最近字节 / 语句 / GPS"),
+                "${age(state.nmeaTransportDiagnostics.lastByteReceivedElapsedRealtime)} / " +
+                    "${age(state.nmeaTransportDiagnostics.lastSentenceReceivedElapsedRealtime)} / " +
+                    age(state.diagnostics.lastFixElapsed),
+            )
+            Text(
+                tr(
+                    "${state.diagnostics.validSentences} valid sentences • ${state.diagnostics.invalidSentences} invalid",
+                    "${state.diagnostics.validSentences} 条有效语句 · ${state.diagnostics.invalidSentences} 条无效语句",
+                ),
+            )
+            state.nmeaFix?.let {
+                val latitude = "%.6f".format(it.latitude)
+                val longitude = "%.6f".format(it.longitude)
+                Text(tr("Latest position  $latitude, $longitude", "最新位置  $latitude, $longitude"))
+            } ?: Text(tr("No parsed GPS position yet", "暂时没有解析出的 GPS 位置"))
+            Text(
+                tr(
+                    "Open Raw data above for the NMEA stream.",
+                    "可在上方切换到“原始数据”查看 NMEA 数据流。",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
 
 @Composable
 internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {

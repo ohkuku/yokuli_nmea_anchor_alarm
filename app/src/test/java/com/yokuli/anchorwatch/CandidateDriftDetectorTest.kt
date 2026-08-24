@@ -6,6 +6,7 @@ import com.yokuli.anchorwatch.domain.anchor.CandidateDriftDetector
 import com.yokuli.anchorwatch.domain.anchor.CandidateDriftUpdate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CandidateDriftDetectorTest {
@@ -16,6 +17,7 @@ class CandidateDriftDetectorTest {
             detector.add(CandidateCenterObservation(index * 120_000L, point.first, point.second, 3.0))
         }
         assertEquals(CandidateDriftUpdate.POSSIBLE_DRAG, results.last())
+        assertTrue(detector.refinementSuppressed())
         val later = AnchorGeometry.project(-36.8485, 174.7633, 70.0, 20.0)
         assertEquals(CandidateDriftUpdate.RECORDED, detector.add(CandidateCenterObservation(600_000L, later.first, later.second, 3.0)))
     }

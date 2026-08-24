@@ -223,3 +223,20 @@ object Migration15To16:Migration(15,16){
   db.execSQL("CREATE INDEX IF NOT EXISTS `index_trip_dashboards_preset` ON `trip_dashboards` (`preset`)")
  }
 }
+
+/** Independent instrument freshness and continuous anchor-estimator epochs. */
+object Migration16To17:Migration(16,17){
+ override fun migrate(db:SupportSQLiteDatabase){
+  listOf(
+   "sogAgeMillis INTEGER","cogAgeMillis INTEGER",
+   "trueWindSpeedAgeMillis INTEGER","trueWindDirectionAgeMillis INTEGER","trueWindAngleAgeMillis INTEGER",
+   "apparentWindSpeedAgeMillis INTEGER","apparentWindAngleAgeMillis INTEGER",
+  ).forEach{column->db.execSQL("ALTER TABLE trip_samples ADD COLUMN $column")}
+  db.execSQL("ALTER TABLE trip_samples ADD COLUMN attitudeQuality TEXT NOT NULL DEFAULT 'UNKNOWN'")
+  db.execSQL("ALTER TABLE trip_samples ADD COLUMN attitudeMountSuspect INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN estimationEpoch INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN estimationEpochStartedAt INTEGER")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN adoptedCenterEpoch INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN latestEstimateEpoch INTEGER NOT NULL DEFAULT 0")
+ }
+}

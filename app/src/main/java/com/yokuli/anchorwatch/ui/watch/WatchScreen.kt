@@ -168,17 +168,34 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     var measuringDistance by rememberSaveable{mutableStateOf(false)}
     val measurementStartState=remember{MarkerState(camera.position.target)}
     val measurementEndState=remember{MarkerState(camera.position.target)}
+    val measurementMidState=remember{MarkerState(camera.position.target)}
     var measurementTapStage by remember{mutableIntStateOf(0)}
+    var measurementPreviousFollow by remember{mutableStateOf(true)}
     var lockedGestureReturnPending by remember{mutableStateOf(false)}
     var returningLockedCamera by remember{mutableStateOf(false)}
     val latestFix by rememberUpdatedState(fix)
     var inspectionTarget by remember{mutableStateOf<LatLng?>(null)}
+    LaunchedEffect(measuringDistance,measurementStartState.position,measurementEndState.position){
+        if(measuringDistance){val middle=MapDistanceTools.midpoint(measurementStartState.position.latitude,measurementStartState.position.longitude,measurementEndState.position.latitude,measurementEndState.position.longitude);measurementMidState.position=LatLng(middle.first,middle.second)}
+    }
+    LaunchedEffect(measuringDistance){
+        if(!measuringDistance)return@LaunchedEffect
+        snapshotFlow{measurementMidState.position}.collect{moved->
+            val start=measurementStartState.position;val end=measurementEndState.position
+            val expected=MapDistanceTools.midpoint(start.latitude,start.longitude,end.latitude,end.longitude)
+            if(MapDistanceTools.distanceMeters(expected.first,expected.second,moved.latitude,moved.longitude)>0.75){
+                val translated=MapDistanceTools.translateRuler(start.latitude,start.longitude,end.latitude,end.longitude,moved.latitude,moved.longitude)
+                measurementStartState.position=LatLng(translated.first.first,translated.first.second)
+                measurementEndState.position=LatLng(translated.second.first,translated.second.second)
+            }
+        }
+    }
     LaunchedEffect(mapLocked){if(!mapLocked)inspectionTarget=camera.position.target}
-    LaunchedEffect(camera,mapLocked){
+    LaunchedEffect(camera,mapLocked,measuringDistance){
         snapshotFlow{camera.isMoving}.collect{moving->if(!moving&&!mapLocked)inspectionTarget=camera.position.target}
     }
-    LaunchedEffect(camera,mapLocked){
-        if(!mapLocked){lockedGestureReturnPending=false;returningLockedCamera=false;return@LaunchedEffect}
+    LaunchedEffect(camera,mapLocked,measuringDistance){
+        if(!mapLocked||measuringDistance){lockedGestureReturnPending=false;returningLockedCamera=false;return@LaunchedEffect}
         snapshotFlow{camera.isMoving to camera.cameraMoveStartedReason}.collectLatest{(moving,reason)->
             if(moving&&reason==CameraMoveStartedReason.GESTURE){lockedGestureReturnPending=true;return@collectLatest}
             if(!moving&&lockedGestureReturnPending){
@@ -203,8 +220,8 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         if(nauticalSource.userChartEnabled)add(state.settings.offlineMapAttribution?:tr("User-supplied MBTiles","用户导入的 MBTiles"))
     }.joinToString("\n")
     LaunchedEffect(recenterRequest,mapLocked){if(recenterRequest>0&&!mapLocked){delay(900);vm.follow(false)}}
-    LaunchedEffect(mapLoaded, fix?.latitude, fix?.longitude, fix?.valid, state.follow, state.settings.gpsDataSource, recenterRequest, camera.isMoving, lockedGestureReturnPending, returningLockedCamera) {
-        if (mapLoaded && fix?.valid == true && fix.positionProvider!=com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_NETWORK && state.follow && !camera.isMoving && !lockedGestureReturnPending && !returningLockedCamera) {
+    LaunchedEffect(mapLoaded, fix?.latitude, fix?.longitude, fix?.valid, state.follow, state.settings.gpsDataSource, recenterRequest, camera.isMoving, lockedGestureReturnPending, returningLockedCamera, measuringDistance) {
+        if (mapLoaded && fix?.valid == true && fix.positionProvider!=com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_NETWORK && state.follow && !measuringDistance && !camera.isMoving && !lockedGestureReturnPending && !returningLockedCamera) {
             val target = LatLng(fix.latitude, fix.longitude)
             val update = when (MapCameraPolicy.nextMove(hasCenteredOnFix, followedSource, state.settings.gpsDataSource)) {
                 FollowCameraMove.CENTER_WITH_DEFAULT_ZOOM -> CameraUpdateFactory.newLatLngZoom(target, MapCameraPolicy.DEFAULT_FOLLOW_ZOOM)
@@ -226,7 +243,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         sheetPeekHeight=104.dp,
         sheetShadowElevation=8.dp,
         sheetDragHandle={BottomSheetDefaults.DragHandle()},
-        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.page(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
+        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},vm::setPhoneHeadingEvidence,{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -289,13 +306,19 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
                         if(measuringDistance){
                             Marker(state=measurementStartState,title=tr("Measurement start","测距起点"),icon=measureStartIcon,zIndex=MapOverlayZ.MEASUREMENT,draggable=true)
                             Marker(state=measurementEndState,title=tr("Measurement end","测距终点"),icon=measureEndIcon,zIndex=MapOverlayZ.MEASUREMENT,draggable=true)
+                            Marker(state=measurementMidState,title=tr("Drag the whole ruler","拖动整条标尺"),icon=remember{BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN)},zIndex=MapOverlayZ.MEASUREMENT,draggable=true)
                             Polyline(points=listOf(measurementStartState.position,measurementEndState.position),color=Color(0xFF00ACC1),width=5f,zIndex=MapOverlayZ.MEASUREMENT)
                         }
                         fix?.let { position -> Marker(state=remember(position.latitude, position.longitude){MarkerState(LatLng(position.latitude,position.longitude))},title=tr("Boat","船位"),icon=boatIcon,rotation=(boatHeading?:0.0).toFloat(),flat=true,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.BOAT) }
                         active?.let { session ->
                             if(session.centerStatus==AnchorCenterStatus.RESOLVED.name){val anchor=LatLng(session.anchorLatitude,session.anchorLongitude)
-                             Marker(state=remember(session.anchorLatitude,session.anchorLongitude){MarkerState(anchor)},title=tr("Anchor","锚点"),icon=anchorIcon,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.ANCHOR)
-                             Circle(center=anchor,radius=session.alarmRadiusMeters,strokeColor=SafetyColors.Alarm,fillColor=SafetyColors.Alarm.copy(alpha=.09f),strokeWidth=3f,zIndex=MapOverlayZ.ALARM_GEOMETRY)}
+                             Marker(state=remember(session.anchorLatitude,session.anchorLongitude){MarkerState(anchor)},title=tr("Adopted safety anchor","已采用的安全锚点"),icon=anchorIcon,anchor=Offset(.5f,.5f),zIndex=MapOverlayZ.ANCHOR)
+                             Circle(center=anchor,radius=session.alarmRadiusMeters,strokeColor=SafetyColors.Alarm,fillColor=SafetyColors.Alarm.copy(alpha=.09f),strokeWidth=3f,zIndex=MapOverlayZ.ALARM_GEOMETRY)
+                             // Continuous estimation is advisory until the user
+                             // explicitly adopts it. Show uncertainty only; do
+                             // not draw a second anchor symbol or move the alarm.
+                             if(session.anchorPositionMode==AnchorPositionMode.ESTIMATE.name&&session.provisionalAnchorLatitude!=null&&session.provisionalAnchorLongitude!=null){Circle(center=LatLng(session.provisionalAnchorLatitude,session.provisionalAnchorLongitude),radius=session.provisionalRadiusMeters?:session.expectedSwingRadiusMeters.coerceAtLeast(10.0),strokeColor=SafetyColors.Candidate,fillColor=SafetyColors.Candidate.copy(alpha=.08f),strokeWidth=2f,zIndex=MapOverlayZ.ALARM_GEOMETRY)}
+                            }
                             else{
                              val reference=LatLng(session.learningReferenceLatitude?:session.anchorLatitude,session.learningReferenceLongitude?:session.anchorLongitude)
                              Circle(center=reference,radius=session.alarmRadiusMeters,strokeColor=SafetyColors.Warning,fillColor=SafetyColors.Warning.copy(alpha=.09f),strokeWidth=4f,zIndex=MapOverlayZ.ALARM_GEOMETRY)
@@ -321,16 +344,18 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
             )
             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalIconButton(onClick={mapLocked=!mapLocked;if(mapLocked){hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)}else vm.follow(false)},modifier=Modifier.testTag("map_lock_toggle")){Icon(if(mapLocked)Icons.Default.Lock else Icons.Default.LockOpen,if(mapLocked)tr("Auto-return to boat · pan and zoom remain available","自动回到船位 · 仍可拖动缩放")else tr("Free map browsing","地图自由浏览"))}
-                FilledTonalIconButton(onClick={hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)},modifier=Modifier.testTag("map_recenter")) { Icon(Icons.Default.MyLocation, tr("Recenter on boat","回到船位")) }
+                FilledTonalIconButton(onClick={if(measuringDistance){measuringDistance=false;vm.follow(measurementPreviousFollow)};hasCenteredOnFix=false;recenterRequest+=1;vm.follow(true)},modifier=Modifier.testTag("map_recenter")) { Icon(Icons.Default.MyLocation, tr("Recenter on boat","回到船位")) }
                 FilledTonalIconButton(onClick={
-                    if(measuringDistance){measuringDistance=false}
+                    if(measuringDistance){measuringDistance=false;vm.follow(measurementPreviousFollow)}
                     else{
+                        measurementPreviousFollow=state.follow
                         measuringDistance=true
+                        vm.follow(false)
                         val centre=camera.position.target
                         val halfDistance=(MapDistanceTools.metersPerPixel(centre.latitude,camera.position.zoom)*70.0).coerceIn(10.0,1_000.0)
                         val first=AnchorGeometry.project(centre.latitude,centre.longitude,270.0,halfDistance)
                         val second=AnchorGeometry.project(centre.latitude,centre.longitude,90.0,halfDistance)
-                        measurementStartState.position=LatLng(first.first,first.second);measurementEndState.position=LatLng(second.first,second.second);measurementTapStage=0
+                        measurementStartState.position=LatLng(first.first,first.second);measurementEndState.position=LatLng(second.first,second.second);measurementMidState.position=centre;measurementTapStage=0
                     }
                     sonarInspection=null
                 },modifier=Modifier.testTag("map_measure_toggle"),colors=if(measuringDistance)IconButtonDefaults.filledTonalIconButtonColors(containerColor=MaterialTheme.colorScheme.primaryContainer)else IconButtonDefaults.filledTonalIconButtonColors()) { Icon(Icons.Default.Straighten, if(measuringDistance)tr("Stop measuring and clear pins","停止测距并清除图钉")else tr("Measure distance","测量距离")) }
@@ -339,7 +364,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
             if(renderGoogleMap)MapScaleIndicator(camera.position.target.latitude,camera.position.zoom,Modifier.align(Alignment.BottomStart).padding(start=12.dp,bottom=112.dp))
             if(measuringDistance){
                 val start=measurementStartState.position;val end=measurementEndState.position
-                val label=MapDistanceTools.measurementLabel(MapDistanceTools.distanceMeters(start.latitude,start.longitude,end.latitude,end.longitude))+" · "+tr("drag pins or tap map","拖动图钉或点击地图")
+                val label=MapDistanceTools.measurementLabel(MapDistanceTools.distanceMeters(start.latitude,start.longitude,end.latitude,end.longitude))+" · %03.0f°T · ".format(MapDistanceTools.initialBearingDegrees(start.latitude,start.longitude,end.latitude,end.longitude))+tr("drag A/B, midpoint or tap map","拖动 A/B、中心点或点击地图")
                 Surface(Modifier.align(Alignment.BottomCenter).padding(horizontal=12.dp).padding(bottom=146.dp).testTag("map_measure_result"),color=MaterialTheme.colorScheme.surface.copy(alpha=.94f),shape=MaterialTheme.shapes.medium,shadowElevation=4.dp){Text(label,Modifier.padding(horizontal=12.dp,vertical=8.dp),style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)}
             }
             if(mapAttribution.isNotBlank())Surface(Modifier.align(Alignment.BottomCenter).padding(horizontal=12.dp).padding(bottom=112.dp),color=MaterialTheme.colorScheme.surface.copy(alpha=.88f),shape=MaterialTheme.shapes.small){Text(mapAttribution,Modifier.padding(horizontal=8.dp,vertical=4.dp),style=MaterialTheme.typography.labelSmall)}
@@ -373,7 +398,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     AnchorCentreRecalculationDialog(state.centreRecalculation,vm)
-    if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})
+    if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->vm.updateSettings(state.settings.copy(offlineMapEnabled=enabled))},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})
     if(showLinzDisclaimer)AlertDialog(onDismissRequest={showLinzDisclaimer=false},title={Text(tr("LINZ hydrographic chart overlay","LINZ 水文海图叠加层"))},text={Text(tr("This chart image layer is a navigation aid only. It may be unavailable or outdated and does not replace official charts, Notices to Mariners, depth instruments or a proper passage plan.","该海图影像层仅供辅助参考，可能不可用或已过期，不能替代官方海图、航海通告、测深仪或正规的航行计划。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(linzHydroEnabled=true,linzHydroDisclaimerAccepted=true));showLinzDisclaimer=false}){Text(tr("I understand · Enable","我已了解 · 开启"))}},dismissButton={TextButton({showLinzDisclaimer=false}){Text(tr("Cancel","取消"))}})
 }
@@ -441,7 +466,7 @@ private fun WatchPreflightSheet(state:MainUiState,dismiss:()->Unit,continueSetup
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
-private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:()->Unit,setMapType:(Int)->Unit,setLinz:(Boolean)->Unit,setOpacity:(Double)->Unit){
+private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:()->Unit,setMapType:(Int)->Unit,setUserNautical:(Boolean)->Unit,setLinz:(Boolean)->Unit,setOpacity:(Double)->Unit){
  val uriHandler=androidx.compose.ui.platform.LocalUriHandler.current
  val linzDiagnostics by LinzHydroDiagnostics.state.collectAsState()
  val nauticalDiagnostics by OpenSeaMapDiagnostics.state.collectAsState()
@@ -450,11 +475,16 @@ private fun MapLayersSheet(state:MainUiState,chartState:MapChartUiState,dismiss:
   Text(tr("Map layers","地图图层"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
   Text(tr("Map style","地图样式"),style=MaterialTheme.typography.labelLarge)
   SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-   SegmentedButton(state.settings.mapType==1,{setMapType(1)},shape=SegmentedButtonDefaults.itemShape(0,3),modifier=Modifier.testTag("map_style_map")){Text(tr("Map","地图"))}
+   SegmentedButton(state.settings.mapType==1,{setMapType(1)},shape=SegmentedButtonDefaults.itemShape(0,3),modifier=Modifier.testTag("map_style_map")){Text(tr("Standard","标准"))}
    SegmentedButton(state.settings.mapType==2,{setMapType(2)},shape=SegmentedButtonDefaults.itemShape(1,3),modifier=Modifier.testTag("map_style_satellite")){Text(tr("Satellite","卫星"))}
-   SegmentedButton(state.settings.mapType==3,{setMapType(3)},shape=SegmentedButtonDefaults.itemShape(2,3),modifier=Modifier.testTag("map_style_nautical")){Column(horizontalAlignment=Alignment.CenterHorizontally){Text(tr("Nautical","航海"));Text(if(state.offlineMap.installed&&state.settings.offlineMapEnabled)tr("User chart","用户海图")else tr("Online","在线"),style=MaterialTheme.typography.labelSmall)}}
+   SegmentedButton(state.settings.mapType==3,{setMapType(3)},shape=SegmentedButtonDefaults.itemShape(2,3),modifier=Modifier.testTag("map_style_nautical")){Text(tr("Nautical","航海"))}
   }
   if(state.settings.mapType==3){
+   Text(tr("Nautical source","航海图来源"),style=MaterialTheme.typography.labelLarge)
+   SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
+    SegmentedButton(!state.settings.offlineMapEnabled,{setUserNautical(false)},shape=SegmentedButtonDefaults.itemShape(0,2)){Text(tr("Standard","标准来源"))}
+    SegmentedButton(state.settings.offlineMapEnabled,{setUserNautical(true)},enabled=state.offlineMap.installed,shape=SegmentedButtonDefaults.itemShape(1,2)){Text(tr("User MBTiles","用户 MBTiles"))}
+   }
    Text(if(state.offlineMap.installed&&state.settings.offlineMapEnabled)tr("Using ${state.offlineMap.name?:"user MBTiles"}. Missing tiles fall through to the standard nautical map.","正在使用 ${state.offlineMap.name?:"用户 MBTiles"}；缺少的瓦片会自动显示标准航海图。") else tr("Quiet base map with OpenSeaMap seamarks.","清淡底图叠加 OpenSeaMap 航标。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    TextButton({uriHandler.openUri(OpenSeaMapConfiguration.LICENSE_URL)}){Icon(Icons.AutoMirrored.Filled.OpenInNew,null);Spacer(Modifier.width(6.dp));Text(tr("OpenSeaMap attribution & licence","OpenSeaMap 署名与许可"))}
    if(nauticalDiagnostics.failures>0&&nauticalDiagnostics.successes==0L)TileFailureCard(tr("Nautical tile status","航海瓦片状态"),nauticalDiagnostics.requests,nauticalDiagnostics.successes,nauticalDiagnostics.failures,nauticalDiagnostics.lastHttpCode,nauticalDiagnostics.message)

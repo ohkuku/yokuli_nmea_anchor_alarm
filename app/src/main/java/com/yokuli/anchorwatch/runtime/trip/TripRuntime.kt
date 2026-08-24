@@ -13,6 +13,7 @@ import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.vessel.*
+import com.yokuli.anchorwatch.domain.trip.TripSessionTiming
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import com.yokuli.anchorwatch.runtime.*
@@ -173,7 +174,7 @@ class TripRuntime @Inject constructor(
             if(flush.writeFailed){if(!current.paused)startTicker();return@withLock TripRuntimeResult(false,"Buffered samples could not be written. Trip recording remains active; check storage and try End again.",current)}
             val latest=active?:current
             val now=System.currentTimeMillis()
-            val ended=latest.copy(active=false,paused=false,pausedAt=null,endedAt=now,eventCount=latest.eventCount+1)
+            val ended=TripSessionTiming.end(latest,now)
             try{dao.updateSessionAndInsertEvent(ended,TripEventEntity(tripId=current.id,timestamp=now,type="TRIP_ENDED",severity="INFO"))}
             catch(error:Exception){if(!current.paused)startTicker();throw error}
             active=null
@@ -265,8 +266,8 @@ class TripRuntime @Inject constructor(
         val nmeaAvailable=nmeaRuntime.connectionState.value.hasRecentNmeaTraffic()
         if(nmeaAvailable&&!nmeaTransportOwned)claimLiveNmeaTransport()
         val depthAvailable=sample.depthMeters!=null&&(sample.depthAgeMillis?:Long.MAX_VALUE)<=60_000L
-        val windAvailable=(sample.trueWindSpeedKnots!=null||sample.apparentWindSpeedKnots!=null)&&(sample.windAgeMillis?:Long.MAX_VALUE)<=60_000L
-        val phoneMotionAvailable=session.phoneMotionEnabled&&phoneMotionRecordingAllowed&&sample.heelDegrees!=null&&(sample.attitudeAgeMillis?:Long.MAX_VALUE)<=5_000L
+        val windAvailable=(sample.trueWindSpeedKnots!=null&&(sample.trueWindSpeedAgeMillis?:Long.MAX_VALUE)<=60_000L)||(sample.apparentWindSpeedKnots!=null&&(sample.apparentWindSpeedAgeMillis?:Long.MAX_VALUE)<=60_000L)
+        val phoneMotionAvailable=session.phoneMotionEnabled&&phoneMotionRecordingAllowed&&sample.heelDegrees!=null&&(sample.attitudeAgeMillis?:Long.MAX_VALUE)<=5_000L&&sample.attitudeQuality==VesselDataQuality.GOOD.name&&!sample.attitudeMountSuspect
         if(nmeaAvailable)nmeaExpected=true
         if(depthAvailable)depthExpected=true
         if(windAvailable)windExpected=true
@@ -275,7 +276,7 @@ class TripRuntime @Inject constructor(
         }
         var current=session.copy(eventCount=session.eventCount+newEvents)
         val position=snapshot.position.currentOrHeldValue();val previous=lastPosition;val previousAt=lastPositionAt;val currentSog=snapshot.sogKnots.currentOrHeldValue();if(position!=null&&previous!=null){val distance=AnchorGeometry.distanceMeters(previous.latitude,previous.longitude,position.latitude,position.longitude).takeIf{it<500}?:0.0;current=current.copy(distanceMeters=current.distanceMeters+distance,movingDurationMillis=current.movingDurationMillis+if((currentSog?:0.0)>=.5)(previousAt?.let{(now-it).coerceIn(0,2_000)}?:0)else 0)};if(position!=null){lastPosition=position;lastPositionAt=now}else{lastPosition=null;lastPositionAt=null}
-        current=current.copy(sampleCount=current.sampleCount+1,maxSogKnots=max(current.maxSogKnots,sample.sogKnots),maxAbsHeelDegrees=max(current.maxAbsHeelDegrees,sample.heelDegrees?.let(::abs)),minDepthMeters=min(current.minDepthMeters,sample.depthMeters),minUkcMeters=min(current.minUkcMeters,sample.ukcMeters));active=current
+        current=current.copy(sampleCount=current.sampleCount+1,maxSogKnots=max(current.maxSogKnots,sample.sogKnots),maxAbsHeelDegrees=max(current.maxAbsHeelDegrees,sample.heelDegrees?.takeIf{sample.attitudeQuality==VesselDataQuality.GOOD.name&&!sample.attitudeMountSuspect}?.let(::abs)),minDepthMeters=min(current.minDepthMeters,sample.depthMeters),minUkcMeters=min(current.minUkcMeters,sample.ukcMeters));active=current
         if(overflow){dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type="DATA_WRITE_BACKPRESSURE",severity="WARNING"));incrementEvent()}
         val sinceFlush=now-lastFlushElapsed
         if(sinceFlush>=TripSampleWriter.FLUSH_MILLIS||(writer.size()>=TripSampleWriter.FLUSH_SIZE&&sinceFlush>=TripSampleWriter.MIN_FLUSH_RETRY_MILLIS))flushLocked()
@@ -305,10 +306,11 @@ class TripRuntime @Inject constructor(
             // Change-only instruments retain HELD values, but a STALE value is
             // not serialized as timeless current evidence when the schema has
             // no dedicated SOG/COG age column.
-            sogKnots=s.sogKnots.currentOrHeldValue(),cogTrueDegrees=s.cogTrueDegrees.currentOrHeldValue(),headingTrueDegrees=s.headingTrueDegrees.value,headingSource=s.headingTrueDegrees.source.name,headingAgeMillis=age(s.headingTrueDegrees,elapsed),
+            sogKnots=s.sogKnots.currentOrHeldValue(),cogTrueDegrees=s.cogTrueDegrees.currentOrHeldValue(),sogAgeMillis=age(s.sogKnots,elapsed),cogAgeMillis=age(s.cogTrueDegrees,elapsed),headingTrueDegrees=s.headingTrueDegrees.value,headingSource=s.headingTrueDegrees.source.name,headingAgeMillis=age(s.headingTrueDegrees,elapsed),
             depthMeters=s.depthMeters.value,depthSource=s.depthMeters.source.name,depthAgeMillis=age(s.depthMeters,elapsed),speedThroughWaterKnots=s.speedThroughWaterKnots.value,stwSource=s.speedThroughWaterKnots.source.name,stwAgeMillis=age(s.speedThroughWaterKnots,elapsed),
             trueWindSpeedKnots=s.trueWind.speedKnots.value,trueWindDirectionDegrees=s.trueWind.directionDegrees.value,trueWindAngleDegrees=s.trueWind.angleDegrees.value,apparentWindSpeedKnots=s.apparentWind.speedKnots.value,apparentWindAngleDegrees=s.apparentWind.angleDegrees.value,windSource=s.trueWind.speedKnots.source.name,windAgeMillis=age(s.trueWind.speedKnots,elapsed),
-            heelDegrees=attitude.value?.heelDegrees,pitchDegrees=attitude.value?.pitchDegrees,rollRateDegPerSec=attitude.value?.rollRateDegreesPerSecond,pitchRateDegPerSec=attitude.value?.pitchRateDegreesPerSecond,yawRateDegPerSec=attitude.value?.yawRateDegreesPerSecond,motionScore=motion.value?.score,rollPeriodSeconds=motion.value?.dominantRollPeriodSeconds,rollPeriodConfidence=motion.value?.rollPeriodConfidence?.name,attitudeAgeMillis=age(attitude,elapsed),
+            trueWindSpeedAgeMillis=age(s.trueWind.speedKnots,elapsed),trueWindDirectionAgeMillis=age(s.trueWind.directionDegrees,elapsed),trueWindAngleAgeMillis=age(s.trueWind.angleDegrees,elapsed),apparentWindSpeedAgeMillis=age(s.apparentWind.speedKnots,elapsed),apparentWindAngleAgeMillis=age(s.apparentWind.angleDegrees,elapsed),
+            heelDegrees=attitude.value?.heelDegrees,pitchDegrees=attitude.value?.pitchDegrees,rollRateDegPerSec=attitude.value?.rollRateDegreesPerSecond,pitchRateDegPerSec=attitude.value?.pitchRateDegreesPerSecond,yawRateDegPerSec=attitude.value?.yawRateDegreesPerSecond,motionScore=motion.value?.score,rollPeriodSeconds=motion.value?.dominantRollPeriodSeconds,rollPeriodConfidence=motion.value?.rollPeriodConfidence?.name,attitudeAgeMillis=age(attitude,elapsed),attitudeQuality=attitude.quality.name,attitudeMountSuspect=attitude.provenance=="PHONE_MOVED_OR_MOUNT_SUSPECT",
             pressureHpa=s.pressureHpa.value,pressureAgeMillis=age(s.pressureHpa,elapsed),ukcMeters=s.derived.underKeelClearanceMeters.value,
         )
     }
