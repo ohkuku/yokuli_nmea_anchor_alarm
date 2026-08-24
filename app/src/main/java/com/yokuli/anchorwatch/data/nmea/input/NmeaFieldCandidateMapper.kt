@@ -38,6 +38,7 @@ object NmeaFieldCandidateMapper{
             talkerId=field.key.talker,sentenceType=field.key.sentenceType,fullSentenceId="${field.key.talker}${field.key.sentenceType}",
             transducerName=field.key.transducerName,
             displayName=listOfNotNull("${field.key.talker}${field.key.sentenceType}",field.key.transducerName).joinToString(" · "),
+            stableKey="nmea:$profileId:field:${field.key.stableId}",
         )
         val reference=when(field.key.semantic){
             NmeaFieldSemantic.CURRENT_SET_TRUE,NmeaFieldSemantic.BEARING_TO_WAYPOINT,NmeaFieldSemantic.TRUE_WIND_DIRECTION->VesselReference.TrueNorth

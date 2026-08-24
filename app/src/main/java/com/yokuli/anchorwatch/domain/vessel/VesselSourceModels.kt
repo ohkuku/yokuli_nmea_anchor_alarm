@@ -24,7 +24,18 @@ data class VesselSourceIdentity(
     val transducerName:String?=null,
     val phoneSensorType:String?=null,
     val displayName:String,
+    /** Physical-source key persisted across transport reconnect generations. */
+    val stableKey:String=id,
 )
+
+object VesselSourcePinPolicy{
+    private val generatedNmeaKey=Regex("^nmea:([^:]+):([0-9]+):(.*)$")
+    fun normalize(key:String):String=generatedNmeaKey.matchEntire(key)?.let{match->"nmea:${match.groupValues[1]}:${match.groupValues[3]}"}?:key
+    fun matches(source:VesselSourceIdentity,stored:String)=normalize(source.stableKey)==normalize(stored)||source.id==stored||source.fullSentenceId==stored
+    fun resolve(candidates:List<VesselSourceCandidate<*>>,stored:String):String?=candidates.firstOrNull{matches(it.source,stored)}?.source?.id
+}
+
+val VesselSourceIdentity.persistentKey:String get()=VesselSourcePinPolicy.normalize(stableKey)
 
 sealed interface VesselReference{
     data object TrueNorth:VesselReference

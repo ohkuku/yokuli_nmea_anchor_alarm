@@ -54,6 +54,7 @@ import com.yokuli.anchorwatch.domain.vessel.VesselObservation
 import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
 import com.yokuli.anchorwatch.domain.vessel.VesselSourceCandidate
 import com.yokuli.anchorwatch.domain.vessel.toLegacySource
+import com.yokuli.anchorwatch.domain.vessel.persistentKey
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchor.AnchorRangeCalculator
 import com.yokuli.anchorwatch.domain.anchor.CoordinateParser
@@ -178,15 +179,19 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
             Text(tr("Available sources","可用来源"),style=MaterialTheme.typography.titleMedium)
             if(candidates.isEmpty())Text(tr("No source has reported this metric yet.","尚未有来源报告此数据。"),color=MaterialTheme.colorScheme.onSurfaceVariant)
             candidates.forEach{candidate->
-                val selected=candidate.source.id==observation.sourceIdentity?.id
+                    val selected=candidate.source.id==observation.sourceIdentity?.id
                 Surface(color=if(selected)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small){Column(Modifier.fillMaxWidth().padding(10.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(candidate.source.displayName,Modifier.weight(1f),fontWeight=FontWeight.SemiBold);if(selected)AssistChip({},label={Text(tr("Selected","已采用"))})}
                     Text("${formatVesselValue(metric,candidate.value)} · ${candidateValidityLabel(candidate.validity)} · ${"%.1f s".format((android.os.SystemClock.elapsedRealtime()-candidate.receivedElapsedRealtime).coerceAtLeast(0L)/1_000.0)}",style=MaterialTheme.typography.bodySmall)
                     Text(listOfNotNull(candidate.source.fullSentenceId,candidate.source.transducerName,candidate.source.transportProfileId?.let{tr("profile $it","配置 $it")},candidate.source.connectionGeneration?.let{tr("generation $it","连接代次 $it")}).joinToString(" · ").ifBlank{candidate.source.id},style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    if(metric in setOf(VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC)&&candidate.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA){TextButton({vm.updateVesselDataSettings(state.vesselSettings.copy(boatHeadingSourceId=if(state.vesselSettings.boatHeadingSourceId==candidate.source.id)null else candidate.source.id))}){Text(if(state.vesselSettings.boatHeadingSourceId==candidate.source.id)tr("Unpin source","取消固定来源")else tr("Pin this boat source","固定这个船载来源"))}}
+                    val boatSource=candidate.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA
+                    val storedPin=when(metric){VesselMetricId.POSITION->state.vesselSettings.pinnedPositionSourceId;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->state.vesselSettings.boatHeadingSourceId;else->null}
+                    val pinned=storedPin?.let{com.yokuli.anchorwatch.domain.vessel.VesselSourcePinPolicy.matches(candidate.source,it)}==true
+                    if(boatSource&&metric in setOf(VesselMetricId.POSITION,VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC)){TextButton({val key=candidate.source.persistentKey;vm.updateVesselDataSettings(when(metric){VesselMetricId.POSITION->state.vesselSettings.copy(pinnedPositionSourceId=if(pinned)null else key);else->state.vesselSettings.copy(boatHeadingSourceId=if(pinned)null else key)})}){Text(if(pinned)tr("Unpin source","取消固定来源")else tr("Pin this boat source","固定这个船载来源"))}}
                 }}
             }
-            if(metric in setOf(VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC)&&state.vesselSettings.boatHeadingSourceId!=null)SettingSwitch(tr("Allow fallback if pinned source fails","固定来源失效时允许回退"),tr("Off is strict: the heading becomes unavailable instead of silently changing sensor.","关闭时为严格模式：来源失效会显示无船艏向，不会静默切换传感器。"),state.vesselSettings.allowPinnedFallback){vm.updateVesselDataSettings(state.vesselSettings.copy(allowPinnedFallback=it))}
+            val hasPin=when(metric){VesselMetricId.POSITION->state.vesselSettings.pinnedPositionSourceId!=null;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->state.vesselSettings.boatHeadingSourceId!=null;else->false}
+            if(hasPin)SettingSwitch(tr("Allow fallback if pinned source fails","固定来源失效时允许回退"),tr("Off is strict: this metric becomes unavailable instead of silently changing its physical sensor.","关闭时为严格模式：此数据会变为不可用，而不是静默切换物理传感器。"),state.vesselSettings.allowPinnedFallback){vm.updateVesselDataSettings(state.vesselSettings.copy(allowPinnedFallback=it))}
         }}}
         item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(tr("Used by","使用此数据的功能"),style=MaterialTheme.typography.titleMedium);usedBy(metric).forEach{Text("• $it",style=MaterialTheme.typography.bodyMedium)};Text(tr("Consumers apply their own safety gates; display, anchor evidence and NMEA publication are not the same decision.","各功能会应用自己的安全门槛；屏幕显示、锚点证据和 NMEA 发布不是同一个决定。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
     }

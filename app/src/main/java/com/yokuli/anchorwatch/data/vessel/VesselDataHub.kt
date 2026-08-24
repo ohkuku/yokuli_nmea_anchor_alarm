@@ -89,7 +89,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
             numeric(NmeaFieldSemantic.TRUE_WIND_DIRECTION)?.let{trueWindDirection=fieldObservation(it,it.value!!)}
             textual(NmeaFieldSemantic.DESTINATION_WAYPOINT)?.let{destinationWaypoint=fieldObservation(it,it.text!!)}
         }}
-        scope.launch{settings.settings.collect{value->positionPreference=value.positionPreference;headingPreference=value.headingPreference;pinnedPositionSourceId=value.pinnedPositionSourceId;pinnedHeadingSourceId=value.boatHeadingSourceId;allowPinnedFallback=value.allowPinnedFallback;vesselDraftMeters=value.draftMeters?:0.0;navigation.pinBoatHeadingSource(value.boatHeadingSourceId?.substringAfterLast(':'))}}
+        scope.launch{settings.settings.collect{value->positionPreference=value.positionPreference;headingPreference=value.headingPreference;pinnedPositionSourceId=value.pinnedPositionSourceId?.let(VesselSourcePinPolicy::normalize);pinnedHeadingSourceId=value.boatHeadingSourceId?.let(VesselSourcePinPolicy::normalize);allowPinnedFallback=value.allowPinnedFallback;vesselDraftMeters=value.draftMeters?:0.0;navigation.pinBoatHeadingSource(pinnedHeadingSourceId?.substringAfterLast(':'))}}
         scope.launch{outputSettings.settings.collect{phonePositionOutputEnabled=it.phonePositionPublishing}}
         scope.launch{while(isActive){publish(SystemClock.elapsedRealtime());delay(250)}}
     }
@@ -166,7 +166,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
     @Synchronized private fun recordPressure(sourceId:String,elapsed:Long,value:Double){pressureTrendsBySource.getOrPut(sourceId){PressureTrendEstimator()}.add(elapsed,value)}
     private fun <T> registrySelection(metric:VesselMetricId,preference:VesselSourcePreference,pinnedId:String?,now:Long,excludeBoat:Boolean=false):VesselSourceSelection<T>{
         val candidates=sourceRegistry.candidates<T>(metric).filterNot{excludeBoat&&it.sourceClass==VesselSourceClass.BOAT_NMEA}
-        val resolvedPin=pinnedId?.let{stored->candidates.firstOrNull{it.source.id==stored||it.source.fullSentenceId==stored||it.source.id.endsWith(":$stored")}?.source?.id?:stored}
+        val resolvedPin=pinnedId?.let{stored->VesselSourcePinPolicy.resolve(candidates,stored)?:stored}
         return arbitrator.select(metric,candidates,MetricSourcePreference(preference,resolvedPin,allowPinnedFallback),now)
     }
     private fun <T> selectionObservation(selection:VesselSourceSelection<T>):VesselObservation<T>?=selection.selected?.let{candidate->

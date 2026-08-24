@@ -8,7 +8,7 @@ object NmeaCandidateMapper{
         val update=envelope.update;val source=VesselSourceIdentity(
             id="nmea:$profileId:$generation:${envelope.fullSentenceId}",transportProfileId=profileId,connectionGeneration=generation,
             sourceType=VesselSourceType.NMEA_INPUT,talkerId=envelope.talkerId,sentenceType=envelope.sentenceType,fullSentenceId=envelope.fullSentenceId,
-            displayName=envelope.fullSentenceId,
+            displayName=envelope.fullSentenceId,stableKey="nmea:$profileId:${envelope.fullSentenceId}",
         )
         fun <T> candidate(metric:VesselMetricId,nmeaMetric:NmeaMetric,value:T,reference:VesselReference?=null)=VesselSourceCandidate(metric,value,source,VesselSourceClass.BOAT_NMEA,reference,update.measuredAt(nmeaMetric)?:envelope.receivedElapsedRealtime,update.utcMillis,VesselDataQuality.GOOD,CandidateValidity.ELIGIBLE,VesselProvenance.Nmea(source),update.heartbeatAt(nmeaMetric)?:envelope.receivedElapsedRealtime)
         return buildList{
