@@ -32,6 +32,7 @@ import com.yokuli.anchorwatch.data.database.AnchorDao
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.DepthSampleEntity
 import com.yokuli.anchorwatch.data.database.SonarDao
+import com.yokuli.anchorwatch.data.database.TripDao
 import com.yokuli.anchorwatch.data.database.SonarSurveyEntity
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
@@ -107,6 +108,7 @@ class AnchorSafetyFlowTest {
     private lateinit var alarmUi:AlarmUiRepository
     private lateinit var sharingServer:NmeaSharingServer
     private lateinit var sonarDao:SonarDao
+    private lateinit var tripDao:TripDao
     private lateinit var sonarRecorder:SonarSurveyRecorder
     private lateinit var acceptedPosition:AcceptedPositionRepository
     private lateinit var runtimeDiagnostics:RuntimeDiagnosticsRepository
@@ -116,7 +118,7 @@ class AnchorSafetyFlowTest {
         MapRuntimePolicy.renderGoogleEngine=false
         context = InstrumentationRegistry.getInstrumentation().targetContext
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
-        dao = entry.dao();sonarDao=entry.sonarDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition();runtimeDiagnostics=entry.runtimeDiagnostics();outputSettings=entry.outputSettings();preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
+        dao = entry.dao();sonarDao=entry.sonarDao();tripDao=entry.tripDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition();runtimeDiagnostics=entry.runtimeDiagnostics();outputSettings=entry.outputSettings();preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
         val serviceWasRunning = context.stopService(Intent(context, AnchorForegroundService::class.java))
         if (serviceWasRunning) {
             withTimeout(5_000) { runtimeDiagnostics.state.first { !it.serviceReady } }
@@ -273,11 +275,18 @@ class AnchorSafetyFlowTest {
     }
 
     @Test fun sailMfdKeepsCoreInstrumentsInTheFirstViewportAndCockpitReallyLocks() = runBlocking<Unit> {
+        // The test app database intentionally persists between connected-test
+        // invocations. Remove only this test's optional built-in override so
+        // it verifies the product's default six-instrument first viewport.
+        tripDao.deleteDashboard("builtin-sailing")
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithTag("nav_sail").performClick()
             compose.onNodeWithTag("mfd_page_SAILING").assertIsDisplayed()
-            listOf("Boat speed","SOG","Heel","VMG to wind","Apparent wind","True wind").forEach{title->compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed()}
+            listOf("Speed through water (STW)","Speed over ground (SOG)","Heel angle (HEEL)","Velocity made good (VMG)","Apparent wind speed (AWS)","True wind speed (TWS)").forEach{title->
+                try{compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed()}
+                catch(error:AssertionError){throw AssertionError("Core instrument '$title' was not fully visible.\n${compose.onRoot(useUnmergedTree=true).printToString(maxDepth=10)}",error)}
+            }
             compose.onNodeWithTag("mfd_page_SAILING").performTouchInput{swipeLeft()}
             compose.waitUntil(5_000){compose.onAllNodesWithTag("mfd_page_NAV").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("mfd_page_NAV").assertIsDisplayed()
@@ -324,6 +333,7 @@ class AnchorSafetyFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
                 compose.onNodeWithText("Data").performClick()
+                compose.onNodeWithText("NMEA Input").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
                 compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
                 compose.onNodeWithText("127.0.0.1").assertExists()
@@ -350,7 +360,7 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun nmeaConnectionFormExposesIndependentReceiveAndSendPorts() = runBlocking<Unit> {
+    @Test fun nmeaInputAndOutputKeepReceiveAndSendPortsOnSeparateTopLevelPages() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
         outputSettings.save(NmeaDeviceOutputSettings(
             transportMode=NmeaOutputTransportMode.DEDICATED_TCP,
@@ -360,11 +370,14 @@ class AnchorSafetyFlowTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Data").performClick()
-            compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_tx_route",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("NMEA Input").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_rx_port").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_rx_port").assertExists()
-            compose.onNodeWithTag("nmea_tx_route").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithTag("nmea_tx_host").assertExists()
-            compose.onNodeWithTag("nmea_tx_port").assertExists()
+            compose.onNodeWithText("NMEA Output").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_output_route",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("nmea_output_route").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("nmea_output_tx_host").assertExists()
+            compose.onNodeWithTag("nmea_output_tx_port").assertExists()
             compose.onNodeWithText("192.168.1.211").assertExists()
         }
     }
@@ -397,6 +410,7 @@ class AnchorSafetyFlowTest {
             assertEquals(GpsDataSource.DEMO,preferences.settings.first().gpsDataSource)
             ActivityScenario.launch(MainActivity::class.java).use {
                 compose.onNodeWithText("Data").performClick()
+                compose.onNodeWithText("NMEA Input").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
                 compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
                 compose.onNodeWithText("Test, save & connect").performScrollTo().performClick()
@@ -415,10 +429,10 @@ class AnchorSafetyFlowTest {
     @Test fun proxyButtonExplainsWhyItCannotStart() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.NMEA))
         ActivityScenario.launch(MainActivity::class.java).use {
-            compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithText("Data").performClick()
-            compose.onNodeWithTag("nmea_runtime_list").performScrollToIndex(3)
-            compose.onNodeWithText("Enable global GPS proxy").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Settings").performClick()
+            compose.onNodeWithTag("settings_positioning").performScrollTo().performClick()
+            compose.onNodeWithText("Enable global GPS proxy").performScrollTo().performClick()
             compose.onNodeWithText("Connect the NMEA server and wait for a fresh valid position before enabling the global proxy.").assertExists()
             compose.onNodeWithText("Select mock location app → Anchor Watch.",substring=true).assertExists()
         }
@@ -444,8 +458,8 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithText("🇨🇳").assertDoesNotExist()
             compose.onNodeWithText("🇬🇧").assertDoesNotExist()
             compose.onNodeWithTag("language_zh_cn").performClick()
-            compose.waitUntil(5_000){compose.onAllNodesWithText("监控").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithText("监控").assertExists()
+            compose.waitUntil(5_000){compose.onAllNodesWithText("锚泊").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("锚泊").assertExists()
             assertEquals(AppLanguage.SIMPLIFIED_CHINESE,withTimeout(5_000){preferences.settings.first{it.appLanguage==AppLanguage.SIMPLIFIED_CHINESE}}.appLanguage)
         }
     }
@@ -540,6 +554,12 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithText("Captain",substring=true).assertExists()
             compose.onNodeWithTag("onboarding_crew_lili").assertExists()
             compose.onNodeWithTag("onboarding_continue").performClick()
+            compose.onNodeWithTag("onboarding_setup_step_0").assertExists()
+            repeat(5){step->
+                compose.onNodeWithTag("onboarding_setup_next").performClick()
+                compose.onNodeWithTag("onboarding_setup_step_${step+1}").assertExists()
+            }
+            compose.onNodeWithTag("onboarding_finish").performClick()
             compose.onNodeWithTag("nav_anchor").assertExists()
             assertTrue(preferences.settings.first().onboardingCompleted)
         }
@@ -587,17 +607,18 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun disablingPhoneHeadingDuringLearningKeepsHistoricalEvidence() = runBlocking<Unit> {
+    @Test fun disablingHeadingAssistKeepsAuditHistoryButExcludesPriorHeadingEvidence() = runBlocking<Unit> {
         val sessionId=seedPhoneHeadingLearningWatch()
         dao.insertPoint(com.yokuli.anchorwatch.data.database.TrackPointEntity(sessionId=sessionId,timestamp=System.currentTimeMillis(),latitude=-36.8485,longitude=174.7633,distanceFromAnchor=0.0,sog=0.1,cog=180.0,heading=123.0,hdop=1.0,headingMeasured=true,headingSampleSequence=17,positionSource=GpsDataSource.NMEA.name,headingSource=HeadingSource.PHONE.name,headingQuality=HeadingQuality.STABLE.name,headingEpoch=4))
-        ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java))
-        delay(400)
+        startServiceForRestore()
         ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.UPDATE_PHONE_HEADING).putExtra("enabled",false))
         withTimeout(5_000){dao.sessions().first{sessions->sessions.firstOrNull{it.id==sessionId}?.usePhoneHeading==false}}
         val historical=dao.points(sessionId).first().single()
+        // Track history remains immutable for audit/export; the runtime's new
+        // heading evidence epoch excludes this value from estimator input.
         assertEquals(123.0,historical.heading?:Double.NaN,0.0)
         assertEquals(HeadingSource.PHONE.name,historical.headingSource)
-        withTimeout(5_000){dao.events(sessionId).first{events->events.any{it.type=="PHONE_HEADING_DISABLED"&&it.detail=="HISTORICAL_EVIDENCE_RETAINED"}}}
+        withTimeout(5_000){dao.events(sessionId).first{events->events.any{it.type=="ANCHOR_HEADING_EVIDENCE_DISABLED"&&it.detail.contains("PRIOR_HEADING_EXCLUDED")&&it.detail.contains("GPS_WIND_COG_RETAINED")}}}
     }
 
     @Test fun passiveLossKeepsWatchArmedAndRecordsImmediateAndTimedAlarms() = runBlocking<Unit> {
@@ -854,9 +875,9 @@ class AnchorSafetyFlowTest {
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val candidateId=77L;val sessionId=seedCandidateWatch(candidateId);startServiceForRestore()
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.KEEP_CURRENT_CENTER).putExtra("sessionId",sessionId).putExtra("candidateId",candidateId))
-            val rejected=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateDecision==CandidateDecision.REJECTED.name}}.first{it.id==sessionId}}
-            assertEquals(-36.8485,rejected.anchorLatitude,0.000001)
-            assertEquals(45.0,rejected.alarmRadiusMeters,0.001)
+            val kept=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateId==null&&it.centerStatus==AnchorCenterStatus.RESOLVED.name}}.first{it.id==sessionId}}
+            assertEquals(-36.8485,kept.anchorLatitude,0.000001)
+            assertEquals(45.0,kept.alarmRadiusMeters,0.001)
             assertTrue(dao.events(sessionId).first().any{it.type=="ANCHOR_CENTER_CURRENT_KEPT"})
         }
     }
@@ -866,12 +887,14 @@ class AnchorSafetyFlowTest {
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val candidateId=88L;val sessionId=seedCandidateWatch(candidateId);startServiceForRestore()
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ACCEPT_ESTIMATED_CENTER).putExtra("sessionId",sessionId).putExtra("candidateId",candidateId))
-            val accepted=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateDecision==CandidateDecision.ACCEPTED.name}}.first{it.id==sessionId}}
+            val accepted=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateId==null&&it.centerSource==AnchorCenterSource.ESTIMATED_USER_ACCEPTED.name}}.first{it.id==sessionId}}
             assertEquals(-36.8484,accepted.anchorLatitude,0.000001)
             assertEquals(174.7634,accepted.anchorLongitude,0.000001)
             assertEquals(45.0,accepted.alarmRadiusMeters,0.001)
             assertEquals(AnchorCenterSource.ESTIMATED_USER_ACCEPTED.name,accepted.centerSource)
-            assertEquals(AnchorPositionMode.KNOWN.name,accepted.anchorPositionMode)
+            // Provenance remains ESTIMATE even after the user adopts it as the
+            // safety centre; adoption must not rewrite how the point was found.
+            assertEquals(AnchorPositionMode.ESTIMATE.name,accepted.anchorPositionMode)
             assertTrue(accepted.provisionalAnchorLatitude==null&&accepted.provisionalRadiusMeters==null)
             assertTrue(dao.events(sessionId).first().any{it.type=="ANCHOR_CENTER_ACCEPTED_BY_USER"})
         }
@@ -882,7 +905,7 @@ class AnchorSafetyFlowTest {
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val candidateId=188L;val sessionId=seedCandidateWatch(candidateId,paused=true);startServiceForRestore()
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.ACCEPT_ESTIMATED_CENTER).putExtra("sessionId",sessionId).putExtra("candidateId",candidateId))
-            val accepted=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateDecision==CandidateDecision.ACCEPTED.name}}.first{it.id==sessionId}}
+            val accepted=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateId==null&&it.centerSource==AnchorCenterSource.ESTIMATED_USER_ACCEPTED.name}}.first{it.id==sessionId}}
             assertTrue(accepted.paused)
             withTimeout(5_000){runtimeDiagnostics.state.first{state->com.yokuli.anchorwatch.runtime.RuntimeOwner.ANCHOR_WATCH !in state.activeOwners}}
             assertTrue(alarmUi.snapshot.value.state!=AlarmState.ARMED)
@@ -894,7 +917,7 @@ class AnchorSafetyFlowTest {
             val profile=liveProfile(server,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val candidateId=189L;val sessionId=seedCandidateWatch(candidateId,paused=true);startServiceForRestore()
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.KEEP_CURRENT_CENTER).putExtra("sessionId",sessionId).putExtra("candidateId",candidateId))
-            val kept=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateDecision==CandidateDecision.REJECTED.name}}.first{it.id==sessionId}}
+            val kept=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&it.candidateId==null&&it.centerStatus==AnchorCenterStatus.RESOLVED.name}}.first{it.id==sessionId}}
             assertTrue(kept.paused)
             withTimeout(5_000){runtimeDiagnostics.state.first{state->com.yokuli.anchorwatch.runtime.RuntimeOwner.ANCHOR_WATCH !in state.activeOwners}}
             assertTrue(alarmUi.snapshot.value.state!=AlarmState.ARMED)
@@ -995,6 +1018,8 @@ class AnchorSafetyFlowTest {
             centerConfidence="LOW",positionSource=GpsDataSource.NMEA.name,anchorPositionMode=AnchorPositionMode.ESTIMATE.name,
             centerSource=AnchorCenterSource.UNKNOWN.name,learningReferenceLatitude=-36.8485,learningReferenceLongitude=174.7633,
             provisionalAnchorLatitude=-36.8485,provisionalAnchorLongitude=174.7633,provisionalRadiusMeters=45.0,usePhoneHeading=true,
+            estimationEpoch=4,estimationEpochStartedAt=System.currentTimeMillis(),
+            headingEvidenceEnabled=true,headingEvidenceEpoch=4,headingEvidenceEnabledAt=System.currentTimeMillis(),headingEvidenceSourceId=HeadingSource.PHONE.name,
         )
     )
 
@@ -1019,6 +1044,7 @@ class AnchorSafetyFlowTest {
     private fun openDisconnectDecision() {
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Data").performClick()
+        compose.onNodeWithText("NMEA Input").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Disconnect").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Disconnect").performScrollTo().performClick()
     }
