@@ -9,6 +9,10 @@ import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
+import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
+import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
+import com.yokuli.anchorwatch.domain.vessel.*
+import com.yokuli.anchorwatch.runtime.output.SelectedExternalSourcePresence
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
@@ -30,6 +34,19 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(NmeaDeviceOutputSettings(phoneHeadingEnabled=true).anyEnabled)
         assertFalse(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true).anyEnabled)
         assertTrue(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true).anyEnabled)
+    }
+
+    @Test fun canonicalFeedIsACompletePurposeWithoutPhoneInjectionStreams(){
+        val value=NmeaDeviceOutputSettings(purpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,transportConfigured=true,publicationEnabled=true)
+        assertTrue(value.anyStreamSelected);assertTrue(value.anyEnabled)
+        assertFalse(value.phonePositionPublishing)
+    }
+
+    @Test fun backupLooksOnlyAtSelectedExternalSourceAndFishfinderVhwDoesNotBlockHeadingTakeover(){
+        fun observation(type:String,sourceClass:VesselSourceClass=VesselSourceClass.BOAT_NMEA)=VesselObservation(123.0,source=sourceClass.toLegacySource(),receivedElapsedRealtime=10_000,freshness=VesselDataFreshness.FRESH,sourceIdentity=VesselSourceIdentity("source:$type",sourceType=VesselSourceType.NMEA_INPUT,sentenceType=type,displayName=type),sourceClass=sourceClass)
+        assertTrue(SelectedExternalSourcePresence.present(observation("HDT"),10_100,3_000,setOf("HDT","HDG")))
+        assertFalse(SelectedExternalSourcePresence.present(observation("VHW"),10_100,3_000,setOf("HDT","HDG")))
+        assertFalse(SelectedExternalSourcePresence.present(observation("HDT",VesselSourceClass.PHONE_VESSEL_HEADING),10_100,3_000,setOf("HDT","HDG")))
     }
 
     @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){

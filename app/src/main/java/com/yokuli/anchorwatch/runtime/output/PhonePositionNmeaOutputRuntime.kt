@@ -30,6 +30,14 @@ internal class LatestPerStreamQueue<T>(private val key:(T)->String){
     @Synchronized fun size()=values.size
 }
 
+object SelectedExternalSourcePresence{
+    fun present(observation:VesselObservation<*>,now:Long,maxAge:Long,acceptedSentenceTypes:Set<String>?=null):Boolean{
+        if(observation.value==null||observation.sourceClass!=VesselSourceClass.BOAT_NMEA||observation.freshness!=VesselDataFreshness.FRESH)return false
+        if(observation.receivedElapsedRealtime?.let{now-it in 0L..maxAge}!=true)return false
+        return acceptedSentenceTypes==null||observation.sourceIdentity?.sentenceType?.uppercase() in acceptedSentenceTypes
+    }
+}
+
 /** Compatibility facade for the final Phone Vessel Gateway publisher.
  * Acquisition stays independent from publication; this scheduler always reads
  * the latest snapshot and never queues sensor history for replay. */
@@ -49,8 +57,8 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
     @Volatile var enabled=false;private set
     @Volatile private var settings=NmeaDeviceOutputSettings();@Volatile private var inputProfile=ConnectionProfile()
     @Volatile private var latestPosition:NavigationFix?=null;@Volatile private var heading=PhoneHeadingSample();@Volatile private var attitude=PhoneVesselAttitudeSample();@Volatile private var pressure=PhonePressureSample();@Volatile private var mountState=PhoneVesselMountState.UNCALIBRATED;@Volatile private var calibration=VesselMountCalibration()
-    private var lastPositionPublish=0L;private var lastHeadingPublish=0L;private var lastMotionPublish=0L;private var lastPressurePublish=0L;private var lastWindPublish=0L;private var lastStatusPublish=0L
-    private val positionGate=PublicationOwnershipGate(5_000L);private val headingGate=PublicationOwnershipGate(3_000L);private val motionGate=PublicationOwnershipGate(0L);private val pressureGate=PublicationOwnershipGate(0L);private val windGate=PublicationOwnershipGate(5_000L)
+    private var lastPositionPublish=0L;private var lastHeadingPublish=0L;private var lastMotionPublish=0L;private var lastPressurePublish=0L;private var lastWindPublish=0L;private var lastStatusPublish=0L;private var lastCanonicalPublish=0L
+    private val positionGate=PublicationOwnershipGate(5_000L,10_000L);private val headingGate=PublicationOwnershipGate(3_000L,10_000L);private val motionGate=PublicationOwnershipGate(0L,10_000L);private val pressureGate=PublicationOwnershipGate(0L,10_000L);private val windGate=PublicationOwnershipGate(5_000L,10_000L)
     private data class OutputBatch(val profile:ConnectionProfile,val stream:String,val sentences:List<String>,val types:Set<String>,val sequence:Long)
     private val pending=LatestPerStreamQueue<OutputBatch>{it.stream}
     private val writerWake=Channel<Unit>(capacity=Channel.CONFLATED)
@@ -77,7 +85,7 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
 
     @Synchronized fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile=inputProfile){
         settings=value;inputProfile=input;enabled=value.anyEnabled;outputConnection.configure(value,input)
-        if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=value.effectivePositionPolicy!=PublicationPolicy.OFF||value.effectiveHeadingPolicy!=PublicationPolicy.OFF,needsNmeaTransport=value.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=value.effectiveHeadingPolicy!=PublicationPolicy.OFF||value.proprietaryStatusEnabled,needsPhoneMotion=value.effectiveMotionPolicy!=PublicationPolicy.OFF||value.proprietaryStatusEnabled,needsPhonePressure=value.effectivePressurePolicy!=PublicationPolicy.OFF||value.proprietaryStatusEnabled))
+        if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=value.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED||value.effectivePositionPolicy!=PublicationPolicy.OFF||value.effectiveHeadingPolicy!=PublicationPolicy.OFF,needsNmeaTransport=value.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=value.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED||value.effectiveHeadingPolicy!=PublicationPolicy.OFF||value.proprietaryStatusEnabled,needsPhoneMotion=value.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED||value.effectiveMotionPolicy!=PublicationPolicy.OFF||value.proprietaryStatusEnabled,needsPhonePressure=value.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED||value.effectivePressurePolicy!=PublicationPolicy.OFF||value.proprietaryStatusEnabled))
         else{resources.release(RuntimeOwner.PHONE_NMEA_OUTPUT);pending.clear().forEach{outputConnection.recordDropped(it.stream)};resetClocks();positionGate.reset();headingGate.reset();motionGate.reset();pressureGate.reset();windGate.reset()}
     }
     @Synchronized fun configure(value:Boolean)=configure(NmeaDeviceOutputSettings(phonePositionEnabled=value,transportConfigured=value,publicationEnabled=value))
@@ -85,6 +93,7 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
     private fun publishDue(now:Long){
         val configured=settings;if(!configured.anyEnabled)return
         val snapshot=vesselDataHub.snapshot.value
+        if(configured.purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED){if(now-lastCanonicalPublish>=1_000L)publishCanonical(snapshot,now);return}
         if(now-lastPositionPublish>=1_000L)publishPosition(configured,snapshot,now)
         if(now-lastHeadingPublish>=200L)publishHeading(configured,snapshot,now)
         if(now-lastMotionPublish>=200L)publishMotion(configured,snapshot,now)
@@ -94,11 +103,11 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
     }
 
     private fun publishPosition(configured:NmeaDeviceOutputSettings,snapshot:VesselDataSnapshot,now:Long){
-        lastPositionPublish=now;val conflict=snapshot.conflicts[VesselMetricId.POSITION]?.active==true;val decision=positionGate.evaluate(configured.effectivePositionPolicy,externalFresh(snapshot,VesselMetricId.POSITION,now,5_000L),conflict,now);outputConnection.recordDecision("POSITION",configured.effectivePositionPolicy,decision,latestPosition?.let{now-it.receivedElapsedRealtime in 0L..POSITION_HOLD_MILLIS}==true)
+        lastPositionPublish=now;val conflict=snapshot.conflicts[VesselMetricId.POSITION]?.active==true;val decision=positionGate.evaluate(configured.effectivePositionPolicy,SelectedExternalSourcePresence.present(snapshot.position,now,5_000L,setOf("RMC","GGA","GLL")),conflict,now);outputConnection.recordDecision("POSITION",configured.effectivePositionPolicy,decision,latestPosition?.let{now-it.receivedElapsedRealtime in 0L..POSITION_HOLD_MILLIS}==true)
         if(!decision.publish)return;val sentences=latestPosition?.let{mux.phonePosition(it,now,POSITION_HOLD_MILLIS)}?:emptyList();if(sentences.isEmpty()){outputConnection.recordSuppressed("POSITION",NmeaSuppressionReason.PHONE_GPS_STALE.name);return};write("POSITION",sentences,now)
     }
     private fun publishHeading(configured:NmeaDeviceOutputSettings,snapshot:VesselDataSnapshot,now:Long){
-        lastHeadingPublish=now;val conflict=snapshot.conflicts[VesselMetricId.HEADING_TRUE]?.active==true;val decision=headingGate.evaluate(configured.effectiveHeadingPolicy,externalFresh(snapshot,VesselMetricId.HEADING_TRUE,now,3_000L),conflict,now);val ready=mountState==PhoneVesselMountState.VESSEL_MOUNTED&&heading.receivedElapsedRealtime?.let{now-it in 0L..HEADING_HOLD_MILLIS}==true;outputConnection.recordDecision("HEADING",configured.effectiveHeadingPolicy,decision,ready)
+        lastHeadingPublish=now;val conflict=snapshot.conflicts[VesselMetricId.HEADING_TRUE]?.active==true;val decision=headingGate.evaluate(configured.effectiveHeadingPolicy,SelectedExternalSourcePresence.present(snapshot.headingTrueDegrees,now,3_000L,setOf("HDT","HDG")),conflict,now);val ready=mountState==PhoneVesselMountState.VESSEL_MOUNTED&&heading.receivedElapsedRealtime?.let{now-it in 0L..HEADING_HOLD_MILLIS}==true;outputConnection.recordDecision("HEADING",configured.effectiveHeadingPolicy,decision,ready)
         if(!decision.publish)return
         if(mountState!=PhoneVesselMountState.VESSEL_MOUNTED){outputConnection.recordSuppressed("HEADING",if(mountState==PhoneVesselMountState.MOUNT_SUSPECT)NmeaSuppressionReason.MOUNT_SUSPECT.name else NmeaSuppressionReason.PHONE_NOT_MOUNTED.name);return}
         val liveTrue=phoneVesselTrueHeading();val liveMagnetic=phoneVesselMagneticHeading();val variation=heading.magneticDeclinationDegrees.takeIf{heading.declinationReferenceReady}
@@ -111,17 +120,20 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
         if(generated==null){outputConnection.recordSuppressed("HEADING",NmeaSuppressionReason.NO_DECLINATION_REFERENCE.name);return};write("HEADING",generated,now)
     }
     private fun publishMotion(configured:NmeaDeviceOutputSettings,snapshot:VesselDataSnapshot,now:Long){
-        lastMotionPublish=now;val external=externalFresh(snapshot,VesselMetricId.RATE_OF_TURN,now,3_000L)||externalFresh(snapshot,VesselMetricId.HEEL,now,3_000L)||externalFresh(snapshot,VesselMetricId.PITCH,now,3_000L);val decision=motionGate.evaluate(configured.effectiveMotionPolicy,external,false,now);val live=attitude.attitude.takeIf{mountState==PhoneVesselMountState.VESSEL_MOUNTED&&attitude.receivedElapsedRealtime?.let{now-it in 0L..MOTION_HOLD_MILLIS}==true};outputConnection.recordDecision("MOTION",configured.effectiveMotionPolicy,decision,live!=null);if(!decision.publish)return
+        lastMotionPublish=now;val external=SelectedExternalSourcePresence.present(snapshot.rateOfTurnDegreesPerMinute,now,3_000L);val decision=motionGate.evaluate(configured.effectiveMotionPolicy,external,false,now);val live=attitude.attitude.takeIf{mountState==PhoneVesselMountState.VESSEL_MOUNTED&&attitude.receivedElapsedRealtime?.let{now-it in 0L..MOTION_HOLD_MILLIS}==true};outputConnection.recordDecision("MOTION",configured.effectiveMotionPolicy,decision,live!=null);if(!decision.publish)return
         if(live==null){outputConnection.recordSuppressed("MOTION",if(mountState==PhoneVesselMountState.MOUNT_SUSPECT)NmeaSuppressionReason.MOUNT_SUSPECT.name else NmeaSuppressionReason.PHONE_NOT_MOUNTED.name);return};write("MOTION",listOfNotNull(mux.phoneRateOfTurn(live.yawRateDegreesPerSecond*60.0),mux.phoneXdr(live,null)),now)
     }
     private fun publishPressure(configured:NmeaDeviceOutputSettings,snapshot:VesselDataSnapshot,now:Long){
-        lastPressurePublish=now;val live=pressure.pressureHpa.takeIf{pressure.receivedElapsedRealtime?.let{now-it in 0L..PRESSURE_HOLD_MILLIS}==true};val decision=pressureGate.evaluate(configured.effectivePressurePolicy,externalFresh(snapshot,VesselMetricId.PRESSURE,now,10_000L),false,now);outputConnection.recordDecision("PRESSURE",configured.effectivePressurePolicy,decision,live!=null);if(decision.publish&&live!=null)mux.phoneXdr(null,live)?.let{write("PRESSURE",listOf(it),now)}else if(decision.publish)outputConnection.recordSuppressed("PRESSURE","PHONE_PRESSURE_STALE")
+        lastPressurePublish=now;val live=pressure.pressureHpa.takeIf{pressure.receivedElapsedRealtime?.let{now-it in 0L..PRESSURE_HOLD_MILLIS}==true};val decision=pressureGate.evaluate(configured.effectivePressurePolicy,SelectedExternalSourcePresence.present(snapshot.pressureHpa,now,10_000L),false,now);outputConnection.recordDecision("PRESSURE",configured.effectivePressurePolicy,decision,live!=null);if(decision.publish&&live!=null)mux.phoneXdr(null,live)?.let{write("PRESSURE",listOf(it),now)}else if(decision.publish)outputConnection.recordSuppressed("PRESSURE","PHONE_PRESSURE_STALE")
     }
     private fun publishWind(configured:NmeaDeviceOutputSettings,snapshot:VesselDataSnapshot,now:Long){
-        lastWindPublish=now;val derived=snapshot.trueWind.speedKnots.sourceClass in setOf(VesselSourceClass.DERIVED_WATER,VesselSourceClass.DERIVED_GROUND);val external=externalFresh(snapshot,VesselMetricId.TRUE_WIND_SPEED,now,5_000L);val decision=windGate.evaluate(configured.derivedWindPolicy,external,false,now);val values=listOf(snapshot.trueWind.speedKnots,snapshot.trueWind.directionDegrees,snapshot.trueWind.angleDegrees);val ready=derived&&values.all{it.value!=null&&it.freshness==VesselDataFreshness.FRESH};outputConnection.recordDecision("DERIVED_WIND",configured.derivedWindPolicy,decision,ready);if(!decision.publish)return
+        lastWindPublish=now;val derived=snapshot.trueWind.speedKnots.sourceClass in setOf(VesselSourceClass.DERIVED_WATER,VesselSourceClass.DERIVED_GROUND);val external=SelectedExternalSourcePresence.present(snapshot.trueWind.speedKnots,now,5_000L,setOf("MWD","MWV","VWT","MDA"));val decision=windGate.evaluate(configured.derivedWindPolicy,external,false,now);val values=listOf(snapshot.trueWind.speedKnots,snapshot.trueWind.directionDegrees,snapshot.trueWind.angleDegrees);val ready=derived&&values.all{it.value!=null&&it.freshness==VesselDataFreshness.FRESH};outputConnection.recordDecision("DERIVED_WIND",configured.derivedWindPolicy,decision,ready);if(!decision.publish)return
         if(!ready){outputConnection.recordSuppressed("DERIVED_WIND",NmeaSuppressionReason.NO_DERIVED_WIND.name);return};write("DERIVED_WIND",mux.derivedTrueWind(snapshot.trueWind.speedKnots.value!!,snapshot.trueWind.directionDegrees.value!!,snapshot.trueWind.angleDegrees.value!!),now)
     }
-    private fun externalFresh(snapshot:VesselDataSnapshot,metric:VesselMetricId,now:Long,maxAge:Long)=snapshot.candidates[metric].orEmpty().any{it.sourceClass==VesselSourceClass.BOAT_NMEA&&it.validity==CandidateValidity.ELIGIBLE&&now-it.receivedElapsedRealtime in 0L..maxAge}
+    private fun publishCanonical(snapshot:VesselDataSnapshot,now:Long){
+        lastCanonicalPublish=now;val sentences=mux.canonicalFeed(snapshot,now);val ready=sentences.isNotEmpty();outputConnection.recordDecision("CANONICAL_FEED",PublicationPolicy.ALWAYS,PublicationDecision(ready,if(ready)PublisherOwnershipState.PHONE_ACTIVE else PublisherOwnershipState.SUPPRESSED),ready)
+        if(ready)write("CANONICAL_FEED",sentences,now)else outputConnection.recordSuppressed("CANONICAL_FEED","NO_CANONICAL_DATA")
+    }
     private fun phoneVesselTrueHeading()=heading.liveTrueHeadingDegrees?.let{normalize(it+calibration.headingAlignmentOffsetDegrees)}.takeIf{mountState==PhoneVesselMountState.VESSEL_MOUNTED&&heading.declinationReferenceReady}
     private fun phoneVesselMagneticHeading()=heading.liveMagneticHeadingDegrees?.let{normalize(it+calibration.headingAlignmentOffsetDegrees)}.takeIf{mountState==PhoneVesselMountState.VESSEL_MOUNTED}
     private fun normalize(value:Double)=(value%360.0+360.0)%360.0
@@ -132,7 +144,7 @@ class PhonePositionNmeaOutputRuntime @Inject constructor(
         pending.offer(batch)?.let{outputConnection.recordDropped(it.stream)}
         writerWake.trySend(Unit)
     }
-    private fun resetClocks(){lastPositionPublish=0;lastHeadingPublish=0;lastMotionPublish=0;lastPressurePublish=0;lastWindPublish=0;lastStatusPublish=0}
+    private fun resetClocks(){lastPositionPublish=0;lastHeadingPublish=0;lastMotionPublish=0;lastPressurePublish=0;lastWindPublish=0;lastStatusPublish=0;lastCanonicalPublish=0}
 
     fun testOutput(value:NmeaDeviceOutputSettings=settings,input:ConnectionProfile=inputProfile):Boolean{
         val testConfiguration=value.copy(proprietaryStatusEnabled=true,publicationEnabled=true);outputConnection.configure(testConfiguration,input)

@@ -26,4 +26,9 @@ class PublicationOwnershipGateTest{
         val gate=PublicationOwnershipGate(1_000);gate.evaluate(PublicationPolicy.BACKUP,false,false,0);gate.evaluate(PublicationPolicy.OFF,false,false,500)
         assertEquals(PublisherOwnershipState.TAKEOVER_PENDING,gate.evaluate(PublicationPolicy.BACKUP,false,false,2_000).ownership)
     }
+    @Test fun boatRecoveryMustRemainStableForTenSeconds(){
+        val gate=PublicationOwnershipGate(3_000,10_000);gate.evaluate(PublicationPolicy.BACKUP,false,false,0);assertTrue(gate.evaluate(PublicationPolicy.BACKUP,false,false,3_000).publish)
+        assertTrue(gate.evaluate(PublicationPolicy.BACKUP,true,false,4_000).publish);assertTrue(gate.evaluate(PublicationPolicy.BACKUP,true,false,13_999).publish)
+        assertFalse(gate.evaluate(PublicationPolicy.BACKUP,true,false,14_000).publish)
+    }
 }

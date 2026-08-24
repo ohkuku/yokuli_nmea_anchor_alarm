@@ -118,6 +118,7 @@ import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
 import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
 import com.yokuli.anchorwatch.data.vessel.withPolicy
 import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
+import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.data.trip.TripReplayLoader
 import com.yokuli.anchorwatch.data.trip.TripReplayData
@@ -863,16 +864,21 @@ class MainViewModel @Inject constructor(
         outputSettingsRepository.save(current.copy(transportMode=mode,outputHost=host.trim(),outputPort=port,transportConfigured=true))
         _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     }
+    fun setNmeaOutputPurpose(purpose:NmeaOutputPurpose)=viewModelScope.launch{
+        val current=_ui.value.outputSettings
+        if(current.publicationEnabled){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop NMEA output before changing its purpose."))};return@launch}
+        outputSettingsRepository.save(current.copy(purpose=purpose));_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+    }
     fun startNmeaOutput()=viewModelScope.launch{
         val state=_ui.value;val value=state.outputSettings
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
         if(!value.anyStreamSelected){fail("Select at least one NMEA output stream first.");return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
-        if(state.vesselMountCalibration.calibratedAt<=0L){fail("Complete phone vessel-sensor calibration before starting NMEA output.");return@launch}
-        val vesselFrameSelected=value.effectiveHeadingPolicy!=PublicationPolicy.OFF||value.effectiveMotionPolicy!=PublicationPolicy.OFF
+        val vesselFrameSelected=value.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&(value.effectiveHeadingPolicy!=PublicationPolicy.OFF||value.effectiveMotionPolicy!=PublicationPolicy.OFF)
+        if(vesselFrameSelected&&state.vesselMountCalibration.calibratedAt<=0L){fail("Complete phone vessel-sensor calibration before starting heading or motion output.");return@launch}
         if(vesselFrameSelected&&state.phoneVesselMountState!=PhoneVesselMountState.VESSEL_MOUNTED){fail("Secure the calibrated phone to the vessel and mark it vessel-mounted before publishing heading or motion.");return@launch}
-        if(value.effectivePressurePolicy!=PublicationPolicy.OFF&&!state.phoneSensorCapabilities.pressureAvailable){fail("This phone has no pressure sensor for the selected BARO stream.");return@launch}
-        if(value.effectivePositionPolicy!=PublicationPolicy.OFF){
+        if(value.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&value.effectivePressurePolicy!=PublicationPolicy.OFF&&!state.phoneSensorCapabilities.pressureAvailable){fail("This phone has no pressure sensor for the selected BARO stream.");return@launch}
+        if(value.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&value.effectivePositionPolicy!=PublicationPolicy.OFF){
             val activeSource=state.active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
             if(!PositionSourceConflictPolicy.canEnablePhonePositionOutput(PositionSourceConflictState(false,state.settings.gpsDataSource,activeSource))){fail("Cannot publish Phone GPS while NMEA Position is the App GPS source or an active anchor is locked to NMEA.");return@launch}
         }

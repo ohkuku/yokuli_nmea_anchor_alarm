@@ -5,8 +5,7 @@ import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
-import com.yokuli.anchorwatch.domain.vessel.VesselAttitude
-import com.yokuli.anchorwatch.domain.vessel.VesselMotion
+import com.yokuli.anchorwatch.domain.vessel.*
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -121,5 +120,23 @@ class NmeaOutputMuxTest {
         assertTrue(output[0].contains("IIHDT,123.40,T"))
         assertTrue(output[1].contains("IIHDG,103.90,,,19.50,E"))
         assertTrue(output.all{NmeaChecksum.validate(it,true)})
+    }
+
+    @Test fun canonicalFeedPublishesOnlySelectedHubValuesAcrossRequiredFamilies(){
+        val source=VesselSourceIdentity("nmea:boat:1:IIHDT",sourceType=VesselSourceType.NMEA_INPUT,sentenceType="HDT",displayName="IIHDT")
+        fun <T> observation(value:T)=VesselObservation(value,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=10_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.BOAT_NMEA)
+        val snapshot=VesselDataSnapshot(
+            position=observation(VesselPosition(-36.8485,174.7633,horizontalAccuracyMeters=3.0,satellites=10,hdop=1.0)),sogKnots=observation(2.3),cogTrueDegrees=observation(92.0),headingTrueDegrees=observation(87.0),depthMeters=observation(8.4),speedThroughWaterKnots=observation(2.1),
+            apparentWind=VesselWindObservation(observation(12.0),VesselObservation(),observation(-25.0)),trueWind=VesselWindObservation(observation(10.0),observation(220.0),observation(35.0)),rateOfTurnDegreesPerMinute=observation(3.2),pressureHpa=observation(1013.2),
+        )
+        val output=mux.canonicalFeed(snapshot,10_100,1_720_000_000_000)
+        val types=output.mapNotNull(mux::sentenceType).toSet()
+        assertTrue(setOf("RMC","GGA","VTG","HDT","VHW","MWV","MWD","VWT","DBT","ROT","XDR").all{it in types})
+        assertTrue(output.all{NmeaChecksum.validate(it,true)})
+    }
+
+    @Test fun canonicalFeedNeverPublishesStaleSelectedValues(){
+        val stale=VesselObservation(123.0,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.STALE)
+        assertTrue(mux.canonicalFeed(VesselDataSnapshot(headingTrueDegrees=stale),10_000).isEmpty())
     }
 }
