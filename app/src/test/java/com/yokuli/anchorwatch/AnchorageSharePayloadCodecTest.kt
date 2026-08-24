@@ -50,7 +50,14 @@ class AnchorageSharePayloadCodecTest {
     @Test fun invalidCoordinateAndNewerVersionAreRejected(){
         val invalid=savedPayloadUri(AnchorageSharePayloadV1(name="Bad",latitude=91.0,longitude=174.0))
         assertTrue(AnchorageSharePayloadCodec.decode(invalid) is AnchorageQrDecodeResult.Invalid)
-        assertTrue(AnchorageSharePayloadCodec.decode(AnchorageSharePayloadCodec.encode(saved).uri.replace("v=1","v=2")) is AnchorageQrDecodeResult.UnsupportedVersion)
+        assertTrue(AnchorageSharePayloadCodec.decode(AnchorageSharePayloadCodec.encode(saved).uri.replace("v=1","v=3")) is AnchorageQrDecodeResult.UnsupportedVersion)
+    }
+
+    @Test fun v2KeepsPlaceSpotAndRegionContextWithoutVisitHistory(){
+        val payload=AnchorageSharePayloadV2(placeName="Smokehouse Bay",placeType="BAY",regionDisplayPath=listOf("Port FitzRoy","Aotea / Great Barrier Island"),spotName="Inner mud",latitude=-36.18,longitude=175.34,preferredAlarmRadiusMeters=55.0,typicalWaterDepthMeters=7.2,typicalRodeLengthMeters=45.0,seabedType=SeabedType.MUD.name,coordinateSource=AnchorageCoordinateSource.CONFIRMED_ANCHOR.name,approachNotes="Keep north of the reef",notes="Personal observation")
+        val encoded=AnchorageSharePayloadCodec.encodeV2(payload)
+        val decoded=(AnchorageSharePayloadCodec.decode(encoded.uri) as AnchorageQrDecodeResult.FullV2).payload
+        assertEquals(payload,decoded);assertFalse(encoded.uri.contains("visit",ignoreCase=true));assertTrue(encoded.uri.toByteArray().size<=AnchorageSharePayloadCodec.MAX_QR_URI_BYTES)
     }
 
     @Test fun oversizedRawPayloadIsRejectedBeforeDecode(){

@@ -41,6 +41,7 @@ fun AnchorageLibraryScreen(
     vm: AnchorageLibraryViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
+    val planningPoint by vm.planningPoint.collectAsState()
     var showFilters by remember { mutableStateOf(false) }
     var showRegions by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
@@ -147,6 +148,7 @@ fun AnchorageLibraryScreen(
             onSaveV2 = { value -> showQrScanner = false; vm.importV2Qr(value) },
         )
     }
+    planningPoint?.let{point->PlannedAnchorageDialog(point,{vm.cancelPlan()},vm::savePlan)}
 }
 
 @OptIn(FlowPreview::class)
@@ -185,6 +187,7 @@ private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryVie
         modifier.fillMaxWidth().testTag("anchorage_library_map"),
         cameraPositionState = camera,
         uiSettings = MapUiSettings(mapToolbarEnabled = false, zoomControlsEnabled = false, myLocationButtonEnabled = false),
+        onMapLongClick = { vm.planAt(it.latitude,it.longitude) },
     ) {
         aggregates.forEach { aggregate ->
             if (aggregate.count > 1) {
@@ -327,3 +330,9 @@ private fun RegionSelectorDialog(ids: List<Long>, selected: Long?, dismiss: () -
 }
 
 private fun normalize(value: Double): Double = ((value + 540) % 360) - 180
+
+@Composable
+private fun PlannedAnchorageDialog(point:Pair<Double,Double>,dismiss:()->Unit,save:(String,String,String)->Unit){
+    var name by remember(point){mutableStateOf("")};var spot by remember(point){mutableStateOf("Chart reference")};var notes by remember(point){mutableStateOf("")}
+    AlertDialog(onDismissRequest=dismiss,title={Text(tr("Save planned anchorage","保存规划锚地"))},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Map long-press creates a planning reference, not a verified anchorage.","地图长按创建的是规划参考点，不是已验证锚地。"),color=MaterialTheme.colorScheme.tertiary);Text("%.5f, %.5f".format(point.first,point.second));OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),label={Text(tr("Place name *","地点名称 *"))});OutlinedTextField(spot,{spot=it},Modifier.fillMaxWidth(),label={Text(tr("Spot name","锚点名称"))});OutlinedTextField(notes,{notes=it},Modifier.fillMaxWidth(),label={Text(tr("Planning notes","规划备注"))})}},confirmButton={Button({save(name,spot,notes)},enabled=name.isNotBlank()){Text(tr("Save planned Place","保存规划地点"))}},dismissButton={TextButton(dismiss){Text(tr("Cancel","取消"))}})
+}

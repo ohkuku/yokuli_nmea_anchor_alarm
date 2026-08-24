@@ -43,7 +43,7 @@ data class AnchoragePlaceBundle(
     suspend fun delete(id:Long):Boolean=database.withTransaction{val spot=database.anchorageSpotDao().get(id)?:return@withTransaction false;spatial.deleteSpot(id);val deleted=database.anchorageSpotDao().delete(id)>0;search.rebuildPlace(spot.placeId);deleted}
 }
 
-@Singleton class AnchorageVisitRepository @Inject constructor(private val database:AppDatabase,private val intelligence:AnchorageIntelligenceRepository){
+@Singleton class AnchorageVisitRepository @Inject constructor(private val database:AppDatabase,private val intelligence:AnchorageIntelligenceRepository=AnchorageIntelligenceRepository(database)){
     suspend fun save(value:AnchorageVisitEntity):Long=database.withTransaction{
         require(database.anchoragePlaceDao().get(value.placeId)!=null);require(value.spotId==null||database.anchorageSpotDao().get(value.spotId)!=null)
         val id=if(value.id==0L)database.anchorageVisitDao().insert(value)else{database.anchorageVisitDao().update(value);value.id}

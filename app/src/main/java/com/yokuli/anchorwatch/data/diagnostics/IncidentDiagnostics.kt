@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch.data.diagnostics
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import androidx.room.withTransaction
 import com.google.gson.Gson
 import com.yokuli.anchorwatch.BuildConfig
 import com.yokuli.anchorwatch.data.database.DATABASE_SCHEMA_VERSION
@@ -193,6 +194,7 @@ class SupportBundleManager @Inject constructor(
     private val settings: SettingsRepository,
     private val runtime: RuntimeDiagnosticsRepository,
     private val storage: StorageHealthRepository,
+    private val database:com.yokuli.anchorwatch.data.database.AppDatabase,
 ) {
     private val gson = Gson()
     private val _state = MutableStateFlow(SupportBundleState())
@@ -205,6 +207,10 @@ class SupportBundleManager @Inject constructor(
         val appSettings = settings.settings.first()
         val runtimeState = runtime.state.value
         val storageState = storage.snapshot()
+        val gis=database.withTransaction{
+            fun count(table:String)=runCatching{database.openHelper.writableDatabase.query("SELECT COUNT(*) FROM $table").use{cursor->if(cursor.moveToFirst())cursor.getLong(0)else 0L}}.getOrDefault(-1L)
+            mapOf("regions" to database.anchorageRegionDao().count(),"places" to database.anchoragePlaceDao().count(),"spots" to database.anchorageSpotDao().count(),"visits" to database.anchorageVisitDao().count(),"photos" to count("anchorage_photos"),"rtreePlaces" to count("anchorage_place_rtree"),"rtreeSpots" to count("anchorage_spot_rtree"),"ftsRows" to count("anchorage_search_fts"),"migrationVerifiedAt" to database.anchorageMetadataDao().meta("MIGRATION_VERIFIED_AT")?.longValue)
+        }
         val output = context.contentResolver.openOutputStream(uri, "w") ?: error("Android could not open the selected diagnostics file")
         output.use { raw -> ZipOutputStream(BufferedOutputStream(raw)).use { zip ->
             write(zip, "manifest.json", gson.toJson(mapOf(
@@ -240,6 +246,7 @@ class SupportBundleManager @Inject constructor(
                 "note" to "Map tile failures never alter anchor-watch safety state",
             )))
             write(zip, "storage.json", gson.toJson(storageState))
+            write(zip, "anchorage_gis.json", gson.toJson(gis))
             write(zip, "incidents.ndjson", recent.joinToString("\n") { gson.toJson(it) })
             write(zip, "README.txt", "This bundle is designed for Anchor Watch diagnostics. It excludes raw NMEA, API keys and exact vessel positions. Review it before sharing.\n")
         } }

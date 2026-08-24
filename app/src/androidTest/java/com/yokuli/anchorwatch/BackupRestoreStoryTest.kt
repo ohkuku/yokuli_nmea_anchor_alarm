@@ -45,6 +45,23 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BackupRestoreStoryTest{
+    @Test fun normalizedAnchorageGisAndPrivateMediaRoundTripInV5()=runBlocking{
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val preferences=SettingsRepository(context);val original=preferences.settings.first()
+        val manager=YokuliBackupManager(context,database,database.anchorDao(),database.sonarDao(),preferences,SonarIncrementalGridUpdater(database.sonarDao()),database.linzDepthCacheDao(),database.tidePredictionCacheDao(),database.anchorageDao(),database.tripDao(),VesselSettingsRepository(context),OutputSettingsRepository(context),VesselMountCalibrationRepository(context))
+        val archive=File(context.cacheDir,"gis-v5-${System.nanoTime()}.yokuli-backup");val mediaDir=File(context.filesDir,"anchorage_media").apply{mkdirs()};val originalPhoto=File(mediaDir,"backup-photo.jpg").apply{writeBytes("private-photo".encodeToByteArray())}
+        try{
+            val now=1_000L
+            database.anchoragePlaceDao().importAll(listOf(com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity(id=201,displayName="Smokehouse Bay",placeType="BAY",geometryType="POINT",centerLatitude=-36.18,centerLongitude=175.34,bboxMinLatitude=-36.18,bboxMaxLatitude=-36.18,bboxMinLongitude=175.34,bboxMaxLongitude=175.34,verificationStatus="VISITED",favorite=true,createdAt=now,updatedAt=now)))
+            database.anchorageSpotDao().importAll(listOf(com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity(id=202,placeId=201,name="Inner mud",spotType="ANCHOR_SPOT",latitude=-36.181,longitude=175.341,coordinateSource="CONFIRMED_ANCHOR",preferredAlarmRadiusMeters=55.0,verificationStatus="VISITED",createdAt=now,updatedAt=now)))
+            database.anchorageVisitDao().importAll(listOf(com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity(id=203,placeId=201,spotId=202,anchorSessionId=null,visitKind="MANUAL",startedAt=now,endedAt=2_000,actualAnchorLatitude=-36.181,actualAnchorLongitude=175.341,coordinateSource="CONFIRMED_ANCHOR",coordinateUncertaintyMeters=3.0,waterDepthMeters=7.0,rodeLengthMeters=45.0,alarmRadiusMeters=55.0,maxExcursionMeters=30.0,alarmCount=0,minDepthMeters=6.8,maxDepthMeters=7.2,maxWindKnots=null,maxWindSource=null,typicalMotionScore=null,p95MotionScore=null,p95AbsoluteHeelDegrees=null,dominantRollPeriodSeconds=null,impactCount=null,summaryVersion="1",createdAt=now)))
+            database.anchoragePhotoDao().importAll(listOf(com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity(id=204,placeId=201,relativeFileName=originalPhoto.name,thumbnailRelativeFileName=null,mimeType="image/jpeg",sha256="metadata-sha",width=10,height=10,createdAt=now)))
+            val manifest=manager.export(Uri.fromFile(archive)).getOrThrow();assertEquals(5,manifest.formatVersion);assertEquals(1L,manifest.recordCounts.getValue(YokuliBackupArchive.GIS_PLACES));assertTrue(readZip(archive).containsKey(YokuliBackupArchive.GIS_MEDIA_PREFIX+originalPhoto.name))
+            originalPhoto.delete();manager.restore(Uri.fromFile(archive)).getOrThrow()
+            assertEquals("Smokehouse Bay",database.anchoragePlaceDao().get(201)?.displayName);assertEquals("Inner mud",database.anchorageSpotDao().get(202)?.name);assertEquals(7.0,database.anchorageVisitDao().get(203)?.waterDepthMeters?:0.0,.001);assertEquals("private-photo",originalPhoto.readText())
+        }finally{preferences.save(original);database.close();archive.delete();originalPhoto.delete()}
+    }
+
     @Test fun tripWaypointsCustomNmeaAndDashboardsRoundTripInV4()=runBlocking{
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build();val preferences=SettingsRepository(context);val original=preferences.settings.first();val tripDao=database.tripDao()

@@ -17,7 +17,7 @@ class BackupV3DtoTest{
     @Test fun vesselWorkspaceLayoutsDraftOutputAndMountCalibrationArePartOfV3Settings(){
         val calibration=VesselMountCalibration(4,DeviceBowAxis.RIGHT,SensorQuaternion(.9,.1,.2,.3),1234)
         val value=BackupVesselSettingsV3(value=VesselDataSettings(watchWorkspace=WatchWorkspaceMode.TRIP,draftMeters=1.8,navLayout=listOf(InstrumentTileId.SOG)),output=NmeaDeviceOutputSettings(true),mountCalibration=calibration)
-        assertEquals(4,YokuliBackupArchive.VERSION);assertEquals(3,value.schemaVersion)
+        assertEquals(5,YokuliBackupArchive.VERSION);assertEquals(3,value.schemaVersion)
         assertEquals(WatchWorkspaceMode.TRIP,value.value.watchWorkspace);assertEquals(1.8,value.value.draftMeters!!,.01)
         assertEquals(listOf(InstrumentTileId.SOG),value.value.navLayout);assertTrue(value.output.phonePositionEnabled);assertEquals(calibration,value.mountCalibration)
     }
