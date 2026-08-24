@@ -5,6 +5,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -56,6 +57,20 @@ class P0OperabilityComposeTest{
         compose.onNodeWithTag("root_page_0").assertIsDisplayed()
         compose.onNodeWithTag("root_pager").performTouchInput{swipeLeft()}
         compose.onNodeWithTag("root_page_0").assertIsDisplayed()
+    }
+
+    @Test fun anchorageApproachReplacesCurrentWorkspaceInsteadOfBecomingItsChild(){
+        compose.setContent{
+            YokuliTheme{
+                AppDestinationLayer(
+                    fullscreenDestination=true,
+                    workspace={Text("Current workspace",Modifier.testTag("current_workspace"))},
+                    fullscreenHost={Text("Full-screen approach",Modifier.testTag("approach_destination"))},
+                )
+            }
+        }
+        compose.onNodeWithTag("approach_destination").assertIsDisplayed()
+        compose.onNodeWithTag("current_workspace").assertDoesNotExist()
     }
 
     @Test fun tripPhoneGpsChoiceRequiresAndUsesAnEligiblePhoneCandidate(){

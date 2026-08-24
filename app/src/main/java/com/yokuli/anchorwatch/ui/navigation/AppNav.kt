@@ -71,14 +71,37 @@ fun AnchorApp(vm:MainViewModel){
             Destination(tr("Settings","设置"),Icons.Default.Settings),
         )
         val destinationTags=listOf("nav_anchor","nav_sail","nav_data","nav_settings")
-        Scaffold(bottomBar={if(!sailCockpitMode.value)NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
-            Box(Modifier.fillMaxSize().padding(padding)){
-                when(state.page){0->AnchorRootPage(state,vm);1->SailRootPage(state,vm);2->DataPage(state,vm);else->SettingsScreen(state,vm)}
+        val approachOwnsScreen=state.anchorageApproach.target!=null
+        Scaffold(bottomBar={if(!sailCockpitMode.value&&!approachOwnsScreen)NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
+            AppDestinationLayer(
+                fullscreenDestination=approachOwnsScreen,
+                modifier=Modifier.fillMaxSize().padding(padding),
+                workspace={when(state.page){0->AnchorRootPage(state,vm);1->SailRootPage(state,vm);2->DataPage(state,vm);else->SettingsScreen(state,vm)}},
+                fullscreenHost={AnchorageApproachDestinationHost(state,vm)},
+            ){
                 AlarmTestBanner(state,vm,Modifier.align(Alignment.TopCenter))
                 if(state.alarmSnapshot.type!=AlarmType.ALARM_TEST)RuntimeFeedbackBanner(state,vm,Modifier.align(Alignment.TopCenter))
             }
         }
         AnchorDragAlarmDialog(state,vm)
+    }
+}
+
+/** A safety/navigation destination replaces the workspace instead of being
+ * embedded inside its Current tab. The host remains composed after the route
+ * closes so it can hand off into Preflight/Anchor Setup without losing state. */
+@Composable
+internal fun AppDestinationLayer(
+    fullscreenDestination:Boolean,
+    modifier:Modifier=Modifier,
+    workspace:@Composable ()->Unit,
+    fullscreenHost:@Composable ()->Unit,
+    foreground:@Composable BoxScope.()->Unit={},
+){
+    Box(modifier){
+        if(!fullscreenDestination)workspace()
+        fullscreenHost()
+        foreground()
     }
 }
 

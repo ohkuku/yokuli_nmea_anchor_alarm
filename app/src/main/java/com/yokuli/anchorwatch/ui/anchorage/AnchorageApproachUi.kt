@@ -150,9 +150,11 @@ internal fun AnchorageApproachOverlay(
                 Icon(Icons.Default.Close, tr("Cancel approach", "取消接近指引"))
             }
             Column(
-                Modifier.align(Alignment.Center).fillMaxWidth(),
+                Modifier.fillMaxSize()
+                    .padding(top=48.dp,bottom=42.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp,Alignment.CenterVertically),
             ) {
                 when {
                     !state.positionAvailable -> {

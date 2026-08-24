@@ -11,6 +11,7 @@ import android.graphics.Path
 import android.os.PowerManager
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
@@ -109,8 +110,69 @@ private data class SonarMapInspection(
     val grid:com.yokuli.anchorwatch.domain.sonar.SonarInspection,
 )
 
-internal object ApproachSheetPolicy{
-    fun shouldCollapse(targetClusterId:String?)=!targetClusterId.isNullOrBlank()
+@Composable
+internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel){
+    val target=state.anchorageApproach.target
+    var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
+    var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
+    var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
+    var showPreflight by remember{mutableStateOf(false)}
+    var showSetup by remember{mutableStateOf(false)}
+
+    fun openDetails(cluster:com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster){
+        when(val resolved=com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy.resolve(cluster)){
+            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.SavedAnchorage->{
+                val saved=state.savedAnchorages.firstOrNull{it.id==resolved.id}
+                if(saved!=null){anchorageListDetails=null;anchorageDetails=saved}
+                else{anchorageDetails=null;anchorageListDetails=listOf(resolved.id)}
+            }
+            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.AnchorageList->{
+                anchorageDetails=null;anchorageListDetails=resolved.ids
+            }
+        }
+    }
+
+    BackHandler(enabled=target!=null){vm.cancelAnchorageApproach()}
+    target?.let{cluster->
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).testTag("anchorage_approach_fullscreen")){
+            AnchorageApproachOverlay(
+                state=state.anchorageApproach,
+                headingMode=state.approachHeadingMode,
+                vesselHeadingAvailable=state.vesselApproachHeadingAvailable,
+                setHeadingMode=vm::setApproachHeadingMode,
+                details=::openDetails,
+                cancel=vm::cancelAnchorageApproach,
+                setAnchorWatch={reference->
+                    if(state.activeTrip==null){
+                        setupReference=reference
+                        vm.cancelAnchorageApproach()
+                        showPreflight=true
+                    }
+                },
+            )
+        }
+    }
+    anchorageDetails?.let{saved->AnchorageDetailDialog(
+        saved=saved,
+        dismiss={anchorageDetails=null},
+        openGoogleMaps={vm.openAnchorageInGoogleMaps(saved)},
+        shareQr={vm.shareAnchorageQr(saved)},
+        approach={anchorageDetails=null;vm.approachSavedAnchorage(saved.id)},
+        approachEnabled=state.active==null,
+    )}
+    anchorageListDetails?.let{ids->AnchorageListDialog(
+        members=ids.mapNotNull{id->state.savedAnchorages.firstOrNull{it.id==id}},
+        dismiss={anchorageListDetails=null},
+        actions=SavedAnchorageCardActions(
+            approach={saved->anchorageListDetails=null;vm.approachSavedAnchorage(saved.id)},
+            openGoogleMaps=vm::openAnchorageInGoogleMaps,
+            shareQr=vm::shareAnchorageQr,
+            approachEnabled=state.active==null,
+        ),
+    )}
+    if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
+    if(showPreflight)WatchPreflightSheet(state,{showPreflight=false;setupReference=null}){showPreflight=false;showSetup=true}
+    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input)}
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
@@ -243,9 +305,6 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     val bottomSheetState=rememberStandardBottomSheetState(initialValue=SheetValue.PartiallyExpanded,skipHiddenState=true)
     val scaffoldState=rememberBottomSheetScaffoldState(bottomSheetState=bottomSheetState)
     val bottomSheetScope=rememberCoroutineScope()
-    LaunchedEffect(state.anchorageApproach.selectedClusterId){
-        if(ApproachSheetPolicy.shouldCollapse(state.anchorageApproach.selectedClusterId))bottomSheetState.partialExpand()
-    }
     BottomSheetScaffold(
         modifier=Modifier.fillMaxSize(),
         scaffoldState=scaffoldState,
@@ -384,15 +443,6 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
                 Surface(Modifier.align(Alignment.TopCenter).padding(start=16.dp,top=72.dp,end=16.dp).clickable{sonarInspection=null},color=MaterialTheme.colorScheme.surface.copy(alpha=.96f),shape=MaterialTheme.shapes.medium,shadowElevation=4.dp){Column(Modifier.padding(horizontal=12.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(if(inspection.grid.measured)tr("Measured depth","实测水深")else tr("Estimated from nearby sonar samples","由附近声呐样本插值得到"),fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));Icon(Icons.Default.Close,tr("Close","关闭"),Modifier.size(16.dp))};Text("${"%.2f".format(inspection.grid.depthMeters)} ${tr("m","米")} · ±${"%.2f".format(inspection.grid.uncertaintyMeters)} ${tr("m","米")} · ${inspection.grid.sampleCount} ${tr("samples","个样本")}",style=MaterialTheme.typography.bodySmall);survey?.let{Text("${it.name} · ${DateFormat.getDateInstance(DateFormat.SHORT).format(java.util.Date(it.startedAt))}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
             }
             if(active?.candidateDecision==CandidateDecision.AVAILABLE.name)Box(Modifier.align(Alignment.BottomCenter).padding(bottom=112.dp,start=12.dp,end=12.dp)){EstimatedCenterBanner(state,vm,active)}
-            AnchorageApproachOverlay(
-                state=state.anchorageApproach,
-                headingMode=state.approachHeadingMode,
-                vesselHeadingAvailable=state.vesselApproachHeadingAvailable,
-                setHeadingMode=vm::setApproachHeadingMode,
-                details={openAnchorageDetails(listOf(it))},
-                cancel=vm::cancelAnchorageApproach,
-                setAnchorWatch={reference->if(state.activeTrip==null){setupReference=reference;vm.cancelAnchorageApproach();showPreflight=true}},
-            )
         }
     }
     if (showSetup) {
@@ -407,7 +457,6 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         dismiss={anchorageListDetails=null},
         actions=nearbyActions,
     )}
-    if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     AnchorCentreRecalculationDialog(state.centreRecalculation,vm)
     if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->vm.setOfflineMapEnabled(enabled)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))},{enabled->if(enabled&&!state.settings.sonarDisclaimerAccepted)showSonarDisclaimer=true else vm.setSonarLayerEnabled(enabled)},{enabled->vm.updateSettings(state.settings.copy(showLinzDepthReference=enabled))},{enabled->vm.updateSettings(state.settings.copy(showPersonalMapReference=enabled))},{showLayers=false;vm.page(3)})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})
