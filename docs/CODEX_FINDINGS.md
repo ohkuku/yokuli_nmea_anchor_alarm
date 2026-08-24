@@ -155,3 +155,16 @@
 - Verification result: **The translated message is now resolved during composition and captured by the effect. A redundant always-true post-delay condition reported by the compiler was also removed without changing the single-flight timeout behavior. The final clean `assembleDebug` completed successfully in 28s.**
 - Real hardware verified: **No — not required for compiler verification.**
 - Status: **FIXED AND DEBUG ASSEMBLE PASSED**
+
+## Finding P0-012 — Saved Anchorage Approach is clipped inside Current
+
+- Severity: **P0 / navigation operability**
+- User story: selecting Approach from a saved anchorage must open a dedicated full-screen navigation destination; it must not inherit Current-tab chrome or the Anchor Watch bottom sheet.
+- Evidence: `AnchorageApproachOverlay` was rendered inside `AnchorWatchPage` → `BottomSheetScaffold` while `AnchorRootPage` still rendered its tab row and `AnchorApp` still rendered the bottom navigation bar. `fillMaxSize()` therefore meant only the reduced Current content slot.
+- Reproduction steps: open a saved Spot, select Approach, accept the disclaimer, then compare the visible navigation data area with the full App window; observe Anchor tabs, bottom navigation and the Current sheet still owning space.
+- Root cause: Approach was implemented as a child overlay of the map rather than an App-level navigation destination.
+- Failing test: `P0OperabilityComposeTest.anchorageApproachReplacesCurrentWorkspaceInsteadOfBecomingItsChild`.
+- Fix commit: **`d1e703f`**
+- Verification result: **Approach now replaces the workspace, suppresses bottom/root navigation chrome, owns the system-back action, retains the detail and Set Anchor Watch hand-off, and scrolls on constrained screens. `assembleDebug` passed in 1m12s; Compose test was written but NOT RUN.**
+- Real hardware verified: **No — verify small-screen/font-scale layout and phone back gesture in QA-P0-019.**
+- Status: **FIXED AND DEBUG ASSEMBLE PASSED — AWAITING MANUAL QA**
