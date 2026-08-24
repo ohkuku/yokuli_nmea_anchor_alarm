@@ -818,6 +818,7 @@ class MainViewModel @Inject constructor(
         _ui.update{it.copy(vesselCalibrationFeedback=if(enabled)"Automatic mount recovery enabled." else "Mount recovery now requires confirmation.")}
     }
     fun setPhoneHeadingAlignment(offsetDegrees:Double)=viewModelScope.launch{
+        if(_ui.value.vesselMountCalibration.calibratedAt<=0L){_ui.update{it.copy(vesselCalibrationFeedback="Set vessel zero before confirming heading alignment.")};return@launch}
         vesselAttitudeRepository.alignHeading(offsetDegrees)
         _ui.update{it.copy(vesselCalibrationFeedback="Heading alignment saved.")}
     }
@@ -841,15 +842,6 @@ class MainViewModel @Inject constructor(
     fun setPhoneProprietaryOutput(enabled:Boolean)=setPhoneSensorOutputs(_ui.value.outputSettings.copy(proprietaryStatusEnabled=enabled))
     private fun setPhoneSensorOutputs(value:NmeaDeviceOutputSettings)=viewModelScope.launch{
         val state=_ui.value
-        if(state.outputSettings.publicationEnabled){
-            val enablingVesselFrame=(value.effectiveHeadingPolicy!=PublicationPolicy.OFF&&state.outputSettings.effectiveHeadingPolicy==PublicationPolicy.OFF)||(value.effectiveMotionPolicy!=PublicationPolicy.OFF&&state.outputSettings.effectiveMotionPolicy==PublicationPolicy.OFF)
-            if(enablingVesselFrame&&(state.vesselMountCalibration.calibratedAt<=0L||state.phoneVesselMountState!=PhoneVesselMountState.VESSEL_MOUNTED)){
-                _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop output, calibrate the phone vessel frame and secure it to the vessel before enabling heading or motion."))};return@launch
-            }
-            if(value.effectivePressurePolicy!=PublicationPolicy.OFF&&state.outputSettings.effectivePressurePolicy==PublicationPolicy.OFF&&!state.phoneSensorCapabilities.pressureAvailable){
-                _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"This phone has no pressure sensor for the selected BARO stream."))};return@launch
-            }
-        }
         val normalized=if(value.anyStreamSelected)value else value.copy(publicationEnabled=false)
         outputSettingsRepository.save(normalized);_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
         if(state.outputSettings.publicationEnabled)ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
@@ -879,10 +871,6 @@ class MainViewModel @Inject constructor(
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
         if(!value.anyStreamSelected){fail("Select at least one NMEA output stream first.");return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
-        val vesselFrameSelected=value.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&(value.effectiveHeadingPolicy!=PublicationPolicy.OFF||value.effectiveMotionPolicy!=PublicationPolicy.OFF)
-        if(vesselFrameSelected&&state.vesselMountCalibration.calibratedAt<=0L){fail("Complete phone vessel-sensor calibration before starting heading or motion output.");return@launch}
-        if(vesselFrameSelected&&state.phoneVesselMountState!=PhoneVesselMountState.VESSEL_MOUNTED){fail("Secure the calibrated phone to the vessel and mark it vessel-mounted before publishing heading or motion.");return@launch}
-        if(value.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&value.effectivePressurePolicy!=PublicationPolicy.OFF&&!state.phoneSensorCapabilities.pressureAvailable){fail("This phone has no pressure sensor for the selected BARO stream.");return@launch}
         if(value.purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&value.effectivePositionPolicy!=PublicationPolicy.OFF){
             val activeSource=state.active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
             if(!PositionSourceConflictPolicy.canEnablePhonePositionOutput(PositionSourceConflictState(false,state.settings.gpsDataSource,activeSource))){fail("Cannot publish Phone GPS while NMEA Position is the App GPS source or an active anchor is locked to NMEA.");return@launch}
@@ -908,14 +896,12 @@ class MainViewModel @Inject constructor(
     }
     fun testNmeaDeviceOutput(result:(Boolean)->Unit)=viewModelScope.launch{
         val state=_ui.value
-        if(state.vesselMountCalibration.calibratedAt<=0L){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Complete phone vessel-sensor calibration before testing NMEA output."))};result(false);return@launch}
         val settings=state.outputSettings;val profile=state.settings.profile
         val success=withContext(Dispatchers.IO){phonePositionNmeaOutputRuntime.testOutput(settings,profile)}
         result(success)
     }
     fun testKnownGoodHdgOutput(result:(Boolean)->Unit)=viewModelScope.launch{
         val state=_ui.value
-        if(state.vesselMountCalibration.calibratedAt<=0L){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Complete phone vessel-sensor calibration before testing NMEA output."))};result(false);return@launch}
         val settings=state.outputSettings;val profile=state.settings.profile
         val success=withContext(Dispatchers.IO){phonePositionNmeaOutputRuntime.testKnownGoodHdg(settings,profile)}
         result(success)

@@ -11,6 +11,7 @@ import com.yokuli.anchorwatch.data.vessel.effectiveMotionPolicy
 import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
 import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.PublisherOwnershipState
+import com.yokuli.anchorwatch.domain.vessel.NmeaStreamReadiness
 import com.yokuli.anchorwatch.runtime.output.PublicationDecision
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -53,7 +54,7 @@ data class NmeaTxStatus(
     /** Compatibility for the existing compact status surface. */
     val sentencesWritten:Long get()=writtenSentences
 }
-data class NmeaStreamTxStatus(val lastGeneratedElapsed:Long?=null,val lastWrittenElapsed:Long?=null,val suppressionReason:String?=null,val generatedCount:Long=0,val writtenCount:Long=0,val policy:PublicationPolicy=PublicationPolicy.OFF,val ownership:PublisherOwnershipState=PublisherOwnershipState.SUPPRESSED,val dataReady:Boolean=false,val droppedCount:Long=0,val lastGeneratedSequence:Long=0,val lastWrittenSequence:Long=0,val generatedRateHz:Double=0.0,val socketWriteRateHz:Double=0.0)
+data class NmeaStreamTxStatus(val lastGeneratedElapsed:Long?=null,val lastWrittenElapsed:Long?=null,val suppressionReason:String?=null,val generatedCount:Long=0,val writtenCount:Long=0,val policy:PublicationPolicy=PublicationPolicy.OFF,val ownership:PublisherOwnershipState=PublisherOwnershipState.SUPPRESSED,val dataReady:Boolean=false,val readiness:NmeaStreamReadiness=NmeaStreamReadiness.STANDBY,val droppedCount:Long=0,val lastGeneratedSequence:Long=0,val lastWrittenSequence:Long=0,val generatedRateHz:Double=0.0,val socketWriteRateHz:Double=0.0)
 
 /**
  * Short-lived exact-sentence quarantine. It prevents the App's own RMC/HDT/XDR
@@ -160,7 +161,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
     }
     fun recordDropped(stream:String){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(droppedCount=old.droppedCount+1)))}}
     fun recordSuppressed(stream:String,reason:String){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(suppressionReason=reason)))}}
-    fun recordDecision(stream:String,policy:PublicationPolicy,decision:PublicationDecision,dataReady:Boolean){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(policy=policy,ownership=decision.ownership,dataReady=dataReady,suppressionReason=decision.suppression?.name)))}}
+    fun recordDecision(stream:String,policy:PublicationPolicy,decision:PublicationDecision,dataReady:Boolean,readiness:NmeaStreamReadiness=if(dataReady)NmeaStreamReadiness.READY else NmeaStreamReadiness.STANDBY){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(policy=policy,ownership=decision.ownership,dataReady=dataReady,readiness=if(!decision.publish&&decision.ownership in setOf(PublisherOwnershipState.STANDBY_EXTERNAL_PRESENT,PublisherOwnershipState.TAKEOVER_PENDING))NmeaStreamReadiness.STANDBY else readiness,suppressionReason=decision.suppression?.name)))}}
 
     fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile){synchronized(guard){
         val endpoint=NmeaOutputEndpointPolicy.resolved(value,input)
@@ -209,7 +210,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
             val timestamp=java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS"))
             sentences.forEach{line->recent.addLast("$timestamp  ${line.trim()}");while(recent.size>RECENT_LIMIT)recent.removeFirst()}
             val logicalStreams=buildSet{if(sentenceTypes.any{it in setOf("RMC","GGA","VTG","ZDA")})add("POSITION");if(sentenceTypes.any{it in setOf("HDT","HDG","HDM")})add("HEADING");if("ROT" in sentenceTypes||("XDR" in sentenceTypes&&settings.effectiveMotionPolicy!=PublicationPolicy.OFF))add("MOTION");if("XDR" in sentenceTypes&&settings.effectivePressurePolicy!=PublicationPolicy.OFF)add("PRESSURE");if(sentenceTypes.any{it in setOf("MWD","MWV","VWT")})add("DERIVED_WIND");if("YOK" in sentenceTypes)add("STATUS")}
-            val streamUpdates=(sentenceTypes+logicalStreams+listOfNotNull(logicalStream)).fold(_status.value.streams){map,type->val old=map[type]?:NmeaStreamTxStatus();val rate=old.lastWrittenElapsed?.let{previous->(now-previous).takeIf{it>0}?.let{1_000.0/it}}?:old.socketWriteRateHz;map+(type to old.copy(lastWrittenElapsed=now,suppressionReason=null,writtenCount=old.writtenCount+1,lastWrittenSequence=if(type==logicalStream&&generationSequence!=null)generationSequence else old.lastGeneratedSequence,socketWriteRateHz=rate))}
+            val streamUpdates=(sentenceTypes+logicalStreams+listOfNotNull(logicalStream)).fold(_status.value.streams){map,type->val old=map[type]?:NmeaStreamTxStatus();val rate=old.lastWrittenElapsed?.let{previous->(now-previous).takeIf{it>0}?.let{1_000.0/it}}?:old.socketWriteRateHz;map+(type to old.copy(lastWrittenElapsed=now,suppressionReason=null,writtenCount=old.writtenCount+1,lastWrittenSequence=if(type==logicalStream&&generationSequence!=null)generationSequence else old.lastGeneratedSequence,socketWriteRateHz=rate,readiness=NmeaStreamReadiness.PUBLISHING))}
             _status.value=_status.value.copy(connectionState=NmeaTxConnectionState.CONNECTED,writtenSentences=_status.value.writtenSentences+sentences.size,bytesWritten=_status.value.bytesWritten+bytes,lastWriteElapsed=now,reconnectCount=_status.value.reconnectCount+if(result.openedNewConnection)1 else 0,lastError=null,message="Socket TX successful; server receipt is not confirmed.",recentTx=recent.toList(),streams=streamUpdates)
         }else if(settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
             _status.value=_status.value.copy(connectionState=NmeaTxConnectionState.DISCONNECTED,lastError="Input TCP connection is not writable.",message="Waiting for the input TCP connection.")

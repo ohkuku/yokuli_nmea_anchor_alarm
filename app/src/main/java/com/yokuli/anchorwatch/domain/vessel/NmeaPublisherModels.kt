@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch.domain.vessel
 enum class PublicationPolicy{OFF,BACKUP,ALWAYS}
 enum class NmeaOutputPurpose{BOAT_BUS_INJECTION,CANONICAL_CLIENT_FEED}
 enum class PublisherOwnershipState{STANDBY_EXTERNAL_PRESENT,TAKEOVER_PENDING,PHONE_ACTIVE,SUPPRESSED,SOURCE_CONFLICT,ERROR}
+enum class NmeaStreamReadiness{READY,WAITING_CALIBRATION,WAITING_POSITION,STANDBY,PUBLISHING}
 enum class NmeaSentenceFamily{POSITION,HEADING,MOTION,PRESSURE,DERIVED_WIND,PROPRIETARY_STATUS,CANONICAL_FEED}
 enum class NmeaSuppressionReason{USER_DISABLED,EXTERNAL_SOURCE_PRESENT,TAKEOVER_DELAY,PHONE_NOT_MOUNTED,MOUNT_SUSPECT,NO_DECLINATION_REFERENCE,PHONE_HEADING_STALE,PHONE_GPS_STALE,NO_DERIVED_WIND,OUTPUT_DISCONNECTED,SOURCE_CONFLICT}
 
@@ -11,6 +12,7 @@ data class NmeaPublishedStreamStatus(
     val policy:PublicationPolicy=PublicationPolicy.OFF,
     val ownership:PublisherOwnershipState=PublisherOwnershipState.SUPPRESSED,
     val dataReady:Boolean=false,
+    val readiness:NmeaStreamReadiness=NmeaStreamReadiness.STANDBY,
     val suppressionReason:NmeaSuppressionReason?=null,
     val generatedRateHz:Double=0.0,
     val socketWriteRateHz:Double=0.0,
