@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.map
 import java.util.UUID
 
 enum class InstrumentTileSize { SMALL, MEDIUM, WIDE, LARGE, HERO }
+enum class InstrumentSourceOverride { VESSEL_DEFAULT, AUTO, BOAT, PHONE, DERIVED, SPECIFIC_NMEA_FIELD }
 data class DashboardTileBinding(
     val tileId:InstrumentTileId?=null,
     val nmeaFieldId:String?=null,
@@ -22,6 +23,8 @@ data class DashboardTileBinding(
     val scale:Double=1.0,
     val offset:Double=0.0,
     val recordInTrips:Boolean=false,
+    /** Display-only override. It never changes Anchor or canonical Trip routing. */
+    val sourceOverride:InstrumentSourceOverride?=null,
 ){
     fun transformed(value:Double?)=value?.let{it*scale+offset}
 }

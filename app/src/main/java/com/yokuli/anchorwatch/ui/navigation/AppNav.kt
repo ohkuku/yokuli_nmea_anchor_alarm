@@ -18,6 +18,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -29,6 +31,7 @@ import com.yokuli.anchorwatch.domain.model.AlarmState
 import com.yokuli.anchorwatch.domain.model.AlarmType
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.ui.about.OnboardingMakerScreen
+import com.yokuli.anchorwatch.ui.onboarding.FirstRunSetupScreen
 
 private data class Destination(val label:String,val icon:ImageVector)
 internal val LocalAppLanguage=compositionLocalOf{AppLanguage.ENGLISH}
@@ -48,7 +51,16 @@ fun AnchorApp(vm:MainViewModel){
             return@CompositionLocalProvider
         }
         if(!state.settings.onboardingCompleted){
-            OnboardingMakerScreen(vm::completeOnboarding){language->vm.updateSettings(state.settings.copy(appLanguage=language))}
+            var introComplete by rememberSaveable{mutableStateOf(false)}
+            if(!introComplete)OnboardingMakerScreen({introComplete=true}){language->vm.updateSettings(state.settings.copy(appLanguage=language))}
+            else FirstRunSetupScreen(
+                initialBoatLengthMeters=state.settings.boatLengthMeters,initialDraftMeters=state.vesselSettings.draftMeters,
+                nmeaConnection=state.connection,mountState=state.phoneVesselMountState,mountCalibrated=state.vesselMountCalibration.calibratedAt>0,
+                positionPreference=state.vesselSettings.positionPreference,headingPreference=state.vesselSettings.headingPreference,output=state.outputSettings,
+                alarmState=state.alarmSnapshot.state,alarmType=state.alarmSnapshot.type,
+                saveVessel={length,draft->vm.updateSettings(state.settings.copy(boatLengthMeters=length));vm.updateVesselDataSettings(state.vesselSettings.copy(draftMeters=draft))},
+                testAlarm=vm::testAlarm,confirmAlarm=vm::confirmAlarmAudible,stopAlarm=vm::stopAlarmTest,complete=vm::completeOnboarding,
+            )
             return@CompositionLocalProvider
         }
         val destinations=listOf(

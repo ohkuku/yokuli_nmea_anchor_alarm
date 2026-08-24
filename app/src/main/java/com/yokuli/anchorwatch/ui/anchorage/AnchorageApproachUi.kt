@@ -250,7 +250,7 @@ private fun SmoothDirectionArrow(angle: Double, color: Color) {
 private fun directionReferenceLabel(value: ApproachDirectionReference) = when (value) {
     ApproachDirectionReference.HDT -> tr("Direction reference: NMEA HDT", "方向参考：NMEA HDT 真船首向")
     ApproachDirectionReference.COG -> tr("Direction reference: COG", "方向参考：地面航向 COG")
-    ApproachDirectionReference.PHONE -> tr("Direction reference: phone heading", "方向参考：手机船首向")
+    ApproachDirectionReference.PHONE -> tr("Direction reference: handheld phone", "方向参考：手持手机方向")
     ApproachDirectionReference.NORTH_UP -> tr("North-up bearing", "正北朝上的绝对方位")
 }
 

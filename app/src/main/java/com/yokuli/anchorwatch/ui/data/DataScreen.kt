@@ -52,6 +52,9 @@ import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.domain.vessel.VesselObservation
+import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
+import com.yokuli.anchorwatch.domain.vessel.VesselSourceCandidate
+import com.yokuli.anchorwatch.domain.vessel.toLegacySource
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchor.AnchorRangeCalculator
 import com.yokuli.anchorwatch.domain.anchor.CoordinateParser
@@ -75,6 +78,8 @@ import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartDecision
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyStartPolicy
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyContinuityPolicy
 import com.yokuli.anchorwatch.domain.sonar.SonarSurveyContinuityState
+import com.yokuli.anchorwatch.domain.vessel.InstrumentTileId
+import com.yokuli.anchorwatch.domain.vessel.MetricLabelRegistry
 import com.yokuli.anchorwatch.data.tide.TideStationCatalog
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
@@ -98,13 +103,12 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     LaunchedEffect(state.dataSection){if(pager.currentPage!=state.dataSection)pager.scrollToPage(state.dataSection)}
     LaunchedEffect(pager){snapshotFlow{pager.currentPage}.collect(vm::rememberDataSection)}
     Column(Modifier.fillMaxSize().testTag("data_page")){
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)){
-            SegmentedButton(pager.currentPage==0,{scope.launch{pager.animateScrollToPage(0)}},shape=SegmentedButtonDefaults.itemShape(0,4)){Text(tr("Vessel","船舶"))}
-            SegmentedButton(pager.currentPage==1,{scope.launch{pager.animateScrollToPage(1)}},shape=SegmentedButtonDefaults.itemShape(1,4)){Text("NMEA")}
-            SegmentedButton(pager.currentPage==2,{scope.launch{pager.animateScrollToPage(2)}},shape=SegmentedButtonDefaults.itemShape(2,4)){Text(tr("Sonar","声呐"))}
-            SegmentedButton(pager.currentPage==3,{scope.launch{pager.animateScrollToPage(3)}},shape=SegmentedButtonDefaults.itemShape(3,4)){Text(tr("Output","输出"))}
+        PrimaryTabRow(selectedTabIndex=pager.currentPage){
+            listOf(tr("Vessel","船舶"),tr("NMEA Input","NMEA 输入"),tr("NMEA Output","NMEA 输出"),tr("Sonar","声呐")).forEachIndexed{index,label->
+                Tab(selected=pager.currentPage==index,onClick={scope.launch{pager.animateScrollToPage(index)}},text={Text(label,maxLines=2)})
+            }
         }
-        HorizontalPager(pager,Modifier.weight(1f)){section->when(section){0->VesselDataSourcesPage(state,vm);1->NmeaWorkspacePage(state,vm);2->SonarSurveyPage(state,vm);else->DataOutputSettingsPage(state,vm)}}
+        HorizontalPager(pager,Modifier.weight(1f)){section->when(section){0->VesselDataSourcesPage(state,vm);1->NmeaWorkspacePage(state,vm);2->DataOutputSettingsPage(state,vm);else->SonarSurveyPage(state,vm)}}
     }
 }
 
@@ -119,40 +123,116 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     }
 }
 
-@Composable private fun VesselDataSourcesPage(state:MainUiState,vm:MainViewModel){
+@Composable @OptIn(ExperimentalMaterial3Api::class) private fun VesselDataSourcesPage(state:MainUiState,vm:MainViewModel){
     val data=state.vesselData
+    var detailMetric by remember{mutableStateOf<VesselMetricId?>(null)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{PageHeader(tr("Vessel data sources","船舶数据源"),tr("Choose presentation sources without changing Anchor Watch's safety GPS source.","选择仪表显示来源；这里不会改变锚警的安全 GPS 来源。"))}
-        item{SourceRoutingCard(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){vm.updateVesselDataSettings(state.vesselSettings.copy(positionPreference=it))}}
-        item{SourceRoutingCard(tr("Heading source","船首向来源"),state.vesselSettings.headingPreference,data.headingTrueDegrees){vm.updateVesselDataSettings(state.vesselSettings.copy(headingPreference=it))}}
+        item{PageHeader(tr("Vessel data","船舶数据"),tr("One source policy for live instruments and heading assistance.","实时仪表与船首向辅助共用这一套来源策略。"))}
+        item{Card{Column{
+            SourceRoutingSummaryRow(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){detailMetric=VesselMetricId.POSITION}
+            HorizontalDivider(Modifier.padding(horizontal=14.dp))
+            SourceRoutingSummaryRow(tr("Heading source","船首向来源"),state.vesselSettings.headingPreference,data.headingTrueDegrees){detailMetric=VesselMetricId.HEADING_TRUE}
+        }}}
         item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text(tr("Live vessel data","实时船舶数据"),style=MaterialTheme.typography.titleMedium)
-            VesselSourceRow(tr("Position","位置"),data.position.value?.let{"%.5f, %.5f".format(it.latitude,it.longitude)}?:"—",data.position)
-            VesselSourceRow(tr("Heading","船首向"),data.headingTrueDegrees.value?.let{"%03.0f°T".format(it)}?:"—",data.headingTrueDegrees)
-            VesselSourceRow("SOG",data.sogKnots.value?.let{"%.1f kn".format(it)}?:"—",data.sogKnots)
-            VesselSourceRow("STW",data.speedThroughWaterKnots.value?.let{"%.1f kn".format(it)}?:"—",data.speedThroughWaterKnots)
-            VesselSourceRow(tr("Apparent wind","视风"),listOfNotNull(data.apparentWind.angleDegrees.value?.let{windDataAngle(it)},data.apparentWind.speedKnots.value?.let{"%.1f kn".format(it)}).joinToString(" · ").ifBlank{"—"},data.apparentWind.angleDegrees.takeIf{it.value!=null}?:data.apparentWind.speedKnots)
-            VesselSourceRow(tr("True wind","真风"),listOfNotNull(data.trueWind.angleDegrees.value?.let{windDataAngle(it)},data.trueWind.speedKnots.value?.let{"%.1f kn".format(it)},data.trueWind.directionDegrees.value?.let{"%03.0f°T".format(it)}).joinToString(" · ").ifBlank{"—"},data.trueWind.directionDegrees.takeIf{it.value!=null}?:data.trueWind.speedKnots)
-            VesselSourceRow(tr("Heel","横倾"),data.attitude.value?.heelDegrees?.let{"%+.1f°".format(it)}?:"—",data.attitude)
-            VesselSourceRow(tr("Pressure","气压"),data.pressureHpa.value?.let{"%.1f hPa".format(it)}?:"—",data.pressureHpa)
-            VesselSourceRow(tr("Depth","水深"),data.depthMeters.value?.let{"%.1f m".format(it)}?:"—",data.depthMeters)
+            VesselSourceRow(metricName(InstrumentTileId.POSITION),data.position.value?.let{"%.5f, %.5f".format(it.latitude,it.longitude)}?:"—",data.position){detailMetric=VesselMetricId.POSITION}
+            VesselSourceRow(metricName(InstrumentTileId.HEADING),data.headingTrueDegrees.value?.let{"%03.0f°T".format(it)}?:data.headingMagneticDegrees.value?.let{"%03.0f°M".format(it)}?:"—",data.headingTrueDegrees.takeIf{it.value!=null}?:data.headingMagneticDegrees){detailMetric=VesselMetricId.HEADING_TRUE}
+            VesselSourceRow(metricName(InstrumentTileId.SOG),data.sogKnots.value?.let{"%.1f kn".format(it)}?:"—",data.sogKnots){detailMetric=VesselMetricId.SOG}
+            VesselSourceRow(metricName(InstrumentTileId.BOAT_SPEED),data.speedThroughWaterKnots.value?.let{"%.1f kn".format(it)}?:"—",data.speedThroughWaterKnots){detailMetric=VesselMetricId.SPEED_THROUGH_WATER}
+            VesselSourceRow("${metricName(InstrumentTileId.APPARENT_WIND_ANGLE)} / ${MetricLabelRegistry.get(InstrumentTileId.APPARENT_WIND_SPEED).acronym}",listOfNotNull(data.apparentWind.angleDegrees.value?.let{windDataAngle(it)},data.apparentWind.speedKnots.value?.let{"%.1f kn".format(it)}).joinToString(" · ").ifBlank{"—"},data.apparentWind.angleDegrees.takeIf{it.value!=null}?:data.apparentWind.speedKnots){detailMetric=VesselMetricId.APPARENT_WIND_ANGLE}
+            VesselSourceRow("${metricName(InstrumentTileId.TRUE_WIND_ANGLE)} / ${MetricLabelRegistry.get(InstrumentTileId.TRUE_WIND_SPEED).acronym}",listOfNotNull(data.trueWind.angleDegrees.value?.let{windDataAngle(it)},data.trueWind.speedKnots.value?.let{"%.1f kn".format(it)},data.trueWind.directionDegrees.value?.let{"%03.0f°T".format(it)}).joinToString(" · ").ifBlank{"—"},data.trueWind.directionDegrees.takeIf{it.value!=null}?:data.trueWind.speedKnots){detailMetric=VesselMetricId.TRUE_WIND_SPEED}
+            VesselSourceRow(metricName(InstrumentTileId.HEEL),data.attitude.value?.heelDegrees?.let{"%+.1f°".format(it)}?:"—",data.attitude){detailMetric=VesselMetricId.HEEL}
+            VesselSourceRow(metricName(InstrumentTileId.PRESSURE),data.pressureHpa.value?.let{"%.1f hPa".format(it)}?:"—",data.pressureHpa){detailMetric=VesselMetricId.PRESSURE}
+            VesselSourceRow(metricName(InstrumentTileId.DEPTH),data.depthMeters.value?.let{"%.1f m".format(it)}?:"—",data.depthMeters){detailMetric=VesselMetricId.DEPTH}
             Text(tr("Held values keep their original receive time; a blank NMEA field never erases the last observation.","保留值始终携带原始接收时间；NMEA 空字段不会清除上一条观测。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }}}
+        if(data.candidates.isNotEmpty())item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text(tr("All sources & conflicts","全部来源与冲突"),style=MaterialTheme.typography.titleMedium)
+            Text(tr("Every live candidate is retained. Selection never merges conflicting sensors.","所有实时候选都会保留；来源冲突时不会把多个传感器平均合并。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            data.candidates.toSortedMap(compareBy{it.name}).forEach{(metric,candidates)->
+                val metricLabel=MetricLabelRegistry.get(metric)
+                Row(Modifier.fillMaxWidth().clickable{detailMetric=metric}.padding(vertical=5.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("${MetricLabelRegistry.localizedName(metric,LocalAppLanguage.current)} (${metricLabel.acronym})",fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.labelMedium);Text(tr("${candidates.size} sources","${candidates.size} 个来源"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};if(data.conflicts[metric]?.active==true)Icon(Icons.Default.Warning,tr("Source conflict","来源冲突"),tint=MaterialTheme.colorScheme.error);Icon(Icons.Default.ChevronRight,null)}
+            }
+        }}}
+    }
+    detailMetric?.let{metric->ModalBottomSheet(onDismissRequest={detailMetric=null}){VesselSourceDetailSheet(metric,state,vm)}}
+}
+
+@Composable private fun VesselSourceDetailSheet(metric:VesselMetricId,state:MainUiState,vm:MainViewModel){
+    val data=state.vesselData;val observation=observationForMetric(metric,data);val candidates=data.candidates[metric].orEmpty();val conflict=data.conflicts[metric]
+    LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(.86f).padding(horizontal=16.dp),contentPadding=PaddingValues(bottom=32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        item{val label=MetricLabelRegistry.get(metric);Column{Text("${MetricLabelRegistry.localizedName(metric,LocalAppLanguage.current)} (${label.acronym})",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text(tr("Canonical value and every retained source","当前采用值与全部保留来源"),color=MaterialTheme.colorScheme.onSurfaceVariant)}}
+        item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+            Text(tr("Current selection","当前采用"),style=MaterialTheme.typography.titleMedium)
+            DetailLine(tr("Value","数值"),formatVesselValue(metric,observation.value))
+            DetailLine(tr("Selected source","选定来源"),observation.sourceIdentity?.displayName?:vesselSourceLabel(observation))
+            DetailLine(tr("Reference","参考系"),vesselReferenceLabel(observation.reference))
+            DetailLine(tr("Age","数据年龄"),observation.receivedElapsedRealtime?.let{"%.1f s".format((android.os.SystemClock.elapsedRealtime()-it).coerceAtLeast(0L)/1_000.0)}?:"—")
+            DetailLine(tr("Quality","质量"),vesselQualityLabel(observation.quality))
+            DetailLine(tr("State","状态"),vesselFreshnessLabel(observation.freshness))
+            DetailLine(tr("Provenance","来源链"),vesselProvenanceLabel(observation))
+            if(conflict?.active==true)Surface(color=MaterialTheme.colorScheme.errorContainer,shape=MaterialTheme.shapes.small){Text(tr("Source conflict: eligible sensors disagree. The App selects one and never averages them.","来源冲突：合格传感器互相矛盾。应用只选择一个，绝不会将它们平均。"),Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer,style=MaterialTheme.typography.bodySmall)}
+        }}}
+        if(metric==VesselMetricId.POSITION)item{SourceRoutingCard(tr("Position source strategy","位置来源策略"),state.vesselSettings.positionPreference,data.position){vm.updateVesselDataSettings(state.vesselSettings.copy(positionPreference=it))}}
+        if(metric in setOf(VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC))item{SourceRoutingCard(tr("Vessel heading strategy","船艏向来源策略"),state.vesselSettings.headingPreference,data.headingTrueDegrees){vm.updateVesselDataSettings(state.vesselSettings.copy(headingPreference=it))}}
+        item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
+            Text(tr("Available sources","可用来源"),style=MaterialTheme.typography.titleMedium)
+            if(candidates.isEmpty())Text(tr("No source has reported this metric yet.","尚未有来源报告此数据。"),color=MaterialTheme.colorScheme.onSurfaceVariant)
+            candidates.forEach{candidate->
+                val selected=candidate.source.id==observation.sourceIdentity?.id
+                Surface(color=if(selected)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small){Column(Modifier.fillMaxWidth().padding(10.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(candidate.source.displayName,Modifier.weight(1f),fontWeight=FontWeight.SemiBold);if(selected)AssistChip({},label={Text(tr("Selected","已采用"))})}
+                    Text("${formatVesselValue(metric,candidate.value)} · ${candidateValidityLabel(candidate.validity)} · ${"%.1f s".format((android.os.SystemClock.elapsedRealtime()-candidate.receivedElapsedRealtime).coerceAtLeast(0L)/1_000.0)}",style=MaterialTheme.typography.bodySmall)
+                    Text(listOfNotNull(candidate.source.fullSentenceId,candidate.source.transducerName,candidate.source.transportProfileId?.let{tr("profile $it","配置 $it")},candidate.source.connectionGeneration?.let{tr("generation $it","连接代次 $it")}).joinToString(" · ").ifBlank{candidate.source.id},style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    if(metric in setOf(VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC)&&candidate.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA){TextButton({vm.updateVesselDataSettings(state.vesselSettings.copy(boatHeadingSourceId=if(state.vesselSettings.boatHeadingSourceId==candidate.source.id)null else candidate.source.id))}){Text(if(state.vesselSettings.boatHeadingSourceId==candidate.source.id)tr("Unpin source","取消固定来源")else tr("Pin this boat source","固定这个船载来源"))}}
+                }}
+            }
+            if(metric in setOf(VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC)&&state.vesselSettings.boatHeadingSourceId!=null)SettingSwitch(tr("Allow fallback if pinned source fails","固定来源失效时允许回退"),tr("Off is strict: the heading becomes unavailable instead of silently changing sensor.","关闭时为严格模式：来源失效会显示无船艏向，不会静默切换传感器。"),state.vesselSettings.allowPinnedFallback){vm.updateVesselDataSettings(state.vesselSettings.copy(allowPinnedFallback=it))}
+        }}}
+        item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(tr("Used by","使用此数据的功能"),style=MaterialTheme.typography.titleMedium);usedBy(metric).forEach{Text("• $it",style=MaterialTheme.typography.bodyMedium)};Text(tr("Consumers apply their own safety gates; display, anchor evidence and NMEA publication are not the same decision.","各功能会应用自己的安全门槛；屏幕显示、锚点证据和 NMEA 发布不是同一个决定。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
     }
 }
+
+@Composable private fun DetailLine(label:String,value:String){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){Text(label,Modifier.weight(.42f),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value,Modifier.weight(.58f),style=MaterialTheme.typography.bodyMedium)}}
+@Composable private fun candidateValidityLabel(value:com.yokuli.anchorwatch.domain.vessel.CandidateValidity)=when(value){com.yokuli.anchorwatch.domain.vessel.CandidateValidity.ELIGIBLE->tr("Available","可用");com.yokuli.anchorwatch.domain.vessel.CandidateValidity.LOW_QUALITY->tr("Low quality","质量较低");com.yokuli.anchorwatch.domain.vessel.CandidateValidity.STALE->tr("Stale","已过期");com.yokuli.anchorwatch.domain.vessel.CandidateValidity.INVALID->tr("Invalid","无效");com.yokuli.anchorwatch.domain.vessel.CandidateValidity.DISABLED->tr("Disabled","已禁用")}
+@Composable private fun vesselReferenceLabel(value:com.yokuli.anchorwatch.domain.vessel.VesselReference?)=when(value){com.yokuli.anchorwatch.domain.vessel.VesselReference.TrueNorth->tr("True north","真北");com.yokuli.anchorwatch.domain.vessel.VesselReference.MagneticNorth->tr("Magnetic north","磁北");com.yokuli.anchorwatch.domain.vessel.VesselReference.WaterReferenced->tr("Water referenced","对水参考");com.yokuli.anchorwatch.domain.vessel.VesselReference.GroundReferenced->tr("Ground referenced","对地参考");com.yokuli.anchorwatch.domain.vessel.VesselReference.VesselRelative->tr("Relative to vessel bow","相对船艏");is com.yokuli.anchorwatch.domain.vessel.VesselReference.Depth->value.reference.name.replace('_',' ');null->"—"}
+@Composable private fun vesselProvenanceLabel(value:VesselObservation<*>)=when(val detail=value.provenanceDetail){is com.yokuli.anchorwatch.domain.vessel.VesselProvenance.Nmea->tr("NMEA · ${detail.source.displayName}","NMEA · ${detail.source.displayName}");is com.yokuli.anchorwatch.domain.vessel.VesselProvenance.PhoneSensor->tr("Phone sensor · ${detail.sensor} · calibration ${detail.calibrationVersion?:"—"}","手机传感器 · ${detail.sensor} · 校准 ${detail.calibrationVersion?:"—"}");is com.yokuli.anchorwatch.domain.vessel.VesselProvenance.Derived->tr("App derived · ${detail.algorithm} · ${detail.inputs.joinToString{it.displayName}}","应用推算 · ${detail.algorithm} · ${detail.inputs.joinToString{it.displayName}}");null->value.provenance?:"—"}
+
+private fun observationForMetric(metric:VesselMetricId,data:com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot):VesselObservation<*> = when(metric){
+    VesselMetricId.POSITION->data.position;VesselMetricId.SOG->data.sogKnots;VesselMetricId.COG->data.cogTrueDegrees;VesselMetricId.HEADING_TRUE->data.headingTrueDegrees;VesselMetricId.HEADING_MAGNETIC->data.headingMagneticDegrees;VesselMetricId.DEVICE_HEADING_TRUE->data.deviceHeadingTrueDegrees;VesselMetricId.DEVICE_HEADING_MAGNETIC->data.deviceHeadingMagneticDegrees;VesselMetricId.SPEED_THROUGH_WATER->data.speedThroughWaterKnots;VesselMetricId.DEPTH->data.depthMeters;VesselMetricId.APPARENT_WIND_ANGLE->data.apparentWind.angleDegrees;VesselMetricId.APPARENT_WIND_SPEED->data.apparentWind.speedKnots;VesselMetricId.TRUE_WIND_ANGLE->data.trueWind.angleDegrees;VesselMetricId.TRUE_WIND_SPEED->data.trueWind.speedKnots;VesselMetricId.TRUE_WIND_DIRECTION->data.trueWind.directionDegrees;VesselMetricId.RATE_OF_TURN->data.rateOfTurnDegreesPerMinute;VesselMetricId.PRESSURE->data.pressureHpa;VesselMetricId.WATER_TEMPERATURE->data.waterTemperatureCelsius;VesselMetricId.AIR_TEMPERATURE->data.airTemperatureCelsius;VesselMetricId.CURRENT_SET->data.currentSetTrueDegrees;VesselMetricId.CURRENT_DRIFT->data.currentDriftKnots;VesselMetricId.XTE->data.crossTrackErrorNauticalMiles;VesselMetricId.WAYPOINT_BEARING->data.waypointBearingTrueDegrees;VesselMetricId.WAYPOINT_DISTANCE->data.waypointDistanceNauticalMiles;VesselMetricId.DESTINATION_WAYPOINT->data.destinationWaypoint;VesselMetricId.TOTAL_LOG->data.totalLogNauticalMiles;VesselMetricId.TRIP_LOG->data.tripLogNauticalMiles;VesselMetricId.HEEL->mapObservation(data.attitude){it.heelDegrees};VesselMetricId.PITCH->mapObservation(data.attitude){it.pitchDegrees};else->data.candidates[metric]?.firstOrNull()?.let{candidate->VesselObservation(candidate.value,source=candidate.sourceClass.toLegacySource(),observedAtUtcMillis=candidate.observedAtUtcMillis,receivedElapsedRealtime=candidate.receivedElapsedRealtime,quality=candidate.quality,freshness=if(candidate.validity==com.yokuli.anchorwatch.domain.vessel.CandidateValidity.ELIGIBLE)com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness.FRESH else com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness.STALE,provenance=candidate.source.displayName,sourceIdentity=candidate.source,sourceClass=candidate.sourceClass,reference=candidate.reference,provenanceDetail=candidate.provenance)}?:VesselObservation<Any>()
+}
+private fun <T,R> mapObservation(value:VesselObservation<T>,transform:(T)->R)=VesselObservation(value.value?.let(transform),value.source,value.observedAtUtcMillis,value.receivedElapsedRealtime,value.quality,value.freshness,value.provenance,value.sourceIdentity,value.sourceClass,value.reference,value.provenanceDetail,value.conflict)
+private fun formatVesselValue(metric:VesselMetricId,value:Any?):String=when(value){null->"—";is com.yokuli.anchorwatch.domain.vessel.VesselPosition->"%.6f, %.6f".format(value.latitude,value.longitude);is Number->when(metric){VesselMetricId.POSITION->value.toString();VesselMetricId.HEADING_TRUE,VesselMetricId.COG,VesselMetricId.TRUE_WIND_DIRECTION,VesselMetricId.CURRENT_SET,VesselMetricId.WAYPOINT_BEARING->"%03.1f°T".format(value.toDouble());VesselMetricId.HEADING_MAGNETIC,VesselMetricId.DEVICE_HEADING_MAGNETIC->"%03.1f°M".format(value.toDouble());VesselMetricId.APPARENT_WIND_ANGLE,VesselMetricId.TRUE_WIND_ANGLE->windDataAngle(value.toDouble());VesselMetricId.SOG,VesselMetricId.SPEED_THROUGH_WATER,VesselMetricId.APPARENT_WIND_SPEED,VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.CURRENT_DRIFT->"%.2f kn".format(value.toDouble());VesselMetricId.DEPTH,VesselMetricId.UKC->"%.2f m".format(value.toDouble());VesselMetricId.PRESSURE->"%.1f hPa".format(value.toDouble());else->"%.2f".format(value.toDouble())};else->value.toString()}
+@Composable private fun usedBy(metric:VesselMetricId)=when(metric){VesselMetricId.POSITION->listOf(tr("Anchor Watch safety","锚警安全"),tr("Sail MFD and Trip recorder","航行仪表与航程记录"),tr("Phone publisher ownership decision","手机发布接管判断"));VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->listOf(tr("Sail MFD","航行仪表"),tr("Trip recorder","航程记录"),tr("Anchor heading evidence (when enabled)","锚点船艏向证据（开启时）"),tr("Phone publisher backup decision","手机发布备用判断"));VesselMetricId.DEPTH->listOf(tr("Sail MFD and Trip recorder","航行仪表与航程记录"),tr("Anchor depth guard uses only its separately qualified NMEA channel","锚泊水深警戒只使用其独立审核的 NMEA 通道"));VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_DIRECTION->listOf(tr("Sail MFD and Trip reports","航行仪表与航程报告"),tr("Derived wind publisher when explicitly enabled","明确开启后的推算真风发布"));else->listOf(tr("Sail MFD","航行仪表"),tr("Trip recorder and reports","航程记录与报告"))}
+
+@Composable private fun SourceRoutingSummaryRow(title:String,value:VesselSourcePreference,current:VesselObservation<*>,open:()->Unit){
+    Row(Modifier.fillMaxWidth().clickable(onClick=open).padding(14.dp),verticalAlignment=Alignment.CenterVertically){
+        Column(Modifier.weight(1f)){Text(title,fontWeight=FontWeight.SemiBold);Text("${sourcePreferenceLabel(value)} → ${vesselSourceLabel(current)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)}
+        Icon(Icons.Default.ChevronRight,null)
+    }
+}
+
+@Composable private fun sourcePreferenceLabel(value:VesselSourcePreference)=when(value){VesselSourcePreference.AUTO->tr("Auto","自动");VesselSourcePreference.BOAT->tr("Boat","船载");VesselSourcePreference.PHONE->tr("Phone","手机");VesselSourcePreference.DERIVED->tr("Derived","推算")}
 
 @Composable private fun SourceRoutingCard(title:String,value:VesselSourcePreference,current:VesselObservation<*>,onChange:(VesselSourcePreference)->Unit){
     Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text(title,fontWeight=FontWeight.SemiBold)
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){VesselSourcePreference.entries.forEachIndexed{index,preference->SegmentedButton(value==preference,{onChange(preference)},shape=SegmentedButtonDefaults.itemShape(index,VesselSourcePreference.entries.size)){Text(when(preference){VesselSourcePreference.AUTO->tr("Auto","自动");VesselSourcePreference.BOAT->tr("Boat","船载");VesselSourcePreference.PHONE->tr("Phone","手机")})}}}
+        val choices=listOf(VesselSourcePreference.AUTO,VesselSourcePreference.BOAT,VesselSourcePreference.PHONE)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){choices.forEachIndexed{index,preference->SegmentedButton(value==preference,{onChange(preference)},shape=SegmentedButtonDefaults.itemShape(index,choices.size)){Text(when(preference){VesselSourcePreference.AUTO->tr("Auto","自动");VesselSourcePreference.BOAT->tr("Boat","船载");VesselSourcePreference.PHONE->tr("Phone","手机");VesselSourcePreference.DERIVED->tr("Derived","推算")})}}}
         Text("${if(value==VesselSourcePreference.AUTO)tr("AUTO → ","自动 → ")else ""}${vesselSourceLabel(current)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
     }}
 }
 
-@Composable private fun VesselSourceRow(label:String,display:String,value:VesselObservation<*>){
+@Composable private fun VesselSourceRow(label:String,display:String,value:VesselObservation<*>,open:()->Unit){
     val age=value.receivedElapsedRealtime?.let{(android.os.SystemClock.elapsedRealtime()-it).coerceAtLeast(0L)/100.0/10.0}
-    Column(Modifier.fillMaxWidth()){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(label,Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(display,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)};Text("${vesselSourceLabel(value)}${age?.let{" · %.1fs".format(it)}.orEmpty()} · ${value.quality.name} · ${value.freshness.name}",style=MaterialTheme.typography.labelSmall,color=if(value.value!=null)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error);HorizontalDivider(Modifier.padding(top=8.dp))}
+    val exceptions=buildList{if(value.quality!=com.yokuli.anchorwatch.domain.vessel.VesselDataQuality.GOOD)add(vesselQualityLabel(value.quality));if(value.freshness!=com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness.FRESH)add(vesselFreshnessLabel(value.freshness))}
+    Column(Modifier.fillMaxWidth().clickable(onClick=open).padding(vertical=2.dp)){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(label,Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(display,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold);Icon(Icons.Default.ChevronRight,null,Modifier.size(18.dp))};Text(listOfNotNull(vesselSourceLabel(value),age?.let{"%.1fs".format(it)},exceptions.takeIf{it.isNotEmpty()}?.joinToString(" · ")).joinToString(" · "),style=MaterialTheme.typography.labelSmall,color=if(value.value!=null)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error);HorizontalDivider(Modifier.padding(top=8.dp))}
 }
+
+@Composable private fun metricName(id:InstrumentTileId)=MetricLabelRegistry.get(id).let{label->"${MetricLabelRegistry.localizedName(id,LocalAppLanguage.current)} (${label.acronym})"}
+
+@Composable private fun vesselQualityLabel(value:com.yokuli.anchorwatch.domain.vessel.VesselDataQuality)=when(value){com.yokuli.anchorwatch.domain.vessel.VesselDataQuality.GOOD->tr("Good","良好");com.yokuli.anchorwatch.domain.vessel.VesselDataQuality.DEGRADED->tr("Degraded","降级");else->tr("Unknown","未知")}
+@Composable private fun vesselFreshnessLabel(value:com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness)=when(value){com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness.FRESH->tr("Live","实时");com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness.HELD->tr("Held","保留");com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness.STALE->tr("Stale","过期");else->tr("Unavailable","不可用")}
 
 @Composable private fun vesselSourceLabel(value:VesselObservation<*>):String{val source=when(value.source){com.yokuli.anchorwatch.domain.vessel.VesselDataSource.BOAT_NMEA->tr("Boat NMEA","船载 NMEA");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_GNSS->tr("Phone GNSS","手机 GNSS");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_IMU->tr("Phone IMU","手机 IMU");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_MAGNETOMETER->tr("Phone compass","手机罗盘");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.PHONE_BAROMETER->tr("Phone barometer","手机气压计");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.DERIVED->tr("Derived","推算");com.yokuli.anchorwatch.domain.vessel.VesselDataSource.DEMO->tr("Demo","演示");else->tr("No source","无来源")};return listOfNotNull(source,value.provenance?.takeIf{it.isNotBlank()}).joinToString(" · ")}
 private fun windDataAngle(value:Double)="%.0f°%s".format(kotlin.math.abs(value),if(value<0)"P" else "S")
@@ -263,14 +343,11 @@ private fun SonarStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Ti
 @Composable
 internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
     var profile by remember(state.settings.profile) { mutableStateOf(state.settings.profile) }
-    var outputMode by remember(state.outputSettings.transportMode) { mutableStateOf(state.outputSettings.transportMode) }
-    var outputHost by remember(state.outputSettings.outputHost, state.settings.profile.host) {
-        mutableStateOf(state.outputSettings.outputHost.ifBlank { state.settings.profile.host })
-    }
-    var outputPort by remember(state.outputSettings.outputPort) { mutableStateOf(state.outputSettings.outputPort.toString()) }
     var showWatchDisconnect by remember { mutableStateOf(false) }
     var showDependencyDisconnect by remember { mutableStateOf(false) }
     val connectionRunning = state.connection != NmeaConnectionState.DISCONNECTED
+    var showConnectionSettings by remember{mutableStateOf(!connectionRunning)}
+    LaunchedEffect(connectionRunning){if(!connectionRunning)showConnectionSettings=true}
     val testing=state.connectionAttempt.state==ConnectionAttemptState.TESTING
     val controlsEnabled=state.settingsReady&&!connectionRunning&&!testing
     val activeWatchUsesNmea=state.active?.paused==false&&state.active.positionSource==GpsDataSource.NMEA.name
@@ -291,26 +368,19 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
         RuntimeOwner.NMEA_SHARING->localized(state.settings.appLanguage,"NMEA Sharing using the upstream stream","使用上游数据的 NMEA 共享")
         else->null
     }}
+    val nowElapsed=android.os.SystemClock.elapsedRealtime()
+    val tripCanContinueWithPhone=RuntimeOwner.TRIP_WATCH in state.runtimeResources.nmeaOwners&&state.activeTrip?.paused==false&&state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&nowElapsed-it.receivedElapsedRealtime in 0L..3_000L}==true
     val validationError=vm.validateProfile(profile)
-    val stagedOutput=state.outputSettings.copy(
-        transportMode=outputMode,
-        outputHost=outputHost.trim(),
-        outputPort=outputPort.toIntOrNull()?:0,
-    )
-    val outputValidationError=when{
-        outputMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION&&profile.protocol!=Protocol.TCP->tr("Same-socket TX requires TCP input. Choose a separate TX port for UDP input.","同一 Socket 发送要求输入使用 TCP；UDP 输入请选择独立发送端口。")
-        !NmeaOutputEndpointPolicy.isValid(stagedOutput,profile)->tr("Enter a valid TX host and port from 1 to 65535.","请输入有效的发送主机和 1–65535 端口。")
-        else->null
-    }
     fun edit(next:ConnectionProfile){
-        val previousHost=profile.host
-        if(outputMode==NmeaOutputTransportMode.DEDICATED_TCP&&(outputHost.isBlank()||outputHost==previousHost))outputHost=next.host
         profile=next
         vm.clearConnectionAttempt()
     }
     LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("nmea_runtime_list"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { PageHeader(tr("NMEA connection","NMEA 连接"), tr("Configure and verify live traffic. A successful connection becomes the next default unless a session is open.","配置并验证实时数据。连接成功后会成为下次默认来源，但不会改变已开启会话。")) }
         if(activeWatchNmeaFault)item { Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Anchor watch needs a usable NMEA position","锚警需要可用的 NMEA 船位"),style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer);Text(tr("The transport may be disconnected, stale, without a current fix, or reporting unacceptable quality. The session remains locked to NMEA with no silent failover. Reconnect, or pause safely before changing the source.","连接可能已断开、过期、没有当前定位，或正在报告不合格的定位质量。本次会话仍锁定 NMEA，不会静默切源。请重连，或先安全暂停再更换数据源。"),color=MaterialTheme.colorScheme.onErrorContainer);OutlinedButton({showWatchDisconnect=true}){Text(tr("Pause safely","安全暂停"))}}} }
+        item{ConnectionResultCard(state)}
+        if(connectionRunning)item{Column{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect","重连"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Disconnect","断开"))}};TextButton({showConnectionSettings=!showConnectionSettings},Modifier.align(Alignment.End)){Icon(if(showConnectionSettings)Icons.Default.ExpandLess else Icons.Default.Tune,null);Spacer(Modifier.width(4.dp));Text(if(showConnectionSettings)tr("Hide connection settings","收起连接设置")else tr("Connection settings","连接设置"))}}}
+        if(!connectionRunning||showConnectionSettings)
         item { Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if(connectionRunning) AssistChip({}, { Text(tr("Configuration locked while connected","连接期间配置已锁定")) }, leadingIcon={Icon(Icons.Default.Lock,null,Modifier.size(18.dp))}, enabled=false)
             OutlinedTextField(profile.name, { edit(profile.copy(name = it)) }, label = { Text(tr("Profile name","配置名称")) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled=controlsEnabled)
@@ -321,35 +391,8 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
             OutlinedTextField(profile.noDataTimeoutSeconds.toString(),{v->edit(profile.copy(noDataTimeoutSeconds=v.filter(Char::isDigit).toIntOrNull()?:0))},label={Text(tr("No-data timeout","无数据超时"))},suffix={Text(tr("s","秒"))},supportingText={Text(tr("3–120 seconds; reports a quiet stream without closing the TCP connection.","3–120 秒；用于报告数据流静默，但不会因此关闭 TCP 连接。"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled,isError=profile.noDataTimeoutSeconds !in 3..120,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
             SettingSwitch(tr("Require checksum","要求校验和"), tr("Reject sentences without a checksum","拒绝没有校验和的语句"), profile.requireChecksum,enabled=controlsEnabled) { edit(profile.copy(requireChecksum = it)) }; SettingSwitch(tr("Auto reconnect","自动重连"), tr("Reconnect after network loss","网络中断后自动重新连接"), profile.autoReconnect,enabled=controlsEnabled) { edit(profile.copy(autoReconnect = it)) }
             HorizontalDivider()
-            Text(tr("App → Server · send (TX)","App → 服务器 · 发送（TX）"),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold,modifier=Modifier.testTag("nmea_tx_route"))
-            Text(tr("Choose this while configuring the NMEA server. RX and TX may use different ports; a TX failure never disconnects RX.","配置 NMEA 服务器时同时选择发送方式。接收与发送可以使用不同端口；发送失败绝不会断开接收。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-                SegmentedButton(
-                    selected=outputMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
-                    onClick={outputMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION;vm.clearConnectionAttempt()},
-                    enabled=controlsEnabled&&profile.protocol==Protocol.TCP,
-                    shape=SegmentedButtonDefaults.itemShape(0,2),
-                ){Text(tr("Same TCP socket","同一 TCP Socket"))}
-                SegmentedButton(
-                    selected=outputMode==NmeaOutputTransportMode.DEDICATED_TCP,
-                    onClick={outputMode=NmeaOutputTransportMode.DEDICATED_TCP;if(outputHost.isBlank())outputHost=profile.host;vm.clearConnectionAttempt()},
-                    enabled=controlsEnabled,
-                    shape=SegmentedButtonDefaults.itemShape(1,2),
-                ){Text(tr("Separate TX port","独立发送端口"))}
-            }
-            if(outputMode==NmeaOutputTransportMode.DEDICATED_TCP){
-                OutlinedTextField(outputHost,{outputHost=it;vm.clearConnectionAttempt()},label={Text(tr("Send host or IP (TX)","发送主机或 IP（TX）"))},singleLine=true,enabled=controlsEnabled,isError=outputValidationError!=null,modifier=Modifier.fillMaxWidth().testTag("nmea_tx_host"))
-                OutlinedTextField(outputPort,{outputPort=it.filter(Char::isDigit).take(5);vm.clearConnectionAttempt()},label={Text(tr("Send port (TX)","发送端口（TX）"))},singleLine=true,enabled=controlsEnabled,isError=outputValidationError!=null,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth().testTag("nmea_tx_port"))
-            }else{
-                OutlinedTextField(profile.port.toString(),{},label={Text(tr("Send port (TX) · same as RX","发送端口（TX）· 与 RX 相同"))},singleLine=true,enabled=false,modifier=Modifier.fillMaxWidth().testTag("nmea_tx_port"))
-            }
-            outputValidationError?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
-            Text(tr("This only saves the route. Phone GPS, heading and sensor sentences remain off until enabled in Data → Output.","这里仅保存发送路径；手机 GPS、方位和传感器语句仍需在“数据 → 输出”中单独开启。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(connectionRunning){
-                OutlinedButton(vm::reconnectNmea,Modifier.fillMaxWidth(),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect now","立即重新连接"))}
-                Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.fillMaxWidth(),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Disconnect","断开连接"))}
-            }
-            else Button({vm.saveAndConnect(profile,outputMode,outputHost,outputPort.toIntOrNull()?:0)},Modifier.fillMaxWidth(),enabled=state.settingsReady&&!testing&&validationError==null&&outputValidationError==null){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Testing NMEA…","正在测试 NMEA…") else tr("Test, save & connect","测试、保存并连接"))}
+            AssistChip({},label={Text(tr("App → Server sending is configured in NMEA Output","App → 服务器的发送功能请在 NMEA 输出页配置"))},leadingIcon={Icon(Icons.Default.NorthEast,null)},enabled=false)
+            if(!connectionRunning)Button({vm.saveAndConnect(profile)},Modifier.fillMaxWidth(),enabled=state.settingsReady&&!testing&&validationError==null){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Testing NMEA…","正在测试 NMEA…") else tr("Test, save & connect","测试、保存并连接"))}
             if(!state.settingsReady)Text(tr("Loading saved connection settings…","正在加载已保存的连接设置…"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
             if(state.connectionAttempt.state==ConnectionAttemptState.WARNING)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.tertiary,style=MaterialTheme.typography.bodySmall)
@@ -357,13 +400,12 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
             if(testing&&!connectionRunning)Text(tr("The app must receive at least one valid NMEA sentence before it will connect.","应用必须收到至少一条有效 NMEA 语句后才会正式连接。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(state.settings.nmeaSharingEnabled)Text(tr("NMEA Sharing never auto-opens a saved endpoint. When its selected output uses NMEA, it keeps an already-connected upstream in use; otherwise the server stays up and waits for accepted input.","NMEA 共享不会自动打开已保存端点；当共享输出使用 NMEA 时，它会继续占用已经连接的上游，否则共享服务器会保持运行并等待可信输入。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
-        item { ConnectionResultCard(state) }
-        item { GpsProxyCard(state,vm) }
-        item { NmeaSharingCard(state,vm) }
     }
     if(showWatchDisconnect)ActiveWatchDisconnectDialog(pauseWatch={showWatchDisconnect=false;vm.stopActiveWatchAndDisconnect()},dismiss={showWatchDisconnect=false})
     if(showDependencyDisconnect)NmeaDependencyDisconnectDialog(
         dependencies=nmeaDependencies,
+        tripCanContinueWithPhone=tripCanContinueWithPhone,
+        continueTripWithPhone={showDependencyDisconnect=false;vm.continueTripWithPhoneAndDisconnect()},
         stopAndDisconnect={showDependencyDisconnect=false;vm.stopNmeaDependenciesAndDisconnect()},
         dismiss={showDependencyDisconnect=false},
     )
@@ -391,16 +433,17 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
  }})
 }
 
-@Composable private fun NmeaDependencyDisconnectDialog(dependencies:List<String>,stopAndDisconnect:()->Unit,dismiss:()->Unit){
+@Composable private fun NmeaDependencyDisconnectDialog(dependencies:List<String>,tripCanContinueWithPhone:Boolean,continueTripWithPhone:()->Unit,stopAndDisconnect:()->Unit,dismiss:()->Unit){
  AlertDialog(
   onDismissRequest=dismiss,
   title={Text(tr("NMEA is still in use","仍有功能正在使用 NMEA"))},
   text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
    Text(tr("Disconnect is not a cosmetic switch: the following running features own this stream.","“断开”不是装饰性开关：以下运行中功能仍占用这条数据流。"))
    dependencies.forEach{Text("• $it",style=MaterialTheme.typography.bodySmall)}
-   Text(tr("Continuing will disable condition alerts, stop and save sonar, pause Trip Watch, stop GPS proxy/sharing/output, then close NMEA. Anchor sessions that use System GPS remain open.","继续后会关闭环境警戒、停止并保存声呐、暂停航程监控、关闭 GPS 代理/共享/输出，再断开 NMEA。使用系统 GPS 的锚泊会话仍会保留。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Text(if(tripCanContinueWithPhone)tr("A fresh Phone GNSS fix is available. You may keep Trip Watch recording on Phone GPS; NMEA instruments will be recorded as a gap.","手机 GNSS 船位可用。你可以让航程监控改用手机 GPS 继续记录；NMEA 仪表将记为数据缺口。")else tr("Continuing will disable condition alerts, stop and save sonar, pause Trip Watch, stop GPS proxy/sharing/output, then close NMEA. Anchor sessions that use System GPS remain open.","继续后会关闭环境警戒、停止并保存声呐、暂停航程监控、关闭 GPS 代理/共享/输出，再断开 NMEA。使用系统 GPS 的锚泊会话仍会保留。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   }},
   confirmButton={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+   if(tripCanContinueWithPhone)OutlinedButton(continueTripWithPhone,Modifier.fillMaxWidth()){Text(tr("Continue Trip with Phone GPS & disconnect","改用手机 GPS 继续航程并断开"))}
    Button(stopAndDisconnect,Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Stop listed features & disconnect","停止上述功能并断开"))}
    TextButton(dismiss,Modifier.align(Alignment.End)){Text(tr("Cancel","取消"))}
   }},
@@ -446,10 +489,12 @@ private fun ConnectionResultCard(state: MainUiState) {
                     "${age(state.nmeaTransportDiagnostics.lastSentenceReceivedElapsedRealtime)} / " +
                     age(state.diagnostics.lastFixElapsed),
             )
+            DiagnosticsRow(tr("Heading / wind", "船艏向 / 风"),"${age(state.nmeaInstruments.headingTrue?.second?:state.nmeaInstruments.headingMagnetic?.second)} / ${age(listOfNotNull(state.liveWind.trueSpeed?.receivedElapsedRealtime,state.liveWind.apparentSpeed?.receivedElapsedRealtime,state.liveWind.trueDirection?.receivedElapsedRealtime).maxOrNull())}")
+            DiagnosticsRow(tr("Depth / STW", "水深 / 对水航速"),"${age(state.liveDepth.receivedElapsedRealtime.takeUnless{state.liveDepth.isDemo})} / ${age(state.nmeaInstruments.speedThroughWaterKnots?.second)}")
             Text(
                 tr(
-                    "${state.diagnostics.validSentences} valid sentences • ${state.diagnostics.invalidSentences} invalid",
-                    "${state.diagnostics.validSentences} 条有效语句 · ${state.diagnostics.invalidSentences} 条无效语句",
+                    "${state.diagnostics.validSentences} valid • ${state.diagnostics.invalidSentences} invalid • ${state.diagnostics.echoedAppTxSentences} echoed App TX",
+                    "${state.diagnostics.validSentences} 条有效 · ${state.diagnostics.invalidSentences} 条无效 · ${state.diagnostics.echoedAppTxSentences} 条应用发送回显",
                 ),
             )
             state.nmeaFix?.let {
@@ -496,12 +541,12 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
         }}}
         item{RuntimeHealthCard(state,tileDiagnostics,healthExpanded){healthExpanded=!healthExpanded}}
         item{Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Raw sentences","原始语句"),style=MaterialTheme.typography.titleMedium);Text(if(paused)tr("Display paused; incoming data is not discarded.","显示已暂停；新到数据不会被丢弃。")else tr("Live display","实时显示"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton({paused=!paused}){Icon(if(paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(4.dp));Text(if(paused)tr("Resume","继续")else tr("Pause","暂停"))}}
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Raw sentences","原始语句"),style=MaterialTheme.typography.titleMedium);Text(if(paused)tr("Display paused; incoming data is not discarded.","显示已暂停；新到数据不会被丢弃。")else tr("Live display · App TX echoes are labelled and excluded from vessel sources","实时显示 · 应用发送回显会被标记且不会进入船舶数据源"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton({paused=!paused}){Icon(if(paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(4.dp));Text(if(paused)tr("Resume","继续")else tr("Pause","暂停"))}}
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton({vm.clearDiagnostics();displayed=emptyList()},Modifier.weight(1f)){Icon(Icons.Default.DeleteSweep,null);Spacer(Modifier.width(4.dp));Text(tr("Clear","清空"))};OutlinedButton({context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("NMEA",displayed.joinToString("\n")))},Modifier.weight(1f),enabled=displayed.isNotEmpty()){Icon(Icons.Default.ContentCopy,null);Spacer(Modifier.width(4.dp));Text(tr("Copy","复制"))}}
         }}
         item{SelectionContainer{Surface(Modifier.fillMaxWidth(),color=Color.Black,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
             if(displayed.isEmpty())Text(if(state.connection==NmeaConnectionState.CONNECTED)tr("Connected. Waiting for NMEA sentences…","已连接，正在等待 NMEA 语句…")else tr("Connect to a data source to view raw NMEA.","连接数据源后即可查看原始 NMEA 数据。"),color=Color.Gray,fontFamily=FontFamily.Monospace)
-            else displayed.asReversed().forEach{sentence->Text(sentence,color=Color(0xFFB9F6CA),fontFamily=FontFamily.Monospace,style=MaterialTheme.typography.bodySmall)}
+            else displayed.asReversed().forEach{sentence->Text(sentence,color=if(sentence.startsWith("[Echoed App TX]"))Color(0xFFFFCC80) else Color(0xFFB9F6CA),fontFamily=FontFamily.Monospace,style=MaterialTheme.typography.bodySmall)}
         }}}}
     }
 }

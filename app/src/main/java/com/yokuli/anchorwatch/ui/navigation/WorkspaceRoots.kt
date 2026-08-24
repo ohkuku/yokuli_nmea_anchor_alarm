@@ -21,7 +21,7 @@ internal fun AnchorRootPage(state:MainUiState,vm:MainViewModel){
     val pager=rememberPagerState(pageCount={titles.size});val scope=rememberCoroutineScope()
     Column(Modifier.fillMaxSize().testTag("anchor_root")){
         PrimaryTabRow(pager.currentPage,Modifier.fillMaxWidth()){titles.forEachIndexed{index,title->Tab(pager.currentPage==index,{scope.launch{pager.animateScrollToPage(index)}},text={Text(title)},modifier=Modifier.testTag("anchor_tab_$index"))}}
-        HorizontalPager(pager,Modifier.weight(1f)){page->when(page){0->AnchorWatchPage(state,vm);1->HistoryPage(state,vm,fixedTab=0);else->HistoryPage(state,vm,fixedTab=1)}}
+        HorizontalPager(pager,Modifier.weight(1f)){page->when(page){0->AnchorWatchPage(state,vm);1->AnchorHistoryPage(state,vm);else->AnchorageLibraryPage(state,vm)}}
     }
 }
 
@@ -34,6 +34,6 @@ internal fun SailRootPage(state:MainUiState,vm:MainViewModel){
     LaunchedEffect(cockpit){if(cockpit&&pager.currentPage!=0)pager.scrollToPage(0)}
     Column(Modifier.fillMaxSize().testTag("sail_root")){
         if(!cockpit)PrimaryTabRow(pager.currentPage,Modifier.fillMaxWidth()){titles.forEachIndexed{index,title->Tab(pager.currentPage==index,{scope.launch{pager.animateScrollToPage(index)}},text={Text(title)},modifier=Modifier.testTag("sail_tab_$index"))}}
-        HorizontalPager(pager,Modifier.weight(1f),userScrollEnabled=!cockpit){page->if(page==0)TripWatchPage(state,vm)else HistoryPage(state,vm,fixedTab=2)}
+        HorizontalPager(pager,Modifier.weight(1f),userScrollEnabled=!cockpit){page->if(page==0)TripWatchPage(state,vm)else TripHistoryPage(state,vm)}
     }
 }

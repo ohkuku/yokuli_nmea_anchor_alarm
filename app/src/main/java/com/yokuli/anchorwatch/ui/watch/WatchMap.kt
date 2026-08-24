@@ -111,7 +111,7 @@ internal fun displayHeading(fix:com.yokuli.anchorwatch.domain.model.NavigationFi
     // Presentation deliberately uses the responsive phone channel when no
     // physical NMEA heading or trusted NMEA course is available. The Anchor
     // estimator still receives only its independently integrity-gated channel.
-    val phoneDisplayHeading=livePhoneHeading?.liveTrueHeadingDegrees?:livePhoneHeading?.trueHeadingDegrees
+    val phoneDisplayHeading=livePhoneHeading?.liveTrueHeadingDegrees?:livePhoneHeading?.liveMagneticHeadingDegrees?:livePhoneHeading?.trueHeadingDegrees
     val phoneFresh=phoneDisplayHeading!=null&&livePhoneHeading?.receivedElapsedRealtime?.let{nowElapsed-it in 0L..1_500L}==true
     if(phoneFresh)return phoneDisplayHeading
     val selectedHeadingFresh=fix.headingTrueDegrees!=null&&(fix.headingReceivedElapsedRealtime?:fix.receivedElapsedRealtime).let{nowElapsed-it in 0L..3_000L}

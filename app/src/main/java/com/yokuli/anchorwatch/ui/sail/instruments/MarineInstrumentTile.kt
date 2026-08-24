@@ -4,10 +4,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,7 +35,7 @@ internal fun MarineInstrumentTile(
     onClick:()->Unit={},
     onLongClick:()->Unit={},
 ){
-    Card(
+    Surface(
         modifier=modifier
             .testTag("marine_instrument_$title")
             .heightIn(min=when(size){
@@ -45,10 +46,19 @@ internal fun MarineInstrumentTile(
                 InstrumentTileSize.HERO->190.dp
             })
             .combinedClickable(onClick=onClick,onLongClick=onLongClick),
+        color=MaterialTheme.colorScheme.surface,
+        tonalElevation=0.dp,
+        shadowElevation=0.dp,
+        border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant),
+        shape=MaterialTheme.shapes.small,
     ){
         Column(
-            Modifier.fillMaxSize().padding(horizontal=10.dp,vertical=8.dp),
-            verticalArrangement=Arrangement.SpaceBetween,
+            // fillMaxSize() lets the first row in a bounded MFD grid consume
+            // all remaining vertical space, collapsing every later row to
+            // zero height. The Surface already owns the requested minimum;
+            // content should wrap within it instead of claiming the viewport.
+            Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=8.dp),
+            verticalArrangement=Arrangement.spacedBy(2.dp),
         ){
             Text(title,style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Text(

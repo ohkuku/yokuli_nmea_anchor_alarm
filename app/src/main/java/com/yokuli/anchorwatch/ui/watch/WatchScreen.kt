@@ -133,7 +133,8 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     val fix = state.fix; val active = state.active
-    val boatHeading=fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix,nmeaPhysicalHeading=state.nmeaInstruments.headingTrue,trustedNmeaCourse=state.trustedNmeaCourse)}
+    val routedNmeaHeading=state.vesselData.headingTrueDegrees.takeIf{it.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA&&it.value!=null}?.let{it.value!! to (it.receivedElapsedRealtime?:0L)}
+    val boatHeading=fix?.let{displayHeading(it,active,state.points,state.phoneHeading,state.nmeaFix,nmeaPhysicalHeading=routedNmeaHeading,trustedNmeaCourse=state.trustedNmeaCourse)}
     DisposableEffect(Unit){vm.setMapHeadingDisplayActive(true);onDispose{vm.setMapHeadingDisplayActive(false)}}
     LaunchedEffect(state.rangeEditorRequested,active?.id){if(state.rangeEditorRequested){showAdjust=active!=null;vm.consumeRangeEditorRequest()}}
     val renderGoogleMap = BuildConfig.MAPS_CONFIGURED && MapRuntimePolicy.renderGoogleEngine
@@ -166,6 +167,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     var recenterRequest by remember { mutableIntStateOf(0) }
     var mapLocked by rememberSaveable{mutableStateOf(true)}
     var measuringDistance by rememberSaveable{mutableStateOf(false)}
+    val effectiveMapLocked=mapLocked&&!measuringDistance
     val measurementStartState=remember{MarkerState(camera.position.target)}
     val measurementEndState=remember{MarkerState(camera.position.target)}
     val measurementMidState=remember{MarkerState(camera.position.target)}
@@ -190,9 +192,9 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
             }
         }
     }
-    LaunchedEffect(mapLocked){if(!mapLocked)inspectionTarget=camera.position.target}
-    LaunchedEffect(camera,mapLocked,measuringDistance){
-        snapshotFlow{camera.isMoving}.collect{moving->if(!moving&&!mapLocked)inspectionTarget=camera.position.target}
+    LaunchedEffect(effectiveMapLocked){if(!effectiveMapLocked)inspectionTarget=camera.position.target}
+    LaunchedEffect(camera,effectiveMapLocked){
+        snapshotFlow{camera.isMoving}.collect{moving->if(!moving&&!effectiveMapLocked)inspectionTarget=camera.position.target}
     }
     LaunchedEffect(camera,mapLocked,measuringDistance){
         if(!mapLocked||measuringDistance){lockedGestureReturnPending=false;returningLockedCamera=false;return@LaunchedEffect}
@@ -211,8 +213,8 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     }
     val acceptedMapPoint=fix?.takeIf{it.valid}?.let{GeoPoint(it.latitude,it.longitude)}
     val cameraMapPoint=inspectionTarget?.let{GeoPoint(it.latitude,it.longitude)}
-    val mapChartUiState=remember(mapLocked,acceptedMapPoint,cameraMapPoint,state.settings.linzHydroEnabled,state.settings.linzHydroOpacity){
-        MapChartPolicy.resolve(mapLocked,acceptedMapPoint,cameraMapPoint,BuildConfig.LINZ_HYDRO_CONFIGURED,state.settings.linzHydroEnabled,state.settings.linzHydroOpacity)
+    val mapChartUiState=remember(effectiveMapLocked,acceptedMapPoint,cameraMapPoint,state.settings.linzHydroEnabled,state.settings.linzHydroOpacity){
+        MapChartPolicy.resolve(effectiveMapLocked,acceptedMapPoint,cameraMapPoint,BuildConfig.LINZ_HYDRO_CONFIGURED,state.settings.linzHydroEnabled,state.settings.linzHydroOpacity)
     }
     val mapAttribution=buildList{
         if(baseMapStyle==BaseMapStyle.NAUTICAL)add(OpenSeaMapConfiguration.ATTRIBUTION)
@@ -247,7 +249,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
-                    val gesturePolicy=MapCameraPolicy.gestures(mapLocked)
+                    val gesturePolicy=MapCameraPolicy.gestures(effectiveMapLocked)
                     GoogleMap(Modifier.fillMaxSize(), cameraPositionState = camera, properties = MapProperties(mapType = if(baseMapPolicy.googleBaseMap==GoogleBaseMapKind.SATELLITE)MapType.SATELLITE else MapType.NORMAL,mapStyleOptions=if(baseMapPolicy.applyNauticalStyle)nauticalMapStyle else null), uiSettings = MapUiSettings(compassEnabled = false, indoorLevelPickerEnabled = false, mapToolbarEnabled = false, myLocationButtonEnabled = false, zoomControlsEnabled = false,scrollGesturesEnabled=gesturePolicy.scrollEnabled,zoomGesturesEnabled=gesturePolicy.zoomEnabled,rotationGesturesEnabled=gesturePolicy.rotationEnabled,tiltGesturesEnabled=gesturePolicy.tiltEnabled), onMapLoaded = { mapLoaded = true },onMapClick={point->
                         if(measuringDistance){
                             if(measurementTapStage%2==0)measurementStartState.position=point else measurementEndState.position=point
@@ -317,7 +319,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
                              // Continuous estimation is advisory until the user
                              // explicitly adopts it. Show uncertainty only; do
                              // not draw a second anchor symbol or move the alarm.
-                             if(session.anchorPositionMode==AnchorPositionMode.ESTIMATE.name&&session.provisionalAnchorLatitude!=null&&session.provisionalAnchorLongitude!=null){Circle(center=LatLng(session.provisionalAnchorLatitude,session.provisionalAnchorLongitude),radius=session.provisionalRadiusMeters?:session.expectedSwingRadiusMeters.coerceAtLeast(10.0),strokeColor=SafetyColors.Candidate,fillColor=SafetyColors.Candidate.copy(alpha=.08f),strokeWidth=2f,zIndex=MapOverlayZ.ALARM_GEOMETRY)}
+                             if(session.estimationEpoch>0L&&session.provisionalAnchorLatitude!=null&&session.provisionalAnchorLongitude!=null){Circle(center=LatLng(session.provisionalAnchorLatitude,session.provisionalAnchorLongitude),radius=session.provisionalRadiusMeters?:session.expectedSwingRadiusMeters.coerceAtLeast(10.0),strokeColor=SafetyColors.Candidate,fillColor=SafetyColors.Candidate.copy(alpha=.08f),strokeWidth=2f,zIndex=MapOverlayZ.ALARM_GEOMETRY)}
                             }
                             else{
                              val reference=LatLng(session.learningReferenceLatitude?:session.anchorLatitude,session.learningReferenceLongitude?:session.anchorLongitude)
