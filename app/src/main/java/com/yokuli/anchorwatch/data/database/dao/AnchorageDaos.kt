@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.Flow
     @Upsert suspend fun setMembership(value:AnchorageCollectionPlaceCrossRef)
     @Query("DELETE FROM anchorage_collection_places WHERE collectionId=:collectionId AND placeId=:placeId") suspend fun removeMembership(collectionId:Long,placeId:Long)
     @Query("SELECT * FROM anchorage_collection_places ORDER BY collectionId,placeId") suspend fun membershipsNow():List<AnchorageCollectionPlaceCrossRef>
+    @Query("SELECT c.* FROM anchorage_collections c JOIN anchorage_collection_places x ON x.collectionId=c.id WHERE x.placeId=:placeId ORDER BY c.sortOrder,c.name") suspend fun forPlace(placeId:Long):List<AnchorageCollectionEntity>
 }
 
 @Dao interface AnchorageMetadataDao{
@@ -92,6 +93,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface AnchoragePhotoDao{
     @Query("SELECT * FROM anchorage_photos WHERE placeId=:placeId ORDER BY COALESCE(capturedAt,createdAt) DESC") fun observeForPlace(placeId:Long):Flow<List<AnchoragePhotoEntity>>
     @Query("SELECT * FROM anchorage_photos ORDER BY id") suspend fun allNow():List<AnchoragePhotoEntity>
+    @Query("SELECT * FROM anchorage_photos WHERE placeId=:placeId ORDER BY COALESCE(capturedAt,createdAt) DESC") suspend fun forPlaceNow(placeId:Long):List<AnchoragePhotoEntity>
     @Query("SELECT * FROM anchorage_photos WHERE placeId=:placeId ORDER BY COALESCE(capturedAt,createdAt) DESC LIMIT 1") suspend fun firstForPlace(placeId:Long):AnchoragePhotoEntity?
     @Insert suspend fun insert(value:AnchoragePhotoEntity):Long
     @Delete suspend fun delete(value:AnchoragePhotoEntity)

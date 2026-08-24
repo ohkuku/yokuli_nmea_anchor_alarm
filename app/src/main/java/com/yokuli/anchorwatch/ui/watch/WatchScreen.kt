@@ -336,12 +336,11 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
             } else if(!BuildConfig.MAPS_CONFIGURED) MapNotConfigured()
             else Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).testTag("map_test_surface"))
             CompactWatchStatus(state,Modifier.align(Alignment.TopStart).padding(12.dp))
-            NearbyAnchorageCard(
-                nearby=state.nearbyAnchoragePrompt,
-                savedAnchorages=state.savedAnchorages,
-                actions=nearbyActions,
-                openList=openAnchorageList,
-                dismiss=vm::dismissNearbyAnchorage,
+            com.yokuli.anchorwatch.ui.anchor.anchorages.GisNearbyAnchorageCard(
+                latitude=fix?.latitude,
+                longitude=fix?.longitude,
+                enabled=active==null&&state.anchorageApproach.target==null,
+                approachSpot=vm::approachAnchorageSpot,
                 modifier=Modifier.align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=76.dp),
             )
             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

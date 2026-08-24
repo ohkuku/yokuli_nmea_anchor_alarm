@@ -46,7 +46,7 @@ internal fun AnchoragePlaceDetailDialog(
                 when (tab) {
                     0 -> AnchorageOverview(bundle)
                     1 -> AnchorageSpots(bundle, approach, openMap)
-                    2 -> AnchorageVisits()
+                    2 -> AnchorageVisits(bundle)
                     else -> AnchorageNotes(bundle)
                 }
             }
@@ -90,9 +90,35 @@ private fun AnchorageSpots(bundle: AnchoragePlaceBundle, approach: (Long) -> Uni
 }
 
 @Composable
-private fun AnchorageVisits() {
-    Box(Modifier.padding(12.dp)) {
-        Text(tr("Visit history and linked Anchor reports remain immutable. Open a visit to see its saved summary.", "访问历史与关联锚泊报告保持不可变。打开访问可查看保存时摘要。"))
+private fun AnchorageVisits(bundle: AnchoragePlaceBundle) {
+    if (bundle.visits.isEmpty()) {
+        Box(Modifier.padding(12.dp)) { Text(tr("No recorded visits yet.", "还没有访问记录。")) }
+        return
+    }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+        items(bundle.visits, key = { it.id }) { visit ->
+            Card {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(java.text.DateFormat.getDateTimeInstance().format(java.util.Date(visit.startedAt)), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        listOfNotNull(
+                            visit.waterDepthMeters?.let { "%.1f m depth".format(it) },
+                            visit.rodeLengthMeters?.let { "${it.toInt()} m rode" },
+                            visit.maxExcursionMeters?.let { "${it.toInt()} m max excursion" },
+                            "${visit.alarmCount} alarms",
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (visit.userNotes.isNotBlank()) Text(visit.userNotes, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (visit.anchorSessionId == null) tr("Saved visit snapshot; source session unavailable.", "访问摘要已保留；原会话不可用。")
+                        else tr("Linked to immutable Anchor report #${visit.anchorSessionId}.", "已关联不可变锚泊报告 #${visit.anchorSessionId}。"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -86,8 +86,6 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel,fixedTab:Int?=null){
         if(tab==0&&state.sessions.isEmpty())item{Text(tr("No anchor sessions recorded.","还没有锚泊记录。"),color=MaterialTheme.colorScheme.onSurfaceVariant)}
         if(tab==0)items(state.sessions,key={"session-${it.id}"}){session->
             val events=state.eventsBySession[session.id].orEmpty()
-            val savePosition=AnchorageSavePositionPolicy.resolve(session)
-            val alreadySaved=state.savedAnchorages.firstOrNull{saved->AnchorGeometry.distanceMeters(savePosition.latitude,savePosition.longitude,saved.latitude,saved.longitude)<=com.yokuli.anchorwatch.data.anchorage.AnchorageRepository.DUPLICATE_RADIUS_METERS}
             Card(Modifier.fillMaxWidth()){
                 Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                     Row(verticalAlignment=Alignment.CenterVertically){
@@ -104,7 +102,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel,fixedTab:Int?=null){
                         HorizontalDivider()
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton({reportAnchor=session},Modifier.weight(1f)){Text(tr("Report","报告"))};OutlinedButton({vm.exportCsv(session)},Modifier.weight(1f)){Text("CSV")};OutlinedButton({vm.exportGpx(session)},Modifier.weight(1f)){Text("GPX")}}
                         if(!session.active)OutlinedButton({pendingAiAnchor=session},Modifier.fillMaxWidth()){Text(tr("Export data for AI","导出源数据给 AI"))}
-                        if(alreadySaved==null)OutlinedButton({saveSession=session},Modifier.fillMaxWidth()){Text(if(session.centerStatus==AnchorCenterStatus.RESOLVED.name)tr("☆ Save anchorage","☆ 收藏锚地")else tr("☆ Save approximate reference","☆ 收藏估算参考位置"))}else OutlinedButton({detailAnchorage=alreadySaved},Modifier.fillMaxWidth()){Text(tr("Already saved · View details","已收藏 · 查看详情"))}
+                        if(session.anchorageVisitId==null)OutlinedButton({saveSession=session},Modifier.fillMaxWidth()){Text(if(session.centerStatus==AnchorCenterStatus.RESOLVED.name)tr("☆ Save anchorage","☆ 收藏锚地")else tr("☆ Save approximate reference","☆ 收藏估算参考位置"))}else OutlinedButton({},Modifier.fillMaxWidth(),enabled=false){Text(tr("Already saved to anchorage library","已保存到锚地库"))}
                         if(!session.active||session.centerStatus==AnchorCenterStatus.RESOLVED.name)OutlinedButton({vm.recalculateCentreFromTrack(session)},Modifier.fillMaxWidth().testTag("analyze_centre_from_track_${session.id}")){Text(if(session.active)tr("Recalculate centre from track","根据轨迹重新计算中心")else tr("Analyze centre from track","按轨迹分析中心"))}
                         Text(tr("Event timeline","事件时间线"),style=MaterialTheme.typography.labelLarge)
                         if(events.isEmpty())Text(tr("No recorded events.","没有事件记录。"),style=MaterialTheme.typography.bodySmall)
@@ -154,7 +152,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel,fixedTab:Int?=null){
     replayTrip?.let{trip->TripReplayDialog(trip,vm){replayTrip=null}}
     pendingAiTrip?.let{trip->AiExportPrivacyDialog({pendingAiTrip=null}){pendingAiTrip=null;vm.exportTripAiSource(trip)}}
     pendingAiAnchor?.let{session->AiExportPrivacyDialog({pendingAiAnchor=null}){pendingAiAnchor=null;vm.exportAnchorAiSource(session)}}
-    saveSession?.let{session->val position=AnchorageSavePositionPolicy.resolve(session);AnchorageEditor(initial=SavedAnchorageEntity(name="",latitude=position.latitude,longitude=position.longitude,createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis(),preferredAlarmRadiusMeters=session.alarmRadiusMeters,typicalWaterDepthMeters=session.waterDepthMeters?:session.minObservedDepthMeters,typicalRodeLengthMeters=session.rodeLengthMeters,sourceSessionId=session.id,coordinateSource=position.source.name,coordinateUncertaintyMeters=position.uncertaintyMeters),dismiss={saveSession=null}){value->vm.saveAnchorage(value);saveSession=null;if(fixedTab==null)selectedTab=1}}
+    saveSession?.let{session->com.yokuli.anchorwatch.ui.anchor.anchorages.AnchorageSaveFlow(session=session,dismiss={saveSession=null},complete={saveSession=null})}
     editingAnchorage?.let{value->AnchorageEditor(value,{editingAnchorage=null}){vm.saveAnchorage(it);editingAnchorage=null}}
     detailAnchorage?.let{saved->AnchorageDetailDialog(saved,{detailAnchorage=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{detailAnchorage=null;vm.approachSavedAnchorage(saved.id)},approachEnabled=state.active==null)}
     pendingAnchorageDelete?.let{value->AlertDialog(onDismissRequest={pendingAnchorageDelete=null},title={Text(tr("Delete saved anchorage?","删除收藏锚地？"))},text={Text(tr("This removes only the saved place. Anchor session history is unchanged.","只会删除收藏地点，不影响锚泊会话历史。"))},confirmButton={Button({vm.deleteAnchorage(value.id);pendingAnchorageDelete=null},colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Delete","删除"))}},dismissButton={TextButton({pendingAnchorageDelete=null}){Text(tr("Cancel","取消"))}})}
