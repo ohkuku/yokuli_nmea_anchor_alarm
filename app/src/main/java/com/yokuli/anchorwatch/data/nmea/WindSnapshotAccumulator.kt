@@ -29,11 +29,12 @@ class WindSnapshotAccumulator(
 
     fun update(update: NmeaUpdate, elapsedMillis: Long) {
         var changed = false
-        update.trueWindDirection?.let { trueDirection = Timed(it, elapsedMillis); changed = true }
-        update.trueWindSpeedKnots?.let { trueSpeed = Timed(it, elapsedMillis); changed = true }
-        update.apparentWindSpeedKnots?.let { apparentSpeed = Timed(it, elapsedMillis); changed = true }
-        update.apparentWindAngle?.let { apparentAngle = Timed(it, elapsedMillis); changed = true }
-        update.trueWindAngle?.let { trueAngle = Timed(it, elapsedMillis); changed = true }
+        fun measured(metric:NmeaMetric)=update.measuredAt(metric)?:elapsedMillis
+        update.trueWindDirection?.takeIf{update.metricTimings.isEmpty()||update.isNumeric(NmeaMetric.TRUE_WIND_DIRECTION)}?.let { trueDirection = Timed(it, measured(NmeaMetric.TRUE_WIND_DIRECTION)); changed = true }
+        update.trueWindSpeedKnots?.takeIf{update.metricTimings.isEmpty()||update.isNumeric(NmeaMetric.TRUE_WIND_SPEED)}?.let { trueSpeed = Timed(it, measured(NmeaMetric.TRUE_WIND_SPEED)); changed = true }
+        update.apparentWindSpeedKnots?.takeIf{update.metricTimings.isEmpty()||update.isNumeric(NmeaMetric.APPARENT_WIND_SPEED)}?.let { apparentSpeed = Timed(it, measured(NmeaMetric.APPARENT_WIND_SPEED)); changed = true }
+        update.apparentWindAngle?.takeIf{update.metricTimings.isEmpty()||update.isNumeric(NmeaMetric.APPARENT_WIND_ANGLE)}?.let { apparentAngle = Timed(it, measured(NmeaMetric.APPARENT_WIND_ANGLE)); changed = true }
+        update.trueWindAngle?.takeIf{update.metricTimings.isEmpty()||update.isNumeric(NmeaMetric.TRUE_WIND_ANGLE)}?.let { trueAngle = Timed(it, measured(NmeaMetric.TRUE_WIND_ANGLE)); changed = true }
         if (changed) sequence++
     }
 

@@ -31,7 +31,24 @@ class NmeaStreamSplitter(private val maxLength:Int=1024) {
  }
 }
 
-data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val magneticVariationDegrees:Double?=null,val depth:Double?=null,val depthObservation:DepthObservation?=null,val speedThroughWaterKnots:Double?=null,val hdop:Double?=null,val fixQuality:Int?=null,val satellites:Int?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String,val sentenceId:String="",val holdAllowed:Boolean=true)
+enum class NmeaMeasurementConfirmation { NUMERIC_MEASUREMENT, UNCHANGED_HEARTBEAT }
+enum class NmeaMetric {
+ POSITION,SOG,COG,TRUE_HEADING,MAGNETIC_HEADING,MAGNETIC_VARIATION,DEPTH,SPEED_THROUGH_WATER,
+ HDOP,FIX_QUALITY,SATELLITES,TRUE_WIND_DIRECTION,APPARENT_WIND_ANGLE,TRUE_WIND_ANGLE,
+ TRUE_WIND_SPEED,APPARENT_WIND_SPEED,
+}
+data class NmeaMetricTiming(
+ val measuredElapsedRealtime:Long,
+ val sourceHeartbeatElapsedRealtime:Long,
+ val confirmation:NmeaMeasurementConfirmation,
+)
+
+data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val cog:Double?=null,val trueHeading:Double?=null,val magneticHeading:Double?=null,val magneticVariationDegrees:Double?=null,val depth:Double?=null,val depthObservation:DepthObservation?=null,val speedThroughWaterKnots:Double?=null,val hdop:Double?=null,val fixQuality:Int?=null,val satellites:Int?=null,val trueWindDirection:Double?=null,val windSpeedKnots:Double?=null,val apparentWindAngle:Double?=null,val trueWindAngle:Double?=null,val trueWindSpeedKnots:Double?=null,val apparentWindSpeedKnots:Double?=null,val utcMillis:Long?=null,val type:String,val sentenceId:String="",val holdAllowed:Boolean=true,val metricTimings:Map<NmeaMetric,NmeaMetricTiming> = emptyMap()){
+ fun measuredAt(metric:NmeaMetric):Long?=metricTimings[metric]?.measuredElapsedRealtime
+ fun heartbeatAt(metric:NmeaMetric):Long?=metricTimings[metric]?.sourceHeartbeatElapsedRealtime
+ fun confirmation(metric:NmeaMetric):NmeaMeasurementConfirmation?=metricTimings[metric]?.confirmation
+ fun isNumeric(metric:NmeaMetric)=confirmation(metric)==NmeaMeasurementConfirmation.NUMERIC_MEASUREMENT
+}
 
 /**
  * Some marine gateways send a complete value once and then repeat the same
@@ -47,24 +64,24 @@ class NmeaUpdateRetainer {
  private val held=linkedMapOf<String,NmeaUpdate>()
  @Synchronized fun accept(update:NmeaUpdate,elapsed:Long,rawSentence:String):NmeaUpdate{
   val key=update.sentenceId.ifBlank{update.type}.uppercase()
-  if(key.isBlank())return update
-  if(!update.holdAllowed){held.remove(key);return update}
-  val previous=held[key]
-  fun carriedPosition():NavigationFix?=(update.position?:previous?.position)?.let{fix->
-   if(update.position!=null)fix else fix.copy(receivedElapsedRealtime=elapsed,sourceSentence=rawSentence)
-  }
+ if(key.isBlank())return update
+ if(!update.holdAllowed){held.remove(key);return update}
+ val previous=held[key]
+  // Position is never retained. A blank coordinate heartbeat is useful for
+  // transport health, but is not a new geographic fix.
+  val currentPosition=update.position
   val carriedDepth=(update.depthObservation?:previous?.depthObservation)?.let{observation->
    val previousDepth=previous?.depthObservation
    if(update.depthObservation!=null){
     val offset=observation.offsetMeters?:previousDepth?.offsetMeters
     observation.copy(offsetMeters=offset,reference=if(observation.offsetMeters==null&&previousDepth!=null)previousDepth.reference else observation.reference,receivedElapsedRealtime=elapsed,sourceSentence=rawSentence)
-   }else observation.copy(receivedElapsedRealtime=elapsed,sourceSentence=rawSentence)
+   }else observation
   }
   val variation=update.magneticVariationDegrees?:previous?.magneticVariationDegrees
   val magnetic=update.magneticHeading?:previous?.magneticHeading
   val resolvedTrueHeading=update.trueHeading?:if((update.magneticHeading!=null||update.magneticVariationDegrees!=null)&&magnetic!=null&&variation!=null)(magnetic+variation+360.0)%360.0 else previous?.trueHeading
-  val merged=update.copy(
-   position=carriedPosition(),sog=update.sog?:previous?.sog,cog=update.cog?:previous?.cog,
+  val mergedValues=update.copy(
+   position=currentPosition,sog=update.sog?:previous?.sog,cog=update.cog?:previous?.cog,
    trueHeading=resolvedTrueHeading,magneticHeading=magnetic,magneticVariationDegrees=variation,
    depth=update.depth?:previous?.depth,depthObservation=carriedDepth,
    speedThroughWaterKnots=update.speedThroughWaterKnots?:previous?.speedThroughWaterKnots,
@@ -74,6 +91,32 @@ class NmeaUpdateRetainer {
    trueWindSpeedKnots=update.trueWindSpeedKnots?:previous?.trueWindSpeedKnots,apparentWindSpeedKnots=update.apparentWindSpeedKnots?:previous?.apparentWindSpeedKnots,
    utcMillis=update.utcMillis?:previous?.utcMillis,
   )
+  val numeric=buildSet{
+   if(update.position!=null)add(NmeaMetric.POSITION);if(update.sog!=null)add(NmeaMetric.SOG);if(update.cog!=null)add(NmeaMetric.COG)
+   if(update.trueHeading!=null)add(NmeaMetric.TRUE_HEADING);if(update.magneticHeading!=null)add(NmeaMetric.MAGNETIC_HEADING);if(update.magneticVariationDegrees!=null)add(NmeaMetric.MAGNETIC_VARIATION)
+   // A new magnetic heading or variation produces a genuinely new computed
+   // true heading even when its other operand was retained.
+   if(resolvedTrueHeading!=null&&(update.trueHeading!=null||update.magneticHeading!=null||update.magneticVariationDegrees!=null))add(NmeaMetric.TRUE_HEADING)
+   if(update.depth!=null)add(NmeaMetric.DEPTH);if(update.speedThroughWaterKnots!=null)add(NmeaMetric.SPEED_THROUGH_WATER)
+   if(update.hdop!=null)add(NmeaMetric.HDOP);if(update.fixQuality!=null)add(NmeaMetric.FIX_QUALITY);if(update.satellites!=null)add(NmeaMetric.SATELLITES)
+   if(update.trueWindDirection!=null)add(NmeaMetric.TRUE_WIND_DIRECTION);if(update.apparentWindAngle!=null)add(NmeaMetric.APPARENT_WIND_ANGLE);if(update.trueWindAngle!=null)add(NmeaMetric.TRUE_WIND_ANGLE)
+   if(update.trueWindSpeedKnots!=null)add(NmeaMetric.TRUE_WIND_SPEED);if(update.apparentWindSpeedKnots!=null)add(NmeaMetric.APPARENT_WIND_SPEED)
+  }
+  fun timing(metric:NmeaMetric,valuePresent:Boolean):NmeaMetricTiming?=when{
+   metric in numeric->NmeaMetricTiming(elapsed,elapsed,NmeaMeasurementConfirmation.NUMERIC_MEASUREMENT)
+   valuePresent->previous?.metricTimings?.get(metric)?.copy(sourceHeartbeatElapsedRealtime=elapsed,confirmation=NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT)
+   else->null
+  }
+  val timings=buildMap{
+   timing(NmeaMetric.POSITION,mergedValues.position!=null)?.let{put(NmeaMetric.POSITION,it)}
+   timing(NmeaMetric.SOG,mergedValues.sog!=null)?.let{put(NmeaMetric.SOG,it)};timing(NmeaMetric.COG,mergedValues.cog!=null)?.let{put(NmeaMetric.COG,it)}
+   timing(NmeaMetric.TRUE_HEADING,mergedValues.trueHeading!=null)?.let{put(NmeaMetric.TRUE_HEADING,it)};timing(NmeaMetric.MAGNETIC_HEADING,mergedValues.magneticHeading!=null)?.let{put(NmeaMetric.MAGNETIC_HEADING,it)};timing(NmeaMetric.MAGNETIC_VARIATION,mergedValues.magneticVariationDegrees!=null)?.let{put(NmeaMetric.MAGNETIC_VARIATION,it)}
+   timing(NmeaMetric.DEPTH,mergedValues.depth!=null)?.let{put(NmeaMetric.DEPTH,it)};timing(NmeaMetric.SPEED_THROUGH_WATER,mergedValues.speedThroughWaterKnots!=null)?.let{put(NmeaMetric.SPEED_THROUGH_WATER,it)}
+   timing(NmeaMetric.HDOP,mergedValues.hdop!=null)?.let{put(NmeaMetric.HDOP,it)};timing(NmeaMetric.FIX_QUALITY,mergedValues.fixQuality!=null)?.let{put(NmeaMetric.FIX_QUALITY,it)};timing(NmeaMetric.SATELLITES,mergedValues.satellites!=null)?.let{put(NmeaMetric.SATELLITES,it)}
+   timing(NmeaMetric.TRUE_WIND_DIRECTION,mergedValues.trueWindDirection!=null)?.let{put(NmeaMetric.TRUE_WIND_DIRECTION,it)};timing(NmeaMetric.APPARENT_WIND_ANGLE,mergedValues.apparentWindAngle!=null)?.let{put(NmeaMetric.APPARENT_WIND_ANGLE,it)};timing(NmeaMetric.TRUE_WIND_ANGLE,mergedValues.trueWindAngle!=null)?.let{put(NmeaMetric.TRUE_WIND_ANGLE,it)}
+   timing(NmeaMetric.TRUE_WIND_SPEED,mergedValues.trueWindSpeedKnots!=null)?.let{put(NmeaMetric.TRUE_WIND_SPEED,it)};timing(NmeaMetric.APPARENT_WIND_SPEED,mergedValues.apparentWindSpeedKnots!=null)?.let{put(NmeaMetric.APPARENT_WIND_SPEED,it)}
+  }
+  val merged=mergedValues.copy(metricTimings=timings)
   held[key]=merged
   return merged
  }

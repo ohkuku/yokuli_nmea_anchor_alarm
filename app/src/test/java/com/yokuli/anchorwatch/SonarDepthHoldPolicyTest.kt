@@ -3,6 +3,9 @@ package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldPolicy
 import com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState
 import com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldTracker
+import com.yokuli.anchorwatch.domain.sonar.SonarHeldPosition
+import com.yokuli.anchorwatch.data.nmea.Nmea0183Parser
+import com.yokuli.anchorwatch.data.nmea.NmeaUpdateRetainer
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
 import com.yokuli.anchorwatch.domain.sonar.DepthProvenance
 import com.yokuli.anchorwatch.domain.sonar.DepthSentenceType
@@ -15,6 +18,7 @@ import com.yokuli.anchorwatch.domain.condition.DepthGuardEngine
 import com.yokuli.anchorwatch.domain.condition.DepthGuardStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,6 +32,16 @@ class SonarDepthHoldPolicyTest {
     @Test fun warningRemainsUsable(){val byTime=SonarDepthHoldPolicy.evaluate(true,120_001,10.0);assertEquals(SonarDepthHoldState.WARNING,byTime.state);assertTrue(byTime.mayRecord);assertEquals(SonarDepthHoldState.WARNING,SonarDepthHoldPolicy.evaluate(true,10_000,200.1).state)}
     @Test fun timeExpiryRequiresStop(){val value=SonarDepthHoldPolicy.evaluate(true,300_001,20.0);assertEquals(SonarDepthHoldState.EXPIRED_TIME,value.state);assertTrue(value.mustStop);assertFalse(value.mayRecord)}
     @Test fun distanceExpiryRequiresStop(){val value=SonarDepthHoldPolicy.evaluate(true,10_000,500.1);assertEquals(SonarDepthHoldState.EXPIRED_DISTANCE,value.state);assertTrue(value.mustStop);assertFalse(value.mayRecord)}
+    @Test fun blankDbtHeartbeatCannotResetTravelledDistanceGuard(){
+        val parser=Nmea0183Parser();val retainer=NmeaUpdateRetainer()
+        val real=retainer.accept(parser.parse("\$SDDBT,20.0,f,6.1,M,3.3,F",false,1_000)!!,1_000,"real")
+        val blank=retainer.accept(parser.parse("\$SDDBT,,f,,M,,F",false,5_000)!!,5_000,"blank")
+        assertEquals(1_000,blank.depthObservation!!.receivedElapsedRealtime)
+        val tracker=SonarDepthHoldTracker();tracker.acceptRealDepth(real.depthObservation!!,DepthProvenance.from(real.depthObservation,0.0),7,fix(0.0,1_000))
+        var last: SonarHeldPosition? = null
+        for(meters in 10..510 step 10)last=tracker.acceptPosition(fix(meters.toDouble(),5_000L+meters))
+        assertNotNull(last);assertEquals(SonarDepthHoldState.EXPIRED_DISTANCE,last!!.decision.state)
+    }
     @Test fun oneRealDepthDrivesSeveralGpsPositionsWithExplicitAge(){
         val tracker=SonarDepthHoldTracker();val observed=observation(6.1,1_000);tracker.acceptRealDepth(observed,DepthProvenance.from(observed,0.0),7,fix(0.0,1_000))
         val a=tracker.acceptPosition(fix(2.0,2_000))!!;val b=tracker.acceptPosition(fix(4.0,4_000))!!;val c=tracker.acceptPosition(fix(6.0,7_000))!!

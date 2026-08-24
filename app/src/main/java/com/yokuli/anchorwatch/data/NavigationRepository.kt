@@ -116,8 +116,12 @@ data class NmeaInstrumentState(
    headingTrue=selectedHeading?.trueDegrees?.let{it to selectedHeading.receivedElapsedRealtime}
    headingMag=selectedHeading?.magneticDegrees?.let{it to selectedHeading.receivedElapsedRealtime}
    if(selectedHeading?.trueDegrees!=null&&(previousHeadingSource!=selectedHeading.sourceId||selectedHeading.receivedElapsedRealtime==now))headingSampleSequence++
-   liveWind.accept(u.copy(trueHeading=selectedHeading?.takeIf{it.receivedElapsedRealtime==now}?.trueDegrees),now);u.depthObservation?.let{liveDepth.accept(it)}
-   u.depth?.let{depth=it to now};u.depthObservation?.let(_depthObservations::tryEmit);u.speedThroughWaterKnots?.let{speedThroughWater=it to now};u.sog?.let{sog=it to now};u.cog?.let{cog=it to now};u.hdop?.let{hdop=it to now};u.fixQuality?.let{fixQuality=it to now};u.satellites?.let{satellites=it to now};u.position?.altitudeMeters?.let{altitude=it to now}
+   liveWind.accept(u.copy(trueHeading=selectedHeading?.takeIf{it.receivedElapsedRealtime==now}?.trueDegrees),now)
+   if(u.isNumeric(NmeaMetric.DEPTH))u.depthObservation?.let{liveDepth.accept(it);_depthObservations.tryEmit(it)}
+   fun measured(metric:NmeaMetric)=u.measuredAt(metric)?:now
+   u.depth?.let{depth=it to measured(NmeaMetric.DEPTH)};u.speedThroughWaterKnots?.let{speedThroughWater=it to measured(NmeaMetric.SPEED_THROUGH_WATER)}
+   u.sog?.let{sog=it to measured(NmeaMetric.SOG)};u.cog?.let{cog=it to measured(NmeaMetric.COG)};u.hdop?.let{hdop=it to measured(NmeaMetric.HDOP)}
+   u.fixQuality?.let{fixQuality=it to measured(NmeaMetric.FIX_QUALITY)};u.satellites?.let{satellites=it to measured(NmeaMetric.SATELLITES)};u.position?.altitudeMeters?.let{altitude=it to measured(NmeaMetric.POSITION)}
    wind.update(u,now)
    _instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater,selectedHeading?.sourceId,headingResolution.candidates,headingResolution.conflict,headingResolution.conflictDegrees,headingResolution.pinnedSourceUnavailable)
    u.position?.let{position->

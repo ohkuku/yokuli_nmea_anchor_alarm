@@ -44,8 +44,20 @@ class NmeaFieldDecoderTest {
         assertEquals(1013.0,first.first{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE}.value!!,.001)
         val held=accept("WIMDA,,I,,B,18.2,C,,,,,,,245.0,T,,M,14.0,N,7.2,M",500)
         val pressure=held.first{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE}
-        assertEquals(1013.0,pressure.value!!,.001);assertEquals(500,pressure.receivedElapsedRealtime)
+        assertEquals(1013.0,pressure.value!!,.001);assertEquals(100,pressure.receivedElapsedRealtime)
+        assertEquals(500,pressure.sourceHeartbeatElapsedRealtime)
+        assertEquals(com.yokuli.anchorwatch.data.nmea.NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT,pressure.confirmation)
         val otherTalker=accept("IIMDA,,I,,B,,,,,,,,,,,,,,,",600)
         assertEquals(1,otherTalker.count{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE})
+    }
+
+    @Test fun blankMdaHeartbeatDoesNotCreatePressureMeasurementSamples(){
+        val cache=NmeaFieldRetentionBuffer()
+        fun accept(body:String,elapsed:Long)=NmeaChecksum.append(body).let{line->cache.accept(NmeaFieldDecoder.decode(line,elapsed),NmeaFieldDecoder.heartbeat(line),line,elapsed)}
+        accept("WIMDA,29.91,I,1.013,B,,,,,,,,,,,,,,,",1_000)
+        val held=accept("WIMDA,,I,,B,,,,,,,,,,,,,,,",61_000).single{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE}
+        assertEquals(1_000,held.receivedElapsedRealtime)
+        assertEquals(61_000,held.sourceHeartbeatElapsedRealtime)
+        assertEquals(com.yokuli.anchorwatch.data.nmea.NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT,held.confirmation)
     }
 }

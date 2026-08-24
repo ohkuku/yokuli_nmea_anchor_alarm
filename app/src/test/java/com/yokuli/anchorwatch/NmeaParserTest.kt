@@ -36,16 +36,21 @@ class NmeaParserTest{private val p=Nmea0183Parser()
   assertEquals("ROT",p.parse("\$IIROT,2.3,A",false)!!.type)
   assertEquals("XDR",p.parse("\$IIXDR,A,3.1,D,HEEL",false)!!.type)
  }
- @Test fun blankFieldsRefreshTheSamePhysicalSourceWithoutErasingItsValue(){
+ @Test fun blankFieldsKeepValuesButDoNotRefreshMeasurementTime(){
   val retainer=NmeaUpdateRetainer()
   val depth=retainer.accept(p.parse("\$IIDBT,16.4,f,5.0,M,2.7,F",false,100)!!,100,"\$IIDBT,16.4,f,5.0,M,2.7,F")
   val heldDepth=retainer.accept(p.parse("\$IIDBT,,f,,M,,F",false,250)!!,250,"\$IIDBT,,f,,M,,F")
   assertEquals(5.0,depth.depth!!,.001);assertEquals(5.0,heldDepth.depth!!,.001)
-  assertEquals(250,heldDepth.depthObservation!!.receivedElapsedRealtime)
+  assertEquals(100,heldDepth.depthObservation!!.receivedElapsedRealtime)
+  assertEquals(100L,heldDepth.measuredAt(NmeaMetric.DEPTH))
+  assertEquals(250L,heldDepth.heartbeatAt(NmeaMetric.DEPTH))
+  assertEquals(NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT,heldDepth.confirmation(NmeaMetric.DEPTH))
 
   val heading=retainer.accept(p.parse("\$IIHDT,123.4,T",false,300)!!,300,"\$IIHDT,123.4,T")
   val heldHeading=retainer.accept(p.parse("\$IIHDT,,T",false,400)!!,400,"\$IIHDT,,T")
   assertEquals(heading.trueHeading,heldHeading.trueHeading)
+  assertEquals(300L,heldHeading.measuredAt(NmeaMetric.TRUE_HEADING))
+  assertEquals(400L,heldHeading.heartbeatAt(NmeaMetric.TRUE_HEADING))
 
   retainer.accept(p.parse("\$IIHDG,100.0,,,10.0,E",false,500)!!,500,"\$IIHDG,100.0,,,10.0,E")
   val changedMagnetic=retainer.accept(p.parse("\$IIHDG,110.0,,,,",false,600)!!,600,"\$IIHDG,110.0,,,,")
@@ -54,6 +59,13 @@ class NmeaParserTest{private val p=Nmea0183Parser()
   retainer.accept(p.parse("\$IIDPT,5.0,-1.2",false,700)!!,700,"\$IIDPT,5.0,-1.2")
   val changedDepth=retainer.accept(p.parse("\$IIDPT,6.0,",false,800)!!,800,"\$IIDPT,6.0,")
   assertEquals(-1.2,changedDepth.depthObservation!!.offsetMeters!!,.001);assertEquals(DepthReference.BELOW_KEEL,changedDepth.depthObservation!!.reference)
+ }
+ @Test fun blankRmcCoordinatesNeverBecomeANewFix(){
+  val retainer=NmeaUpdateRetainer()
+  val first=retainer.accept(p.parse("\$GPRMC,123519,A,4807.038,N,01131.000,E,5.2,84.4,230394,,,A",false,100)!!,100,"first")
+  val heartbeat=retainer.accept(p.parse("\$GPRMC,123520,A,,,,,5.2,84.4,230394,,,A",false,500)!!,500,"blank")
+  assertNotNull(first.position);assertNull(heartbeat.position);assertNull(heartbeat.confirmation(NmeaMetric.POSITION))
+  assertEquals(500L,heartbeat.measuredAt(NmeaMetric.SOG));assertEquals(NmeaMeasurementConfirmation.NUMERIC_MEASUREMENT,heartbeat.confirmation(NmeaMetric.SOG))
  }
  @Test fun retentionNeverCrossesTalkersAndExplicitInvalidityClearsTheSource(){
   val retainer=NmeaUpdateRetainer()

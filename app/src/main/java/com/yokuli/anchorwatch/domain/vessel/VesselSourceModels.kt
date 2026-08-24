@@ -54,6 +54,7 @@ data class VesselSourceCandidate<T>(
     val quality:VesselDataQuality=VesselDataQuality.GOOD,
     val validity:CandidateValidity=CandidateValidity.ELIGIBLE,
     val provenance:VesselProvenance?=null,
+    val sourceHeartbeatElapsedRealtime:Long=receivedElapsedRealtime,
 )
 
 data class VesselSourceConflict(

@@ -43,6 +43,6 @@ object NmeaFieldCandidateMapper{
             NmeaFieldSemantic.CURRENT_SET_TRUE,NmeaFieldSemantic.BEARING_TO_WAYPOINT,NmeaFieldSemantic.TRUE_WIND_DIRECTION->VesselReference.TrueNorth
             else->null
         }
-        return VesselSourceCandidate(metric,value,source,VesselSourceClass.BOAT_NMEA,reference,field.receivedElapsedRealtime,quality=VesselDataQuality.GOOD,provenance=VesselProvenance.Nmea(source))
+        return VesselSourceCandidate(metric,value,source,VesselSourceClass.BOAT_NMEA,reference,field.receivedElapsedRealtime,quality=VesselDataQuality.GOOD,provenance=VesselProvenance.Nmea(source),sourceHeartbeatElapsedRealtime=field.sourceHeartbeatElapsedRealtime)
     }
 }

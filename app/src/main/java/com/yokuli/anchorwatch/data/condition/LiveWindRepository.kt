@@ -31,12 +31,14 @@ class LiveWindRepository @Inject constructor(){
     private var mwdDirection:TimedWindValue?=null
     @Synchronized fun accept(update:NmeaUpdate,elapsed:Long){
         var value=_state.value
-        update.trueHeading?.let{physicalHeading=TimedWindValue(normalize(it),elapsed)}
-        update.trueWindSpeedKnots?.let{value=value.copy(trueSpeed=TimedWindValue(it,elapsed))}
-        update.apparentWindSpeedKnots?.let{value=value.copy(apparentSpeed=TimedWindValue(it,elapsed))}
-        update.apparentWindAngle?.let{value=value.copy(apparentAngle=TimedWindValue(it,elapsed))}
-        update.trueWindAngle?.let{angle->value=value.copy(trueAngle=TimedWindValue(angle,elapsed))}
-        update.trueWindDirection?.let{direction->mwdDirection=TimedWindValue(normalize(direction),elapsed)}
+        fun numeric(metric:com.yokuli.anchorwatch.data.nmea.NmeaMetric)=update.metricTimings.isEmpty()||update.isNumeric(metric)
+        fun measured(metric:com.yokuli.anchorwatch.data.nmea.NmeaMetric)=update.measuredAt(metric)?:elapsed
+        update.trueHeading?.takeIf{numeric(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_HEADING)}?.let{physicalHeading=TimedWindValue(normalize(it),measured(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_HEADING))}
+        update.trueWindSpeedKnots?.takeIf{numeric(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_WIND_SPEED)}?.let{value=value.copy(trueSpeed=TimedWindValue(it,measured(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_WIND_SPEED)))}
+        update.apparentWindSpeedKnots?.takeIf{numeric(com.yokuli.anchorwatch.data.nmea.NmeaMetric.APPARENT_WIND_SPEED)}?.let{value=value.copy(apparentSpeed=TimedWindValue(it,measured(com.yokuli.anchorwatch.data.nmea.NmeaMetric.APPARENT_WIND_SPEED)))}
+        update.apparentWindAngle?.takeIf{numeric(com.yokuli.anchorwatch.data.nmea.NmeaMetric.APPARENT_WIND_ANGLE)}?.let{value=value.copy(apparentAngle=TimedWindValue(it,measured(com.yokuli.anchorwatch.data.nmea.NmeaMetric.APPARENT_WIND_ANGLE)))}
+        update.trueWindAngle?.takeIf{numeric(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_WIND_ANGLE)}?.let{angle->value=value.copy(trueAngle=TimedWindValue(angle,measured(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_WIND_ANGLE)))}
+        update.trueWindDirection?.takeIf{numeric(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_WIND_DIRECTION)}?.let{direction->mwdDirection=TimedWindValue(normalize(direction),measured(com.yokuli.anchorwatch.data.nmea.NmeaMetric.TRUE_WIND_DIRECTION))}
         // HDT and MWV-T are coherent in either arrival order. Apparent angle is
         // deliberately excluded; this is not a home-grown apparent→true solve.
         val heading=physicalHeading;val angle=value.trueAngle

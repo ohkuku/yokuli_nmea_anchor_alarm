@@ -42,7 +42,8 @@ class NmeaHeadingResolver(
             candidates.remove(id)
             if(selectedId==id)selectedId=null
         }else if(update.type in HEADING_TYPES&&(update.trueHeading!=null||update.magneticHeading!=null)){
-            candidates[id]=NmeaHeadingCandidate(id,update.type,update.trueHeading?.normalized(),update.magneticHeading?.normalized(),now)
+            val measuredAt=listOfNotNull(update.measuredAt(NmeaMetric.TRUE_HEADING),update.measuredAt(NmeaMetric.MAGNETIC_HEADING)).maxOrNull()?:now
+            candidates[id]=NmeaHeadingCandidate(id,update.type,update.trueHeading?.normalized(),update.magneticHeading?.normalized(),measuredAt)
         }
         return resolve(now)
     }

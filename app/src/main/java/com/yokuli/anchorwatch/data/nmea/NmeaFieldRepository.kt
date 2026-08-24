@@ -41,6 +41,8 @@ data class NmeaFieldObservation(
     val unit:String?=null,
     val receivedElapsedRealtime:Long,
     val rawSentence:String,
+    val sourceHeartbeatElapsedRealtime:Long=receivedElapsedRealtime,
+    val confirmation:NmeaMeasurementConfirmation=NmeaMeasurementConfirmation.NUMERIC_MEASUREMENT,
 ){
     fun isFresh(nowElapsed:Long,maxAgeMillis:Long=30_000L)=nowElapsed-receivedElapsedRealtime in 0L..maxAgeMillis
 }
@@ -56,10 +58,10 @@ class NmeaFieldRetentionBuffer(private val retentionMillis:Long=30_000L){
         }else if(heartbeat!=null){
             val updated=decoded.mapTo(mutableSetOf()){it.key.stableId}
             val carried=held.entries.filter{(_,value)->value.key.talker==heartbeat.talker&&value.key.sentenceType==heartbeat.sentenceType&&value.key.stableId !in updated}
-            carried.forEach{(id,value)->held[id]=value.copy(receivedElapsedRealtime=elapsed,rawSentence=rawLine.trim())}
+            carried.forEach{(id,value)->held[id]=value.copy(sourceHeartbeatElapsedRealtime=elapsed,confirmation=NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT)}
         }
         decoded.forEach{held[it.key.stableId]=it}
-        held.entries.removeAll{elapsed-it.value.receivedElapsedRealtime>retentionMillis}
+        held.entries.removeAll{elapsed-it.value.sourceHeartbeatElapsedRealtime>retentionMillis}
         return held.values.sortedWith(compareBy<NmeaFieldObservation>{it.key.sentenceType}.thenBy{it.key.fieldIndex}.thenBy{it.key.transducerName.orEmpty()})
     }
     @Synchronized fun clear(){held.clear()}

@@ -7,6 +7,7 @@ import com.yokuli.anchorwatch.data.condition.LiveWindRepository
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldObservation
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldRepository
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldSemantic
+import com.yokuli.anchorwatch.data.nmea.NmeaMeasurementConfirmation
 import com.yokuli.anchorwatch.data.nmea.input.NmeaFieldCandidateMapper
 import com.yokuli.anchorwatch.domain.model.HeadingSource
 import com.yokuli.anchorwatch.domain.sonar.DepthReference
@@ -74,11 +75,13 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         scope.launch{nmeaFields.fields.collect{fields->
             sourceRegistry.publishAll(fields.mapNotNull{NmeaFieldCandidateMapper.map(it,navigation.activeProfileStableId(),navigation.connectionGeneration())})
             fun numeric(semantic:NmeaFieldSemantic)=fields.filter{it.key.semantic==semantic&&it.value!=null}.maxByOrNull{it.receivedElapsedRealtime}
+            fun newlyMeasured(semantic:NmeaFieldSemantic)=fields.filter{it.key.semantic==semantic&&it.value!=null&&it.confirmation==NmeaMeasurementConfirmation.NUMERIC_MEASUREMENT}.maxByOrNull{it.receivedElapsedRealtime}
             fun textual(semantic:NmeaFieldSemantic)=fields.filter{it.key.semantic==semantic&&!it.text.isNullOrBlank()}.maxByOrNull{it.receivedElapsedRealtime}
             fun update(current:VesselObservation<Double>,semantic:NmeaFieldSemantic)=numeric(semantic)?.let{fieldObservation(it,it.value!!)}?:current
             rateOfTurn=update(rateOfTurn,NmeaFieldSemantic.ROT);rudderAngle=update(rudderAngle,NmeaFieldSemantic.RUDDER_ANGLE);waterTemperature=update(waterTemperature,NmeaFieldSemantic.WATER_TEMPERATURE);airTemperature=update(airTemperature,NmeaFieldSemantic.AIR_TEMPERATURE)
             currentSet=update(currentSet,NmeaFieldSemantic.CURRENT_SET_TRUE);currentDrift=update(currentDrift,NmeaFieldSemantic.CURRENT_DRIFT);crossTrackError=update(crossTrackError,NmeaFieldSemantic.CROSS_TRACK_ERROR);waypointBearing=update(waypointBearing,NmeaFieldSemantic.BEARING_TO_WAYPOINT);waypointDistance=update(waypointDistance,NmeaFieldSemantic.DISTANCE_TO_WAYPOINT);totalLog=update(totalLog,NmeaFieldSemantic.TOTAL_LOG);tripLog=update(tripLog,NmeaFieldSemantic.TRIP_LOG)
-            numeric(NmeaFieldSemantic.AIR_PRESSURE)?.let{field->val value=field.value!!;val sourceId="nmea:${navigation.activeProfileStableId()}:${navigation.connectionGeneration()}:field:${field.key.stableId}";recordPressure(sourceId,field.receivedElapsedRealtime,value);pressureValue=fieldObservation(field,value)}
+            numeric(NmeaFieldSemantic.AIR_PRESSURE)?.let{field->pressureValue=fieldObservation(field,field.value!!)}
+            newlyMeasured(NmeaFieldSemantic.AIR_PRESSURE)?.let{field->val sourceId="nmea:${navigation.activeProfileStableId()}:${navigation.connectionGeneration()}:field:${field.key.stableId}";recordPressure(sourceId,field.receivedElapsedRealtime,field.value!!)}
             numeric(NmeaFieldSemantic.APPARENT_WIND_ANGLE)?.let{apparentWindAngle=fieldObservation(it,it.value!!)};numeric(NmeaFieldSemantic.APPARENT_WIND_SPEED)?.let{apparentWindSpeed=fieldObservation(it,it.value!!)}
             numeric(NmeaFieldSemantic.TRUE_WIND_ANGLE)?.let{trueWindAngle=fieldObservation(it,it.value!!)};numeric(NmeaFieldSemantic.TRUE_WIND_SPEED)?.let{trueWindSpeed=fieldObservation(it,it.value!!)}
             numeric(NmeaFieldSemantic.TRUE_WIND_DIRECTION)?.let{trueWindDirection=fieldObservation(it,it.value!!)}
@@ -160,7 +163,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         return arbitrator.select(metric,candidates,MetricSourcePreference(preference,resolvedPin,allowPinnedFallback),now)
     }
     private fun <T> selectionObservation(selection:VesselSourceSelection<T>):VesselObservation<T>?=selection.selected?.let{candidate->
-        VesselObservation(value=candidate.value,source=candidate.sourceClass.toLegacySource(),observedAtUtcMillis=candidate.observedAtUtcMillis,receivedElapsedRealtime=candidate.receivedElapsedRealtime,quality=candidate.quality,freshness=VesselDataFreshness.FRESH,provenance=candidate.source.displayName,sourceIdentity=candidate.source,sourceClass=candidate.sourceClass,reference=candidate.reference,provenanceDetail=candidate.provenance,conflict=selection.conflict.takeIf{it.active})
+        VesselObservation(value=candidate.value,source=candidate.sourceClass.toLegacySource(),observedAtUtcMillis=candidate.observedAtUtcMillis,receivedElapsedRealtime=candidate.receivedElapsedRealtime,quality=candidate.quality,freshness=VesselDataFreshness.FRESH,provenance=candidate.source.displayName,sourceIdentity=candidate.source,sourceClass=candidate.sourceClass,reference=candidate.reference,provenanceDetail=candidate.provenance,conflict=selection.conflict.takeIf{it.active},sourceHeartbeatElapsedRealtime=candidate.sourceHeartbeatElapsedRealtime)
     }
     private fun <T> classify(value:VesselObservation<T>,now:Long,fresh:Long,held:Long)=VesselFreshnessPolicy.classify(value,now,fresh,held)
     private fun <T> observation(value:T,source:VesselDataSource,received:Long?,observed:Long?,provenance:String?,quality:VesselDataQuality=VesselDataQuality.GOOD)=VesselObservation(value,source,observed,received,quality,VesselDataFreshness.FRESH,provenance)
