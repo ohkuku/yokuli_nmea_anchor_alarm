@@ -22,6 +22,7 @@ class VesselPositionRepository @Inject constructor(navigation:NavigationReposito
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     init{
         scope.launch{navigation.fix.filterNotNull().collect{ingestBoat(it)}}
+        scope.launch{navigation.sourceInvalidations.collect{event->if(VesselMetricId.POSITION in event.affectedMetrics)resetBoatGeneration()}}
         scope.launch{systemLocation.fix.filterNotNull().collect{ingestPhone(it)}}
         scope.launch{navigation.transportDiagnostics.map{it.connectionGeneration}.distinctUntilChanged().drop(1).collect{resetBoatGeneration()}}
     }

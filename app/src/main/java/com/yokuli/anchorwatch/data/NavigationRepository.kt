@@ -7,6 +7,7 @@ import com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard
 import com.yokuli.anchorwatch.data.vessel.VesselSourceRegistry
 import com.yokuli.anchorwatch.domain.model.*
 import com.yokuli.anchorwatch.domain.sonar.DepthObservation
+import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
 import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
 import com.yokuli.anchorwatch.data.condition.LiveWindRepository
 import kotlinx.coroutines.*
@@ -41,6 +42,7 @@ data class NmeaInstrumentState(
  private val _connectionStartedElapsed=MutableStateFlow<Long?>(null);val connectionStartedElapsed=_connectionStartedElapsed.asStateFlow()
  private val _validRawSentences=MutableSharedFlow<String>(extraBufferCapacity=512,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val validRawSentences=_validRawSentences.asSharedFlow()
  private val _parsedEnvelopes=MutableSharedFlow<ParsedNmeaEnvelope>(extraBufferCapacity=256,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val parsedEnvelopes=_parsedEnvelopes.asSharedFlow()
+ private val _sourceInvalidations=MutableSharedFlow<NmeaSourceInvalidation>(extraBufferCapacity=64,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val sourceInvalidations=_sourceInvalidations.asSharedFlow()
  private val _depthObservations=MutableSharedFlow<DepthObservation>(extraBufferCapacity=64,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST);val depthObservations=_depthObservations.asSharedFlow()
  private val _instruments=MutableStateFlow(NmeaInstrumentState());val instruments=_instruments.asStateFlow()
  val transportDiagnostics=connection.diagnostics
@@ -105,9 +107,13 @@ data class NmeaInstrumentState(
    if(parsed==null){val checksumBad=line.contains('*')&&!NmeaChecksum.validate(line,false);_diagnostics.value=old.copy(bytes=old.bytes+line.length+1,invalidSentences=old.invalidSentences+1,checksumErrors=old.checksumErrors+if(checksumBad)1 else 0,lastPacketElapsed=now,raw=raw);return}
    val u=updateRetainer.accept(parsed.update,now,normalized);val envelope=parsed.copy(update=u);_parsedEnvelopes.tryEmit(envelope)
    val generation=connection.diagnostics.value.connectionGeneration
-   if(!u.holdAllowed){
-    val invalidSource="nmea:${activeProfile.stableId}:$generation:${envelope.fullSentenceId}"
-    sourceRegistry.removeSources(setOf(invalidSource))
+   val fieldHeartbeat=NmeaFieldDecoder.heartbeat(normalized)
+   if(!u.holdAllowed||fieldHeartbeat?.allowsHold==false){
+    val affected=NmeaInvalidationPolicy.affectedMetrics(envelope.sentenceType)
+    if(affected.isNotEmpty()){
+     val event=NmeaSourceInvalidation("nmea:${activeProfile.stableId}:$generation:${envelope.fullSentenceId}",affected,NmeaInvalidationReason.EXPLICIT_INVALID_STATUS,now,activeProfile.stableId,generation,envelope.fullSentenceId)
+     sourceRegistry.invalidate(event);clearLegacyMeasurements(event);liveWind.invalidate(event);_sourceInvalidations.tryEmit(event)
+    }
    }
    sourceRegistry.publishAll(NmeaCandidateMapper.map(envelope,activeProfile.stableId,generation))
    val headingResolution=headingResolver.accept(u,now)
@@ -124,7 +130,7 @@ data class NmeaInstrumentState(
    u.fixQuality?.let{fixQuality=it to measured(NmeaMetric.FIX_QUALITY)};u.satellites?.let{satellites=it to measured(NmeaMetric.SATELLITES)};u.position?.altitudeMeters?.let{altitude=it to measured(NmeaMetric.POSITION)}
    wind.update(u,now)
    _instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater,selectedHeading?.sourceId,headingResolution.candidates,headingResolution.conflict,headingResolution.conflictDegrees,headingResolution.pinnedSourceUnavailable)
-   u.position?.let{position->
+   u.position?.takeIf{it.valid}?.let{position->
     val freshHeading=headingTrue.fresh(now);val windSnapshot=wind.snapshot(now);val freshTrueDirection=windSnapshot.trueDirectionDegrees;val freshTrueSpeed=windSnapshot.trueSpeedKnots;val freshApparentSpeed=windSnapshot.apparentSpeedKnots;val freshApparentAngle=windSnapshot.apparentAngleDegrees;val freshTrueAngle=windSnapshot.trueAngleDegrees
     val heldHdop=hdop?.first;val heldQuality=fixQuality?.first;val heldSatellites=satellites?.first
     val freshHdop=hdop.fresh(now,5_000)
@@ -143,6 +149,15 @@ data class NmeaInstrumentState(
  }
  private fun Pair<Double,Long>?.fresh(now:Long)=this?.takeIf{now-it.second<=10_000}?.first
  private fun <T> Pair<T,Long>?.fresh(now:Long,maxAge:Long)=this?.takeIf{now-it.second<=maxAge}?.first
+ @Synchronized private fun clearLegacyMeasurements(event:NmeaSourceInvalidation){
+  val metrics=event.affectedMetrics
+  if(VesselMetricId.POSITION in metrics)_fix.value=null
+  if(VesselMetricId.SOG in metrics)sog=null;if(VesselMetricId.COG in metrics)cog=null
+  if(VesselMetricId.SPEED_THROUGH_WATER in metrics)speedThroughWater=null
+  if(VesselMetricId.DEPTH in metrics){depth=null;liveDepth.clear()}
+  if(VesselMetricId.HEADING_TRUE in metrics)headingTrue=null;if(VesselMetricId.HEADING_MAGNETIC in metrics)headingMag=null
+  publishInstruments(event.elapsedRealtime)
+ }
  @Synchronized private fun publishInstruments(now:Long){val resolution=headingResolver.resolve(now);val selected=resolution.selected;headingTrue=selected?.trueDegrees?.let{it to selected.receivedElapsedRealtime};headingMag=selected?.magneticDegrees?.let{it to selected.receivedElapsedRealtime};_instruments.value=NmeaInstrumentState(headingTrue,headingMag,sog,cog,speedThroughWater,selected?.sourceId,resolution.candidates,resolution.conflict,resolution.conflictDegrees,resolution.pinnedSourceUnavailable)}
  @Synchronized private fun resetHeldMeasurements(){updateRetainer.clear();headingResolver.reset();sourceRegistry.clearNmea();headingTrue=null;headingMag=null;depth=null;speedThroughWater=null;sog=null;cog=null;hdop=null;fixQuality=null;satellites=null;altitude=null;headingSampleSequence=0;wind.clear();liveDepth.clear();liveWind.clear();_fix.value=null;_instruments.value=NmeaInstrumentState();_diagnostics.value=_diagnostics.value.copy(lastPacketElapsed=null,lastFixElapsed=null,lastByType=emptyMap(),raw=emptyList())}
 }

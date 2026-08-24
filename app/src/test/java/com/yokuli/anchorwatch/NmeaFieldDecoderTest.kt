@@ -60,4 +60,11 @@ class NmeaFieldDecoderTest {
         assertEquals(61_000,held.sourceHeartbeatElapsedRealtime)
         assertEquals(com.yokuli.anchorwatch.data.nmea.NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT,held.confirmation)
     }
+
+    @Test fun explicitInvalidStatusClearsRetainedGenericFieldImmediately(){
+        val cache=NmeaFieldRetentionBuffer()
+        fun accept(body:String,elapsed:Long)=NmeaChecksum.append(body).let{line->cache.accept(NmeaFieldDecoder.decode(line,elapsed),NmeaFieldDecoder.heartbeat(line),line,elapsed)}
+        assertTrue(accept("IIROT,3.2,A",100).any{it.key.semantic==NmeaFieldSemantic.ROT})
+        assertFalse(accept("IIROT,,V",200).any{it.key.semantic==NmeaFieldSemantic.ROT})
+    }
 }

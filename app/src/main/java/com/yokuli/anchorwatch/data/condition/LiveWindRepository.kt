@@ -1,6 +1,8 @@
 package com.yokuli.anchorwatch.data.condition
 
 import com.yokuli.anchorwatch.data.nmea.NmeaUpdate
+import com.yokuli.anchorwatch.data.nmea.NmeaSourceInvalidation
+import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
 import com.yokuli.anchorwatch.domain.condition.TrueWindDirectionSource
 import com.yokuli.anchorwatch.domain.condition.WindSpeedSource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,5 +54,14 @@ class LiveWindRepository @Inject constructor(){
         _state.value=value
     }
     fun clear(){physicalHeading=null;mwdDirection=null;_state.value=LiveWindState()}
+    @Synchronized fun invalidate(event:NmeaSourceInvalidation){
+        var value=_state.value
+        if(VesselMetricId.TRUE_WIND_SPEED in event.affectedMetrics)value=value.copy(trueSpeed=null)
+        if(VesselMetricId.APPARENT_WIND_SPEED in event.affectedMetrics)value=value.copy(apparentSpeed=null)
+        if(VesselMetricId.TRUE_WIND_DIRECTION in event.affectedMetrics){mwdDirection=null;value=value.copy(trueDirection=null,trueDirectionSource=null)}
+        if(VesselMetricId.APPARENT_WIND_ANGLE in event.affectedMetrics)value=value.copy(apparentAngle=null)
+        if(VesselMetricId.TRUE_WIND_ANGLE in event.affectedMetrics)value=value.copy(trueAngle=null,trueDirection=value.trueDirection.takeIf{value.trueDirectionSource!=TrueWindDirectionSource.MWV_TRUE_PLUS_HDT},trueDirectionSource=value.trueDirectionSource.takeIf{it!=TrueWindDirectionSource.MWV_TRUE_PLUS_HDT})
+        _state.value=value
+    }
     private fun normalize(value:Double)=(value%360.0+360.0)%360.0
 }
