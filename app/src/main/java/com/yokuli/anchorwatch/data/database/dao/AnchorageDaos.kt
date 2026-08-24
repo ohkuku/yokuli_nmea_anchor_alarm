@@ -20,6 +20,9 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM anchorage_regions WHERE bboxMaxLatitude>=:south AND bboxMinLatitude<=:north AND bboxMaxLongitude>=:west AND bboxMinLongitude<=:east ORDER BY userConfirmed DESC,displayName") suspend fun inBounds(south:Double,west:Double,north:Double,east:Double):List<AnchorageRegionEntity>
     @Upsert suspend fun upsert(value:AnchorageRegionEntity):Long
     @Query("SELECT COUNT(*) FROM anchorage_regions") suspend fun count():Long
+    @Query("SELECT * FROM anchorage_regions ORDER BY id") suspend fun allNow():List<AnchorageRegionEntity>
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<AnchorageRegionEntity>)
+    @Query("DELETE FROM anchorage_regions") suspend fun clear()
 }
 
 @Dao interface AnchoragePlaceDao{
@@ -47,6 +50,7 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT COUNT(*) FROM anchorage_spots") suspend fun count():Long
     @Query("SELECT COUNT(*) FROM anchorage_spots WHERE legacySavedAnchorageId IS NOT NULL") suspend fun migratedLegacyCount():Long
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<AnchorageSpotEntity>)
+    @Query("DELETE FROM anchorage_spots") suspend fun clear()
 }
 
 @Dao interface AnchorageVisitDao{
@@ -59,6 +63,7 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT COUNT(*) FROM anchorage_visits") suspend fun count():Long
     @Query("SELECT * FROM anchorage_visits ORDER BY id") suspend fun allNow():List<AnchorageVisitEntity>
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<AnchorageVisitEntity>)
+    @Query("DELETE FROM anchorage_visits") suspend fun clear()
 }
 
 @Dao interface AnchorageCollectionDao{
@@ -71,6 +76,10 @@ import kotlinx.coroutines.flow.Flow
     @Query("DELETE FROM anchorage_collection_places WHERE collectionId=:collectionId AND placeId=:placeId") suspend fun removeMembership(collectionId:Long,placeId:Long)
     @Query("SELECT * FROM anchorage_collection_places ORDER BY collectionId,placeId") suspend fun membershipsNow():List<AnchorageCollectionPlaceCrossRef>
     @Query("SELECT c.* FROM anchorage_collections c JOIN anchorage_collection_places x ON x.collectionId=c.id WHERE x.placeId=:placeId ORDER BY c.sortOrder,c.name") suspend fun forPlace(placeId:Long):List<AnchorageCollectionEntity>
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<AnchorageCollectionEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importMemberships(values:List<AnchorageCollectionPlaceCrossRef>)
+    @Query("DELETE FROM anchorage_collection_places") suspend fun clearMemberships()
+    @Query("DELETE FROM anchorage_collections") suspend fun clear()
 }
 
 @Dao interface AnchorageMetadataDao{
@@ -88,6 +97,19 @@ import kotlinx.coroutines.flow.Flow
     @Query("DELETE FROM anchorage_place_summaries WHERE placeId=:placeId") suspend fun deleteSummary(placeId:Long)
     @Query("SELECT * FROM anchorage_gis_meta WHERE `key`=:key") suspend fun meta(key:String):AnchorageGisMetaEntity?
     @Upsert suspend fun upsertMeta(value:AnchorageGisMetaEntity)
+    @Query("SELECT * FROM anchorage_place_regions ORDER BY placeId,sortOrder") suspend fun allPlaceRegions():List<AnchoragePlaceRegionCrossRef>
+    @Query("SELECT * FROM anchorage_protection_sectors ORDER BY placeId,medium,sector") suspend fun allProtection():List<AnchorageProtectionSectorEntity>
+    @Query("SELECT * FROM anchorage_facilities ORDER BY placeId,type") suspend fun allFacilities():List<AnchorageFacilityEntity>
+    @Query("SELECT * FROM anchorage_personal_ratings ORDER BY placeId") suspend fun allRatings():List<AnchoragePersonalRatingEntity>
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importPlaceRegions(values:List<AnchoragePlaceRegionCrossRef>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importProtection(values:List<AnchorageProtectionSectorEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importFacilities(values:List<AnchorageFacilityEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importRatings(values:List<AnchoragePersonalRatingEntity>)
+    @Query("DELETE FROM anchorage_place_regions") suspend fun clearPlaceRegionsAll()
+    @Query("DELETE FROM anchorage_protection_sectors") suspend fun clearProtection()
+    @Query("DELETE FROM anchorage_facilities") suspend fun clearFacilities()
+    @Query("DELETE FROM anchorage_personal_ratings") suspend fun clearRatings()
+    @Query("DELETE FROM anchorage_place_summaries") suspend fun clearSummaries()
 }
 
 @Dao interface AnchoragePhotoDao{
@@ -98,6 +120,8 @@ import kotlinx.coroutines.flow.Flow
     @Insert suspend fun insert(value:AnchoragePhotoEntity):Long
     @Delete suspend fun delete(value:AnchoragePhotoEntity)
     @Query("SELECT COUNT(*) FROM anchorage_photos WHERE placeId=:placeId") suspend fun countForPlace(placeId:Long):Long
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<AnchoragePhotoEntity>)
+    @Query("DELETE FROM anchorage_photos") suspend fun clear()
 }
 
 @Dao interface AnchorageSearchDao{

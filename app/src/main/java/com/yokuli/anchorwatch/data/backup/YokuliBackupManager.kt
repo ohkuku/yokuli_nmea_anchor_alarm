@@ -26,6 +26,8 @@ import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.condition.LiveDepthRepository
 import com.yokuli.anchorwatch.data.condition.LiveWindRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageSearchRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageSpatialIndexRepository
 import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.NetworkAddressProvider
@@ -114,6 +116,17 @@ private data class BackupSnapshot(
     val tripCustomMetricThroughId:Long,
     val tripDashboards:List<com.yokuli.anchorwatch.data.database.TripDashboardEntity>,
     val anchorTelemetryThroughId:Long,
+    val anchorageRegions:List<com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity>,
+    val anchoragePlaces:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity>,
+    val anchoragePlaceRegions:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceRegionCrossRef>,
+    val anchorageSpots:List<com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity>,
+    val anchorageVisits:List<com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity>,
+    val anchorageCollections:List<com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity>,
+    val anchorageCollectionPlaces:List<com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef>,
+    val anchorageProtection:List<com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity>,
+    val anchorageFacilities:List<com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity>,
+    val anchorageRatings:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity>,
+    val anchoragePhotos:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity>,
 )
 
 private data class WrittenBackupEntry(val checksum:String,val recordCount:Long)
@@ -141,10 +154,11 @@ object BackupExternalSettingsPolicy{
 /** ZIP/NDJSON archive primitives shared by production and corruption tests. */
 object YokuliBackupArchive {
     const val FORMAT="YOKULI_BACKUP"
-    const val VERSION=4
+    const val VERSION=5
     const val LEGACY_VERSION=1
     const val VERSION_2=2
     const val VERSION_3=3
+    const val VERSION_4=4
     const val EXTENSION=".yokuli-backup"
     const val MANIFEST="manifest.json"
     const val SETTINGS="settings.json"
@@ -163,13 +177,27 @@ object YokuliBackupArchive {
     const val TRIP_CUSTOM_METRICS="data/trip_custom_metrics.ndjson"
     const val TRIP_DASHBOARDS="data/trip_dashboards.ndjson"
     const val VESSEL_SETTINGS="vessel_settings.json"
+    const val GIS_REGIONS="data/anchorage_regions.ndjson"
+    const val GIS_PLACES="data/anchorage_places.ndjson"
+    const val GIS_PLACE_REGIONS="data/anchorage_place_regions.ndjson"
+    const val GIS_SPOTS="data/anchorage_spots.ndjson"
+    const val GIS_VISITS="data/anchorage_visits.ndjson"
+    const val GIS_COLLECTIONS="data/anchorage_collections.ndjson"
+    const val GIS_COLLECTION_PLACES="data/anchorage_collection_places.ndjson"
+    const val GIS_PROTECTION="data/anchorage_protection_sectors.ndjson"
+    const val GIS_FACILITIES="data/anchorage_facilities.ndjson"
+    const val GIS_RATINGS="data/anchorage_personal_ratings.ndjson"
+    const val GIS_PHOTOS="data/anchorage_photos.ndjson"
+    const val GIS_MEDIA_PREFIX="media/anchorage/"
     val requiredV1=setOf(MANIFEST,SETTINGS,CHECKSUMS,ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES)
     val requiredV2=setOf(MANIFEST,SETTINGS,CHECKSUMS,ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES,ANCHORAGES)
     val requiredV3=requiredV2+setOf(TRIPS,TRIP_SAMPLES,TRIP_EVENTS,TRIP_WAYPOINTS,ANCHOR_TELEMETRY,VESSEL_SETTINGS)
-    val required=requiredV3+setOf(TRIP_CUSTOM_METRICS,TRIP_DASHBOARDS)
+    val requiredV4=requiredV3+setOf(TRIP_CUSTOM_METRICS,TRIP_DASHBOARDS)
+    val gisFiles=listOf(GIS_REGIONS,GIS_PLACES,GIS_PLACE_REGIONS,GIS_SPOTS,GIS_VISITS,GIS_COLLECTIONS,GIS_COLLECTION_PLACES,GIS_PROTECTION,GIS_FACILITIES,GIS_RATINGS,GIS_PHOTOS)
+    val required=requiredV4+gisFiles
     val allowed=required
-    val dataFiles=listOf(ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES,ANCHORAGES,TRIPS,TRIP_SAMPLES,TRIP_EVENTS,TRIP_WAYPOINTS,ANCHOR_TELEMETRY,TRIP_CUSTOM_METRICS,TRIP_DASHBOARDS)
-    fun requiredFor(version:Int)=when(version){LEGACY_VERSION->requiredV1;VERSION_2->requiredV2;VERSION_3->requiredV3;else->required}
+    val dataFiles=listOf(ANCHORS,POINTS,EVENTS,SURVEYS,SAMPLES,ANCHORAGES,TRIPS,TRIP_SAMPLES,TRIP_EVENTS,TRIP_WAYPOINTS,ANCHOR_TELEMETRY,TRIP_CUSTOM_METRICS,TRIP_DASHBOARDS)+gisFiles
+    fun requiredFor(version:Int)=when(version){LEGACY_VERSION->requiredV1;VERSION_2->requiredV2;VERSION_3->requiredV3;VERSION_4->requiredV4;else->required}
     const val MAX_ARCHIVE_BYTES=2_000_000_000L
     const val MAX_ENTRY_BYTES=1_500_000_000L
     const val PAGE=1_000
@@ -201,6 +229,8 @@ class YokuliBackupManager @Inject constructor(
     private val vesselSettingsRepository:VesselSettingsRepository,
     private val outputSettingsRepository:OutputSettingsRepository,
     private val mountCalibrationRepository:VesselMountCalibrationRepository,
+    private val anchorageSpatial:AnchorageSpatialIndexRepository,
+    private val anchorageSearch:AnchorageSearchRepository,
     private val navigation:NavigationRepository=NavigationRepository(LiveDepthRepository(settingsRepository),LiveWindRepository(),com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard(),com.yokuli.anchorwatch.data.vessel.VesselSourceRegistry()),
     private val mockGps:GlobalMockLocationManager=GlobalMockLocationManager(context,LocationServices.getFusedLocationProviderClient(context)),
     private val sharingServer:NmeaSharingServer=NmeaSharingServer(NetworkAddressProvider()),
@@ -229,6 +259,17 @@ class YokuliBackupManager @Inject constructor(
             tripCustomMetricThroughId=tripDao.maxCustomMetricId(),
             tripDashboards=tripDao.allDashboardsNow(),
             anchorTelemetryThroughId=tripDao.maxAnchorTelemetryId(),
+            anchorageRegions=database.anchorageRegionDao().allNow(),
+            anchoragePlaces=database.anchoragePlaceDao().allNow(),
+            anchoragePlaceRegions=database.anchorageMetadataDao().allPlaceRegions(),
+            anchorageSpots=database.anchorageSpotDao().allNow(),
+            anchorageVisits=database.anchorageVisitDao().allNow(),
+            anchorageCollections=database.anchorageCollectionDao().allNow(),
+            anchorageCollectionPlaces=database.anchorageCollectionDao().membershipsNow(),
+            anchorageProtection=database.anchorageMetadataDao().allProtection(),
+            anchorageFacilities=database.anchorageMetadataDao().allFacilities(),
+            anchorageRatings=database.anchorageMetadataDao().allRatings(),
+            anchoragePhotos=database.anchoragePhotoDao().allNow(),
         )}
         var completedManifest:BackupManifestV1?=null
         val raw=context.contentResolver.openOutputStream(uri,"w")?:error("Android could not open the selected backup file")
@@ -254,11 +295,34 @@ class YokuliBackupManager @Inject constructor(
             written[YokuliBackupArchive.ANCHOR_TELEMETRY]=writePaged(zip,YokuliBackupArchive.ANCHOR_TELEMETRY){after->tripDao.allAnchorTelemetryPageThrough(after,snapshot.anchorTelemetryThroughId,YokuliBackupArchive.PAGE).map(BackupAnchorTelemetryV3::from)}
             written[YokuliBackupArchive.TRIP_CUSTOM_METRICS]=writePaged(zip,YokuliBackupArchive.TRIP_CUSTOM_METRICS){after->tripDao.allCustomMetricsPageThrough(after,snapshot.tripCustomMetricThroughId,YokuliBackupArchive.PAGE).map(BackupTripCustomMetricV4::from)}
             written[YokuliBackupArchive.TRIP_DASHBOARDS]=writeRecords(zip,YokuliBackupArchive.TRIP_DASHBOARDS,snapshot.tripDashboards.asSequence().map(BackupTripDashboardV4::from))
+            _state.value=_state.value.copy(progress="Exporting anchorage GIS library…")
+            written[YokuliBackupArchive.GIS_REGIONS]=writeRecords(zip,YokuliBackupArchive.GIS_REGIONS,snapshot.anchorageRegions.asSequence())
+            written[YokuliBackupArchive.GIS_PLACES]=writeRecords(zip,YokuliBackupArchive.GIS_PLACES,snapshot.anchoragePlaces.asSequence())
+            written[YokuliBackupArchive.GIS_PLACE_REGIONS]=writeRecords(zip,YokuliBackupArchive.GIS_PLACE_REGIONS,snapshot.anchoragePlaceRegions.asSequence())
+            written[YokuliBackupArchive.GIS_SPOTS]=writeRecords(zip,YokuliBackupArchive.GIS_SPOTS,snapshot.anchorageSpots.asSequence())
+            written[YokuliBackupArchive.GIS_VISITS]=writeRecords(zip,YokuliBackupArchive.GIS_VISITS,snapshot.anchorageVisits.asSequence())
+            written[YokuliBackupArchive.GIS_COLLECTIONS]=writeRecords(zip,YokuliBackupArchive.GIS_COLLECTIONS,snapshot.anchorageCollections.asSequence())
+            written[YokuliBackupArchive.GIS_COLLECTION_PLACES]=writeRecords(zip,YokuliBackupArchive.GIS_COLLECTION_PLACES,snapshot.anchorageCollectionPlaces.asSequence())
+            written[YokuliBackupArchive.GIS_PROTECTION]=writeRecords(zip,YokuliBackupArchive.GIS_PROTECTION,snapshot.anchorageProtection.asSequence())
+            written[YokuliBackupArchive.GIS_FACILITIES]=writeRecords(zip,YokuliBackupArchive.GIS_FACILITIES,snapshot.anchorageFacilities.asSequence())
+            written[YokuliBackupArchive.GIS_RATINGS]=writeRecords(zip,YokuliBackupArchive.GIS_RATINGS,snapshot.anchorageRatings.asSequence())
+            val backupPhotos=snapshot.anchoragePhotos.filter{photo->File(context.filesDir,"anchorage_media/${File(photo.relativeFileName).name}").let{it.isFile&&it.length()<=25L*1024*1024}}
+            written[YokuliBackupArchive.GIS_PHOTOS]=writeRecords(zip,YokuliBackupArchive.GIS_PHOTOS,backupPhotos.asSequence())
             written.forEach{(name,entry)->checksums[name]=entry.checksum}
+            val mediaEntries=linkedSetOf<String>()
+            backupPhotos.flatMap{listOfNotNull(it.relativeFileName,it.thumbnailRelativeFileName)}.distinct().forEach{name->
+                val safeName=File(name).name
+                val source=File(context.filesDir,"anchorage_media/$safeName")
+                if(source.isFile&&source.length()<=25L*1024*1024){
+                    val entryName=YokuliBackupArchive.GIS_MEDIA_PREFIX+safeName
+                    checksums[entryName]=writeBinaryEntry(zip,entryName,source)
+                    mediaEntries+=entryName
+                }
+            }
             val manifest=BackupManifestV1(
                 createdAtUtc=Instant.now().toString(),appVersionName=BuildConfig.VERSION_NAME,
                 appVersionCode=BuildConfig.VERSION_CODE,recordCounts=written.mapValues{it.value.recordCount},
-                files=listOf(YokuliBackupArchive.SETTINGS,YokuliBackupArchive.VESSEL_SETTINGS)+YokuliBackupArchive.dataFiles,
+                files=listOf(YokuliBackupArchive.SETTINGS,YokuliBackupArchive.VESSEL_SETTINGS)+YokuliBackupArchive.dataFiles+mediaEntries,
             )
             completedManifest=manifest
             checksums[YokuliBackupArchive.MANIFEST]=writeTextEntry(zip,YokuliBackupArchive.MANIFEST,gson.toJson(manifest))
@@ -289,6 +353,7 @@ class YokuliBackupManager @Inject constructor(
                 sonarDao.clearGridCells();linzCache.clear();tideCache.clear()
                 sonarDao.clearSamples();sonarDao.clearSurveys()
                 tripDao.clearSamples();tripDao.clearEvents();tripDao.clearWaypoints();tripDao.clearCustomMetrics();tripDao.clearDashboards();tripDao.clearAnchorTelemetry();tripDao.clearSessions()
+                database.anchoragePhotoDao().clear();database.anchorageVisitDao().clear();database.anchorageCollectionDao().clearMemberships();database.anchorageCollectionDao().clear();database.anchorageMetadataDao().clearPlaceRegionsAll();database.anchorageMetadataDao().clearProtection();database.anchorageMetadataDao().clearFacilities();database.anchorageMetadataDao().clearRatings();database.anchorageMetadataDao().clearSummaries();database.anchorageSpotDao().clear();database.anchoragePlaceDao().clear();database.anchorageRegionDao().clear()
                 anchorDao.clearEvents();anchorDao.clearPoints();anchorDao.clearSessions();anchorageDao.clear()
                 if(validation.manifest.formatVersion==YokuliBackupArchive.LEGACY_VERSION)importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV1::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null)else it})}
                 else importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV2::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV2::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null,depthAlarmSnoozedUntil=null,windAlarmSnoozedUntil=null,windShiftAlarmSnoozedUntil=null)else it})}
@@ -304,7 +369,21 @@ class YokuliBackupManager @Inject constructor(
                 validation.files[YokuliBackupArchive.ANCHOR_TELEMETRY]?.let{file->importFile(file,BackupAnchorTelemetryV3::class.java,YokuliBackupArchive.PAGE){rows->tripDao.importAnchorTelemetry(rows.map{it.value})}}
                 validation.files[YokuliBackupArchive.TRIP_CUSTOM_METRICS]?.let{file->importFile(file,BackupTripCustomMetricV4::class.java,YokuliBackupArchive.PAGE){rows->tripDao.importCustomMetrics(rows.map{it.value})}}
                 validation.files[YokuliBackupArchive.TRIP_DASHBOARDS]?.let{file->importFile(file,BackupTripDashboardV4::class.java,YokuliBackupArchive.PAGE){rows->tripDao.importDashboards(rows.map{it.value})}}
+                if(validation.manifest.formatVersion>=YokuliBackupArchive.VERSION){
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_REGIONS),com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageRegionDao()::importAll)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_PLACES),com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity::class.java,YokuliBackupArchive.PAGE,database.anchoragePlaceDao()::importAll)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_PLACE_REGIONS),com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceRegionCrossRef::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importPlaceRegions)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_SPOTS),com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageSpotDao()::importAll)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_VISITS),com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageVisitDao()::importAll)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_COLLECTIONS),com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageCollectionDao()::importAll)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_COLLECTION_PLACES),com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class.java,YokuliBackupArchive.PAGE,database.anchorageCollectionDao()::importMemberships)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_PROTECTION),com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importProtection)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_FACILITIES),com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importFacilities)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_RATINGS),com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importRatings)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_PHOTOS),com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class.java,YokuliBackupArchive.PAGE,database.anchoragePhotoDao()::importAll)
+                }else importLegacyAnchoragesIntoGis()
             }
+            if(validation.manifest.formatVersion>=YokuliBackupArchive.VERSION)restoreAnchorageMedia(validation.files)
             val offlineInstalled=File(context.filesDir,"offline_maps/${OfflineMapRepository.FILE_NAME}").let{it.isFile&&it.length()>0L}
             val imported=BackupExternalSettingsPolicy.reconcileOfflineMap(validation.appSettings,offlineInstalled).copy(
                 onboardingCompleted=true,mockEnabled=false,nmeaSharingEnabled=false,customAlarmSoundUri=null,
@@ -318,6 +397,7 @@ class YokuliBackupManager @Inject constructor(
             val safeOutput=restoredOutput.copy(phonePositionEnabled=false,phoneHeadingEnabled=false,phoneMotionEnabled=false,phonePressureEnabled=false,proprietaryStatusEnabled=false,positionPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,headingPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,motionPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,pressurePolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,derivedWindPolicy=com.yokuli.anchorwatch.domain.vessel.PublicationPolicy.OFF,destinations=restoredOutput.destinations.map{it.copy(enabled=false)},publicationEnabled=false,autoStartOutput=false)
             val outputSettingsError=runCatching{outputSettingsRepository.save(safeOutput)}.exceptionOrNull()
             val rebuildError=runCatching{gridUpdater.rebuildMissing()}.exceptionOrNull()
+            runCatching{anchorageSpatial.verifyAndRepair();anchorageSearch.rebuildAll()}
             val message=buildString{
                 append("Backup data restored. Active watches were restored paused; sonar recording was closed.")
                 if(settingsError!=null)append(" Some preferences could not be restored and remain unchanged.")
@@ -339,7 +419,7 @@ class YokuliBackupManager @Inject constructor(
         ZipInputStream(BufferedInputStream(source)).use{zip->
             while(true){val entry=zip.nextEntry?:break
                 require(!entry.isDirectory){"Unexpected directory in backup"}
-                require(entry.name in YokuliBackupArchive.allowed){"Unexpected backup entry: ${entry.name}"}
+                require(entry.name in YokuliBackupArchive.allowed||entry.name.startsWith(YokuliBackupArchive.GIS_MEDIA_PREFIX)){"Unexpected backup entry: ${entry.name}"}
                 require(found.put(entry.name,File(staging,entry.name.replace('/','_')))==null){"Duplicate backup entry: ${entry.name}"}
                 val target=found.getValue(entry.name);FileOutputStream(target).use{out->
                     val buffer=ByteArray(64*1024);var entryBytes=0L
@@ -348,10 +428,12 @@ class YokuliBackupManager @Inject constructor(
             }
         }
         val manifest=gson.fromJson(found.getValue(YokuliBackupArchive.MANIFEST).readText(),BackupManifestV1::class.java)
-        require(manifest.format==YokuliBackupArchive.FORMAT){"This is not an Anchor Watch backup"};require(manifest.formatVersion in setOf(YokuliBackupArchive.LEGACY_VERSION,YokuliBackupArchive.VERSION_2,YokuliBackupArchive.VERSION_3,YokuliBackupArchive.VERSION)){"Unsupported Anchor Watch backup version ${manifest.formatVersion}"}
-        val required=YokuliBackupArchive.requiredFor(manifest.formatVersion);require(found.keys.containsAll(required)){"Backup is missing required files: ${required-found.keys}"};require(found.keys==required){"Unexpected files for backup V${manifest.formatVersion}: ${found.keys-required}"}
+        require(manifest.format==YokuliBackupArchive.FORMAT){"This is not an Anchor Watch backup"};require(manifest.formatVersion in setOf(YokuliBackupArchive.LEGACY_VERSION,YokuliBackupArchive.VERSION_2,YokuliBackupArchive.VERSION_3,YokuliBackupArchive.VERSION_4,YokuliBackupArchive.VERSION)){"Unsupported Anchor Watch backup version ${manifest.formatVersion}"}
+        val required=YokuliBackupArchive.requiredFor(manifest.formatVersion)
+        val expected=if(manifest.formatVersion>=YokuliBackupArchive.VERSION)required+manifest.files.filter{it.startsWith(YokuliBackupArchive.GIS_MEDIA_PREFIX)} else required
+        require(found.keys.containsAll(expected)){"Backup is missing required files: ${expected-found.keys}"};require(found.keys==expected){"Unexpected files for backup V${manifest.formatVersion}: ${found.keys-expected}"}
         @Suppress("UNCHECKED_CAST") val checksums=gson.fromJson(found.getValue(YokuliBackupArchive.CHECKSUMS).readText(),Map::class.java) as Map<String,String>
-        (required-YokuliBackupArchive.CHECKSUMS).forEach{name->require(checksums[name]==YokuliBackupArchive.sha256(found.getValue(name))){"Checksum mismatch for $name"}}
+        (expected-YokuliBackupArchive.CHECKSUMS).forEach{name->require(checksums[name]==YokuliBackupArchive.sha256(found.getValue(name))){"Checksum mismatch for $name"}}
         val settings=gson.fromJson(found.getValue(YokuliBackupArchive.SETTINGS).readText(),BackupSettingsV1::class.java);require(settings.schemaVersion==1){"Unsupported settings schema"}
         val decodedSettings=requireNotNull(gson.fromJson(settings.payload,AppSettings::class.java)){"Backup settings payload is invalid"}
         if(manifest.formatVersion>=3){
@@ -380,6 +462,27 @@ class YokuliBackupManager @Inject constructor(
         count=0;forEach(files.getValue(YokuliBackupArchive.SAMPLES),BackupDepthSampleV1::class.java){row->require(row.surveyId in surveys){"Depth sample references a missing sonar survey"};YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);require(row.rawDepthMeters.isFinite()&&row.rawDepthMeters>0){"Invalid raw sonar depth"};count++};requireCount(manifest,YokuliBackupArchive.SAMPLES,count)
         if(manifest.formatVersion>=2){val anchorageIds=mutableSetOf<Long>();count=0;forEach(files.getValue(YokuliBackupArchive.ANCHORAGES),BackupSavedAnchorageV2::class.java){row->require(anchorageIds.add(row.id)){"Duplicate saved anchorage id"};YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);require(row.name.length<=200&&row.notes.length<=20_000&&(row.customSeabedText?.length?:0)<=200){"Saved anchorage text is too long"};require(row.rating==null||row.rating in 1..5){"Invalid saved anchorage rating"};require(listOfNotNull(row.preferredAlarmRadiusMeters,row.typicalWaterDepthMeters,row.typicalRodeLengthMeters,row.coordinateUncertaintyMeters).all{it.isFinite()&&it>=0}){"Invalid saved anchorage measurement"};require(row.coordinateSource in com.yokuli.anchorwatch.data.anchorage.AnchorageCoordinateSource.entries.map{it.name}){"Invalid saved anchorage coordinate source"};count++};requireCount(manifest,YokuliBackupArchive.ANCHORAGES,count)}
         if(manifest.formatVersion>=3)validateTripRecords(files,manifest,sessions,activeAnchorCount>0)
+        if(manifest.formatVersion>=YokuliBackupArchive.VERSION)validateGisRecords(files,manifest,sessions)
+    }
+
+    private fun validateGisRecords(files:Map<String,File>,manifest:BackupManifestV1,sessionIds:Set<Long>){
+        val regions=mutableSetOf<Long>();var count=0L
+        forEach(files.getValue(YokuliBackupArchive.GIS_REGIONS),com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity::class.java){row->require(row.id>0&&regions.add(row.id));YokuliBackupArchive.validateCoordinate(row.centerLatitude,row.centerLongitude);count++};requireCount(manifest,YokuliBackupArchive.GIS_REGIONS,count)
+        val places=mutableSetOf<Long>();count=0
+        forEach(files.getValue(YokuliBackupArchive.GIS_PLACES),com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity::class.java){row->require(row.id>0&&places.add(row.id)&&row.displayName.isNotBlank());YokuliBackupArchive.validateCoordinate(row.centerLatitude,row.centerLongitude);require(row.primaryRegionId==null||row.primaryRegionId in regions);count++};requireCount(manifest,YokuliBackupArchive.GIS_PLACES,count)
+        val spots=mutableSetOf<Long>();count=0
+        forEach(files.getValue(YokuliBackupArchive.GIS_SPOTS),com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity::class.java){row->require(row.id>0&&spots.add(row.id)&&row.placeId in places&&row.name.isNotBlank());YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);count++};requireCount(manifest,YokuliBackupArchive.GIS_SPOTS,count)
+        val visits=mutableSetOf<Long>();count=0
+        forEach(files.getValue(YokuliBackupArchive.GIS_VISITS),com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity::class.java){row->require(row.id>0&&visits.add(row.id)&&row.placeId in places);require(row.spotId==null||row.spotId in spots);require(row.anchorSessionId==null||row.anchorSessionId in sessionIds);count++};requireCount(manifest,YokuliBackupArchive.GIS_VISITS,count)
+        listOf(
+            YokuliBackupArchive.GIS_PLACE_REGIONS to com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceRegionCrossRef::class.java,
+            YokuliBackupArchive.GIS_COLLECTIONS to com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity::class.java,
+            YokuliBackupArchive.GIS_COLLECTION_PLACES to com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class.java,
+            YokuliBackupArchive.GIS_PROTECTION to com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class.java,
+            YokuliBackupArchive.GIS_FACILITIES to com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class.java,
+            YokuliBackupArchive.GIS_RATINGS to com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity::class.java,
+            YokuliBackupArchive.GIS_PHOTOS to com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class.java,
+        ).forEach{(name,type)->var records=0L;forEach(files.getValue(name),type){records++};requireCount(manifest,name,records)}
     }
 
     private fun validateTripRecords(files:Map<String,File>,manifest:BackupManifestV1,anchorSessionIds:Set<Long>,anchorActive:Boolean){
@@ -402,8 +505,57 @@ class YokuliBackupManager @Inject constructor(
     private fun <T> forEach(file:File,type:Class<T>,action:(T)->Unit){file.bufferedReader().useLines{lines->lines.forEach{line->if(line.isNotBlank()){val envelope=gson.fromJson(line,BackupRecordV1::class.java);require(envelope.schemaVersion==1){"Unsupported record schema"};action(gson.fromJson(envelope.payload,type))}}}}
     private suspend fun <T> importFile(file:File,type:Class<T>,batchSize:Int,insert:suspend(List<T>)->Unit){val batch=ArrayList<T>(batchSize);BufferedReader(InputStreamReader(FileInputStream(file))).use{reader->while(true){val line=reader.readLine()?:break;if(line.isBlank())continue;val envelope=gson.fromJson(line,BackupRecordV1::class.java);batch+=gson.fromJson(envelope.payload,type);if(batch.size==batchSize){insert(batch.toList());batch.clear()}}};if(batch.isNotEmpty())insert(batch)}
 
+    private suspend fun importLegacyAnchoragesIntoGis(){
+        val placeDao=database.anchoragePlaceDao();val spotDao=database.anchorageSpotDao();val visitDao=database.anchorageVisitDao();val metadata=database.anchorageMetadataDao()
+        anchorageDao.allNow().forEach{legacy->
+            if(placeDao.byLegacyId(legacy.id)!=null)return@forEach
+            val verified=if(legacy.sourceSessionId!=null)"VERIFIED_BY_SESSION" else "PLANNED"
+            val placeId=placeDao.insert(com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity(
+                displayName=legacy.name,placeType="UNKNOWN",geometryType="POINT",centerLatitude=legacy.latitude,centerLongitude=legacy.longitude,
+                bboxMinLatitude=legacy.latitude,bboxMaxLatitude=legacy.latitude,bboxMinLongitude=legacy.longitude,bboxMaxLongitude=legacy.longitude,
+                personalNotes=legacy.notes,verificationStatus=verified,favorite=true,legacyVisitCount=legacy.visitCount,lastVisitedAt=legacy.lastVisitedAt,
+                legacySavedAnchorageId=legacy.id,createdAt=legacy.createdAt,updatedAt=legacy.updatedAt,
+            ))
+            val spotId=spotDao.insert(com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity(
+                placeId=placeId,name="Main spot",spotType=if(legacy.sourceSessionId==null)"PLANNED_REFERENCE" else "ANCHOR_SPOT",
+                latitude=legacy.latitude,longitude=legacy.longitude,coordinateSource=legacy.coordinateSource,coordinateUncertaintyMeters=legacy.coordinateUncertaintyMeters,
+                preferredAlarmRadiusMeters=legacy.preferredAlarmRadiusMeters,typicalWaterDepthMeters=legacy.typicalWaterDepthMeters,typicalRodeLengthMeters=legacy.typicalRodeLengthMeters,
+                seabedType=legacy.seabedType,customSeabedText=legacy.customSeabedText,verificationStatus=verified,legacyVisitCount=legacy.visitCount,lastVisitedAt=legacy.lastVisitedAt,
+                legacySavedAnchorageId=legacy.id,createdAt=legacy.createdAt,updatedAt=legacy.updatedAt,
+            ))
+            legacy.rating?.let{metadata.upsertRating(com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity(placeId=placeId,legacyOverallRating=it,updatedAt=legacy.updatedAt))}
+            legacy.sourceSessionId?.let{sessionId->anchorDao.session(sessionId)?.let{session->
+                val visitId=visitDao.insert(com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity(
+                    placeId=placeId,spotId=spotId,anchorSessionId=sessionId,visitKind="SESSION",startedAt=session.startedAt,endedAt=session.endedAt,
+                    actualAnchorLatitude=session.anchorLatitude,actualAnchorLongitude=session.anchorLongitude,coordinateSource=legacy.coordinateSource,
+                    coordinateUncertaintyMeters=legacy.coordinateUncertaintyMeters,waterDepthMeters=legacy.typicalWaterDepthMeters,rodeLengthMeters=legacy.typicalRodeLengthMeters,
+                    alarmRadiusMeters=legacy.preferredAlarmRadiusMeters,maxExcursionMeters=session.maxDistanceMeters,alarmCount=session.alarmCount,
+                    minDepthMeters=session.minObservedDepthMeters,maxDepthMeters=session.maxObservedDepthMeters,maxWindKnots=session.maxObservedWindKnots,maxWindSource=session.maxObservedWindSource,
+                    typicalMotionScore=null,p95MotionScore=null,p95AbsoluteHeelDegrees=null,dominantRollPeriodSeconds=null,impactCount=null,userNotes=legacy.notes,summaryVersion="1",createdAt=legacy.updatedAt,
+                ))
+                anchorDao.updateSession(session.copy(anchoragePlaceId=placeId,anchorageSpotId=spotId,anchorageVisitId=visitId))
+            }}
+        }
+        val now=System.currentTimeMillis();if(database.anchorageCollectionDao().allNow().isEmpty())database.anchorageCollectionDao().importAll(listOf("Favorites","Want to visit","Backup").mapIndexed{index,name->com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity(id=index+1L,name=name,sortOrder=index,createdAt=now,updatedAt=now)})
+    }
+
+    private fun restoreAnchorageMedia(files:Map<String,File>){
+        val target=File(context.filesDir,"anchorage_media").apply{mkdirs()}
+        files.filterKeys{it.startsWith(YokuliBackupArchive.GIS_MEDIA_PREFIX)}.forEach{(entry,source)->
+            val name=File(entry.removePrefix(YokuliBackupArchive.GIS_MEDIA_PREFIX)).name
+            val temporary=File(target,".$name.restore")
+            source.copyTo(temporary,overwrite=true)
+            if(!temporary.renameTo(File(target,name))){temporary.copyTo(File(target,name),overwrite=true);temporary.delete()}
+        }
+    }
+
     private fun displayName(uri:String?):String?=uri?.let{value->runCatching{context.contentResolver.query(Uri.parse(value),arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use{cursor->if(cursor.moveToFirst())cursor.getString(0)else null}}.getOrNull()}
     private suspend fun writeTextEntry(zip:ZipOutputStream,name:String,text:String):String=writeEntry(zip,name){writer->writer.write(text)}
+    private fun writeBinaryEntry(zip:ZipOutputStream,name:String,file:File):String{
+        zip.putNextEntry(ZipEntry(name));val digest=MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use{input->val buffer=ByteArray(64*1024);while(true){val read=input.read(buffer);if(read<0)break;digest.update(buffer,0,read);zip.write(buffer,0,read)}}
+        zip.closeEntry();return digest.digest().joinToString(""){"%02x".format(it)}
+    }
     private suspend fun writeRecords(zip:ZipOutputStream,name:String,rows:Sequence<Any>):WrittenBackupEntry{
         var count=0L
         val checksum=writeEntry(zip,name){writer->rows.forEach{row->writer.write(gson.toJson(BackupRecordV1(payload=gson.toJsonTree(row).asJsonObject)));writer.newLine();count++}}

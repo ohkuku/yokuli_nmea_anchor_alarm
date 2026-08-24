@@ -49,7 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEntity)->Unit){
+internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEntity)->Unit,onSaveV2:(AnchorageSharePayloadV2)->Unit={payload->onSave(payload.toLegacyImportEntity())}){
     val context=LocalContext.current
     var permissionGranted by remember{mutableStateOf(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)}
     var permissionRequested by remember{mutableStateOf(false)}
@@ -76,7 +76,7 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
             }
             when{
                 !permissionGranted->CameraPermissionMessage(permissionRequested,{permission.launch(Manifest.permission.CAMERA)},{gallery.launch("image/*")},onClose)
-                result!=null->AnchorageQrImportPreview(requireNotNull(result),onClose,{result=null;cameraError=null},onSave)
+                result!=null->AnchorageQrImportPreview(requireNotNull(result),onClose,{result=null;cameraError=null},onSave,onSaveV2)
                 else->Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally){
                     Box(Modifier.fillMaxWidth().weight(1f)){
                         AnchorageCameraPreview(torchEnabled,onDecoded={raw->result=AnchorageSharePayloadCodec.decode(raw)},onError={cameraError=it})
@@ -104,7 +104,7 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
     }
 }
 
-@Composable private fun AnchorageQrImportPreview(result:AnchorageQrDecodeResult,close:()->Unit,scanAgain:()->Unit,save:(SavedAnchorageEntity)->Unit){
+@Composable private fun AnchorageQrImportPreview(result:AnchorageQrDecodeResult,close:()->Unit,scanAgain:()->Unit,save:(SavedAnchorageEntity)->Unit,saveV2:(AnchorageSharePayloadV2)->Unit){
     when(result){
         is AnchorageQrDecodeResult.Full->{
             val payload=result.payload
@@ -121,6 +121,26 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
                 if(payload.notes.isNotBlank()){HorizontalDivider();Text(tr("Notes","说明"),style=MaterialTheme.typography.labelLarge);Text(payload.notes)}
                 SharedReferenceSafetyCopy()
                 Button({save(AnchorageSharePayloadCodec.toEntity(payload));close()},Modifier.fillMaxWidth().testTag("save_scanned_anchorage")){Text(tr("Save anchorage","收藏锚地"))}
+                OutlinedButton(scanAgain,Modifier.fillMaxWidth()){Text(tr("Scan again","重新扫描"))}
+                TextButton(close,Modifier.fillMaxWidth()){Text(tr("Cancel","取消"))}
+            }
+        }
+        is AnchorageQrDecodeResult.FullV2->{
+            val payload=result.payload
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text(tr("Shared Place and Spot","收到的地点与锚点"),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)
+                Text(payload.placeName,style=MaterialTheme.typography.headlineSmall)
+                Text("${tr("Spot","锚点")}: ${payload.spotName}",style=MaterialTheme.typography.titleMedium)
+                if(payload.regionDisplayPath.isNotEmpty())Text(payload.regionDisplayPath.joinToString(" · "),color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${"%.7f".format(payload.latitude)}, ${"%.7f".format(payload.longitude)}")
+                ImportLine(tr("Saved radius","收藏范围"),payload.preferredAlarmRadiusMeters?.let{"${it.toInt()} m"})
+                ImportLine(tr("Depth","水深"),payload.typicalWaterDepthMeters?.let{"%.1f m".format(it)})
+                ImportLine(tr("Rode","锚链 / 锚缆"),payload.typicalRodeLengthMeters?.let{"${it.toInt()} m"})
+                ImportLine(tr("Seabed","底质"),payload.seabedType.lowercase().replace('_',' '))
+                if(payload.approachNotes.isNotBlank())Text(payload.approachNotes)
+                SharedReferenceSafetyCopy()
+                Text(tr("The library will keep Place and Spot as separate identities. No visit history or photos are imported.","锚地库会分别保留地点与锚点身份，不会导入访问历史或照片。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Button({saveV2(payload);close()},Modifier.fillMaxWidth().testTag("save_scanned_anchorage_v2")){Text(tr("Import Place and Spot","导入地点和锚点"))}
                 OutlinedButton(scanAgain,Modifier.fillMaxWidth()){Text(tr("Scan again","重新扫描"))}
                 TextButton(close,Modifier.fillMaxWidth()){Text(tr("Cancel","取消"))}
             }
@@ -148,6 +168,12 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
         AnchorageQrDecodeResult.Unsupported->QrFailure(tr("Not an Anchor Watch anchorage","不是 Anchor Watch 锚地"),tr("This QR code does not contain a supported Anchor Watch anchorage. No link was opened.","该二维码不包含受支持的 Anchor Watch 锚地；应用没有打开其中的链接。"),scanAgain,close)
     }
 }
+
+private fun AnchorageSharePayloadV2.toLegacyImportEntity()=SavedAnchorageEntity(
+    name=placeName,latitude=latitude,longitude=longitude,createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis(),
+    preferredAlarmRadiusMeters=preferredAlarmRadiusMeters,typicalWaterDepthMeters=typicalWaterDepthMeters,typicalRodeLengthMeters=typicalRodeLengthMeters,
+    seabedType=seabedType,customSeabedText=customSeabedText,notes=notes,coordinateSource=coordinateSource,coordinateUncertaintyMeters=coordinateUncertaintyMeters,
+)
 
 @Composable private fun QrFailure(title:String,detail:String,retry:()->Unit,close:()->Unit){Column(Modifier.fillMaxSize().padding(28.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Icon(Icons.Default.QrCodeScanner,null,Modifier.size(64.dp),tint=MaterialTheme.colorScheme.error);Spacer(Modifier.height(12.dp));Text(title,style=MaterialTheme.typography.titleLarge);Text(detail,Modifier.padding(vertical=12.dp));Button(retry,Modifier.fillMaxWidth()){Text(tr("Scan again","重新扫描"))};TextButton(close){Text(tr("Cancel","取消"))}}}
 @Composable private fun ImportLine(label:String,value:String?){if(value!=null)Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(label,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value)}}

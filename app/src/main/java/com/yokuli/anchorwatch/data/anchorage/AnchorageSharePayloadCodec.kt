@@ -28,8 +28,18 @@ data class EncodedAnchorageShareV1(
     val textWasTruncated:Boolean,
 )
 
+data class AnchorageSharePayloadV2(
+    val version:Int=2,val placeName:String,val placeType:String,val regionDisplayPath:List<String>,val spotName:String,
+    val latitude:Double,val longitude:Double,val preferredAlarmRadiusMeters:Double?=null,val typicalWaterDepthMeters:Double?=null,
+    val typicalRodeLengthMeters:Double?=null,val seabedType:String=SeabedType.UNKNOWN.name,val customSeabedText:String?=null,
+    val coordinateSource:String=AnchorageCoordinateSource.CONFIRMED_ANCHOR.name,val coordinateUncertaintyMeters:Double?=null,
+    val approachNotes:String="",val notes:String="",
+)
+data class EncodedAnchorageShareV2(val uri:String,val payload:AnchorageSharePayloadV2)
+
 sealed interface AnchorageQrDecodeResult {
     data class Full(val payload:AnchorageSharePayloadV1):AnchorageQrDecodeResult
+    data class FullV2(val payload:AnchorageSharePayloadV2):AnchorageQrDecodeResult
     data class Coordinate(val latitude:Double,val longitude:Double):AnchorageQrDecodeResult
     data class UnsupportedVersion(val version:Int?):AnchorageQrDecodeResult
     data class Invalid(val reason:String):AnchorageQrDecodeResult
@@ -79,6 +89,16 @@ object AnchorageSharePayloadCodec {
         return EncodedAnchorageShareV1(encodedPayload.second,payload,truncated)
     }
 
+    fun encodeV2(payload:AnchorageSharePayloadV2):EncodedAnchorageShareV2{
+        validate(payload)?.let{throw IllegalArgumentException(it)}
+        val json=gson.toJson(payload).toByteArray(Charsets.UTF_8)
+        require(json.size<=MAX_DECODED_BYTES){"Anchorage details are too large for a QR code."}
+        val encoded=Base64.getUrlEncoder().withoutPadding().encodeToString(json)
+        val uri="$SCHEME://$HOST?v=$VERSION_2&d=$encoded"
+        require(uri.toByteArray(Charsets.UTF_8).size<=MAX_QR_URI_BYTES){"Anchorage details cannot fit in a QR code."}
+        return EncodedAnchorageShareV2(uri,payload)
+    }
+
     fun decode(raw:String):AnchorageQrDecodeResult{
         val text=raw.trim()
         if(text.isEmpty())return AnchorageQrDecodeResult.Invalid("The QR code is empty.")
@@ -87,10 +107,16 @@ object AnchorageSharePayloadCodec {
         if(uri?.scheme.equals(SCHEME,true)&&uri?.host.equals(HOST,true)){
             val query=parseQuery(uri?.rawQuery)
             val version=query["v"]?.toIntOrNull()
-            if(version!=VERSION)return AnchorageQrDecodeResult.UnsupportedVersion(version)
+            if(version !in setOf(VERSION,VERSION_2))return AnchorageQrDecodeResult.UnsupportedVersion(version)
             val data=query["d"]?:return AnchorageQrDecodeResult.Invalid("The anchorage data is missing.")
             val bytes=runCatching{Base64.getUrlDecoder().decode(data)}.getOrElse{return AnchorageQrDecodeResult.Invalid("The anchorage data is damaged.")}
             if(bytes.size>MAX_DECODED_BYTES)return AnchorageQrDecodeResult.Invalid("The decoded anchorage is too large.")
+            if(version==VERSION_2){
+                val payload=runCatching{gson.fromJson(String(bytes,Charsets.UTF_8),AnchorageSharePayloadV2::class.java)}.getOrNull()?:return AnchorageQrDecodeResult.Invalid("The anchorage data is not valid JSON.")
+                val validation=runCatching{validate(payload)}.getOrElse{return AnchorageQrDecodeResult.Invalid("The anchorage data contains missing or invalid fields.")}
+                validation?.let{return AnchorageQrDecodeResult.Invalid(it)}
+                return AnchorageQrDecodeResult.FullV2(payload)
+            }
             val payload=runCatching{gson.fromJson(String(bytes,Charsets.UTF_8),AnchorageSharePayloadV1::class.java)}.getOrNull()?:return AnchorageQrDecodeResult.Invalid("The anchorage data is not valid JSON.")
             // Gson can construct a Kotlin data class with null in a declared non-null
             // property when a foreign/malformed payload omits that field. Keep all
@@ -152,12 +178,25 @@ object AnchorageSharePayloadCodec {
         !validOptional(value.coordinateUncertaintyMeters,0.0,100_000.0,true)->"The coordinate uncertainty is invalid."
         else->null
     }
+    private fun validate(value:AnchorageSharePayloadV2):String?=when{
+        value.version!=VERSION_2->"This anchorage uses an unsupported format version."
+        value.placeName.isBlank()||value.placeName.length>MAX_NAME_CHARS||value.spotName.isBlank()||value.spotName.length>MAX_NAME_CHARS->"The Place or Spot name is invalid."
+        value.regionDisplayPath.size>12||value.regionDisplayPath.any{it.length>MAX_NAME_CHARS}->"The region path is invalid."
+        !validCoordinate(value.latitude,value.longitude)->"The anchorage coordinate is invalid."
+        !validOptional(value.preferredAlarmRadiusMeters,0.0,10_000.0,false)||!validOptional(value.typicalWaterDepthMeters,0.0,12_000.0,true)||!validOptional(value.typicalRodeLengthMeters,0.0,20_000.0,true)->"A saved measurement is invalid."
+        value.seabedType !in SeabedType.entries.map{it.name}->"The seabed type is not recognized."
+        value.coordinateSource !in AnchorageCoordinateSource.entries.map{it.name}->"The coordinate quality is not recognized."
+        !validOptional(value.coordinateUncertaintyMeters,0.0,100_000.0,true)->"The coordinate uncertainty is invalid."
+        value.approachNotes.length>MAX_NOTES_CHARS||value.notes.length>MAX_NOTES_CHARS->"The notes are too long."
+        else->null
+    }
 
     private fun validCoordinate(latitude:Double,longitude:Double)=latitude.isFinite()&&longitude.isFinite()&&latitude in -90.0..90.0&&longitude in -180.0..180.0
     private fun validOptional(value:Double?,minimum:Double,maximum:Double,allowZero:Boolean)=value==null||(value.isFinite()&&value in minimum..maximum&&(allowZero||value>minimum))
     private fun String.codePointPrefix(maximum:Int):String{val count=codePointCount(0,length);if(count<=maximum)return this;return substring(0,offsetByCodePoints(0,maximum))}
 
     const val VERSION=1
+    const val VERSION_2=2
     const val MAX_NAME_CHARS=120
     const val MAX_NOTES_CHARS=1_500
     const val MAX_CUSTOM_SEABED_CHARS=120

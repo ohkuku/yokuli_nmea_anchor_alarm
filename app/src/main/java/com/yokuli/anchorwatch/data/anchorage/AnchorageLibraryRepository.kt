@@ -43,12 +43,12 @@ data class AnchoragePlaceBundle(
     suspend fun delete(id:Long):Boolean=database.withTransaction{val spot=database.anchorageSpotDao().get(id)?:return@withTransaction false;spatial.deleteSpot(id);val deleted=database.anchorageSpotDao().delete(id)>0;search.rebuildPlace(spot.placeId);deleted}
 }
 
-@Singleton class AnchorageVisitRepository @Inject constructor(private val database:AppDatabase){
+@Singleton class AnchorageVisitRepository @Inject constructor(private val database:AppDatabase,private val intelligence:AnchorageIntelligenceRepository){
     suspend fun save(value:AnchorageVisitEntity):Long=database.withTransaction{
         require(database.anchoragePlaceDao().get(value.placeId)!=null);require(value.spotId==null||database.anchorageSpotDao().get(value.spotId)!=null)
         val id=if(value.id==0L)database.anchorageVisitDao().insert(value)else{database.anchorageVisitDao().update(value);value.id}
         value.anchorSessionId?.let{sessionId->database.anchorDao().session(sessionId)?.let{session->database.anchorDao().updateSession(session.copy(anchoragePlaceId=value.placeId,anchorageSpotId=value.spotId,anchorageVisitId=id))}}
-        refreshCounts(value.placeId,value.spotId);id
+        refreshCounts(value.placeId,value.spotId);intelligence.rebuild(value.placeId);id
     }
     suspend fun forPlace(placeId:Long)=database.anchorageVisitDao().forPlaceNow(placeId)
     private suspend fun refreshCounts(placeId:Long,spotId:Long?){
@@ -59,6 +59,7 @@ data class AnchoragePlaceBundle(
 
 @Singleton class AnchorageLibraryRepository @Inject constructor(private val database:AppDatabase,private val spatial:AnchorageSpatialIndexRepository){
     val places=database.anchoragePlaceDao().observeActive()
+    val collections=database.anchorageCollectionDao().observeAll()
     suspend fun bundle(placeId:Long):AnchoragePlaceBundle?=database.withTransaction{
         val place=database.anchoragePlaceDao().get(placeId)?:return@withTransaction null;val path=regionPath(place.primaryRegionId)
         val photos=database.anchoragePhotoDao().forPlaceNow(placeId)

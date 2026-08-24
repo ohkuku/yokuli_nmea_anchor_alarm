@@ -18,6 +18,8 @@ import java.io.File
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity
+import com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity
 
 data class AnchorageShareCardRow(val label:String,val value:String)
 data class AnchorageShareCardModel(val coordinateQuality:String,val rows:List<AnchorageShareCardRow>,val notes:String)
@@ -192,5 +194,24 @@ class AnchorageQrImageGenerator @Inject constructor(
         const val QR_TOP=740
         const val HEADER_HEIGHT=160
         const val PADDING=72
+    }
+}
+
+@Singleton
+class AnchorageV2QrImageGenerator @Inject constructor(@ApplicationContext private val context:Context){
+    fun generate(place:AnchoragePlaceEntity,spot:AnchorageSpotEntity,regionPath:List<String>):File{
+        val payload=AnchorageSharePayloadV2(placeName=place.displayName,placeType=place.placeType,regionDisplayPath=regionPath,spotName=spot.name,latitude=spot.latitude,longitude=spot.longitude,preferredAlarmRadiusMeters=spot.preferredAlarmRadiusMeters,typicalWaterDepthMeters=spot.typicalWaterDepthMeters,typicalRodeLengthMeters=spot.typicalRodeLengthMeters,seabedType=spot.seabedType,customSeabedText=spot.customSeabedText,coordinateSource=spot.coordinateSource,coordinateUncertaintyMeters=spot.coordinateUncertaintyMeters,approachNotes=spot.approachNotes,notes=spot.personalNotes)
+        val encoded=AnchorageSharePayloadCodec.encodeV2(payload)
+        val matrix=QRCodeWriter().encode(encoded.uri,BarcodeFormat.QR_CODE,720,720,mapOf(EncodeHintType.MARGIN to 3,EncodeHintType.CHARACTER_SET to "UTF-8",EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))
+        val image=Bitmap.createBitmap(1080,1380,Bitmap.Config.ARGB_8888);val canvas=Canvas(image);val paint=Paint(Paint.ANTI_ALIAS_FLAG)
+        return try{
+            canvas.drawColor(Color.rgb(242,250,250));paint.color=Color.rgb(11,105,118);canvas.drawRect(0f,0f,1080f,170f,paint)
+            BitmapFactory.decodeResource(context.resources,R.drawable.anchor_watch_logo)?.let{logo->canvas.drawBitmap(logo,null,RectF(30f,20f,160f,150f),paint);logo.recycle()}
+            paint.color=Color.WHITE;paint.textSize=48f;paint.isFakeBoldText=true;canvas.drawText("Anchor Watch",190f,78f,paint);paint.textSize=27f;paint.isFakeBoldText=false;canvas.drawText(AnchorageShareContent.BRANDING_LINE,190f,125f,paint)
+            paint.color=Color.rgb(12,46,52);paint.textSize=48f;paint.isFakeBoldText=true;canvas.drawText(place.displayName.take(34),60f,245f,paint);paint.textSize=32f;paint.isFakeBoldText=false;canvas.drawText(spot.name.take(48),60f,300f,paint)
+            val qr=Bitmap.createBitmap(720,720,Bitmap.Config.ARGB_8888);for(y in 0 until 720)for(x in 0 until 720)qr.setPixel(x,y,if(matrix[x,y])Color.rgb(10,49,57)else Color.WHITE);canvas.drawBitmap(qr,180f,355f,paint);qr.recycle()
+            paint.textAlign=Paint.Align.CENTER;paint.color=Color.rgb(11,105,118);paint.textSize=27f;paint.isFakeBoldText=true;canvas.drawText("Scan with Anchor Watch",540f,1130f,paint);paint.isFakeBoldText=false;paint.textSize=24f;paint.color=Color.rgb(73,91,95);canvas.drawText(AnchorageShareContent.coordinates(spot.latitude,spot.longitude),540f,1180f,paint);canvas.drawText("Personal reference · verify conditions before anchoring",540f,1240f,paint)
+            val directory=File(context.cacheDir,"anchorage-shares").apply{mkdirs()};File(directory,"anchorage-place-${place.id}-spot-${spot.id}.png").also{file->file.outputStream().use{check(image.compress(Bitmap.CompressFormat.PNG,100,it))}}
+        }finally{image.recycle()}
     }
 }

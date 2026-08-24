@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
@@ -43,6 +45,7 @@ fun AnchorageLibraryScreen(
     var showRegions by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
+    val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let(vm::importPhoto)}
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -125,7 +128,7 @@ fun AnchorageLibraryScreen(
         )
     }
     if (showDetails) state.selectedPlace?.let { bundle ->
-        AnchoragePlaceDetailDialog(bundle, { showDetails = false }, approachSpot, openGoogleMaps)
+        AnchoragePlaceDetailDialog(bundle,state.collections,{ showDetails = false }, approachSpot, openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection)
     }
     if (showFilters) AnchorageFiltersSheet(state.filters, { showFilters = false }) {
         vm.setFilters(it); showFilters = false
@@ -141,6 +144,7 @@ fun AnchorageLibraryScreen(
         AnchorageQrScannerScreen(
             onClose = { showQrScanner = false },
             onSave = { value -> showQrScanner = false; vm.importLegacyQr(value) },
+            onSaveV2 = { value -> showQrScanner = false; vm.importV2Qr(value) },
         )
     }
 }
