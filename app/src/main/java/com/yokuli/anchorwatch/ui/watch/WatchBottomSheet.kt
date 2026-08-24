@@ -85,6 +85,7 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
     val latestRuntimeFeedback=state.runtimeDiagnostics.lastUserFeedback
     val loadingStartBlocker=tr("Safety settings are still loading. Wait for the Ready status, then try again.","安全设置仍在加载。请等待状态显示就绪后再试。")
     val tripStartBlocker=tr("End or pause the current Trip Watch session before starting Anchor Watch.","开始锚警前，请先结束或暂停当前航程监控。")
+    val resumeTimeoutFeedback=tr("The resume command did not return a result. The session remains paused; check NMEA/GPS status and press Resume once.","继续命令未返回结果。会话仍保持暂停；请检查 NMEA / GPS 状态后只按一次“继续”。")
     LaunchedEffect(active?.paused,latestRuntimeFeedback?.id,resumePending){
         if(!resumePending)return@LaunchedEffect
         if(active?.paused==false){resumePending=false;resumeFailure=null;return@LaunchedEffect}
@@ -100,7 +101,7 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
         kotlinx.coroutines.delay(33_000L)
         if(resumePending){
             resumePending=false
-            resumeFailure=tr("The resume command did not return a result. The session remains paused; check NMEA/GPS status and press Resume once.","继续命令未返回结果。会话仍保持暂停；请检查 NMEA / GPS 状态后只按一次“继续”。")
+            resumeFailure=resumeTimeoutFeedback
         }
     }
     val freshFix = when(state.settings.gpsDataSource){

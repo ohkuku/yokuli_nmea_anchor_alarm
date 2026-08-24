@@ -108,7 +108,7 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
    submitting=false;submitFailure=latestRuntimeFeedback.message;return@LaunchedEffect
   }
   kotlinx.coroutines.delay(15_000)
-  if(state.active==null){submitting=false;submitTimedOut=true}
+  submitting=false;submitTimedOut=true
  }
  fun numeric(value:String)=value.filter{it.isDigit()||it=='.'}
  val sourceFix=when(source){GpsDataSource.NMEA->state.nmeaFix;GpsDataSource.SYSTEM->state.systemFix;GpsDataSource.DEMO->state.systemFix}
