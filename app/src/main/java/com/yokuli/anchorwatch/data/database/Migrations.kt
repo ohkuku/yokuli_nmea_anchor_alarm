@@ -329,8 +329,7 @@ object Migration19To20:Migration(19,20){
   db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS anchorage_search_fts USING FTS4(placeId INTEGER NOT NULL,placeName TEXT NOT NULL,aliases TEXT NOT NULL,regionPath TEXT NOT NULL,spotNames TEXT NOT NULL,notes TEXT NOT NULL)")
   db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_gis_meta (`key` TEXT NOT NULL,longValue INTEGER,textValue TEXT,PRIMARY KEY(`key`))")
   db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_region_packs (regionId INTEGER NOT NULL,downloadedAt INTEGER NOT NULL,providerRevision TEXT,featureCount INTEGER NOT NULL,PRIMARY KEY(regionId),FOREIGN KEY(regionId) REFERENCES anchorage_regions(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
-  createSpatialTable(db,"anchorage_place_rtree")
-  createSpatialTable(db,"anchorage_spot_rtree")
+  AnchorageSpatialSchema.ensure(db)
 
   // Deterministic and lossless: one legacy row becomes exactly one Place and
   // one Spot. Nearby legacy points are never silently merged.
@@ -354,14 +353,4 @@ object Migration19To20:Migration(19,20){
   db.execSQL("INSERT OR IGNORE INTO anchorage_collections(name,description,icon,sortOrder,createdAt,updatedAt) VALUES('Favorites','','favorite',0,$now,$now),('Want to visit','','planned',1,$now,$now),('Backup','','backup',2,$now,$now)")
  }
 
- private fun createSpatialTable(db:SupportSQLiteDatabase,name:String){
-  // AOSP/vendor SQLite builds are allowed to omit the optional RTREE module.
-  // Prefer the real virtual index, but never brick a database migration on
-  // those devices: the indexed bbox fallback has identical query semantics.
-  runCatching{db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS $name USING rtree(id,minLat,maxLat,minLon,maxLon)")}.getOrElse{
-   db.execSQL("CREATE TABLE IF NOT EXISTS $name (id INTEGER NOT NULL PRIMARY KEY,minLat REAL NOT NULL,maxLat REAL NOT NULL,minLon REAL NOT NULL,maxLon REAL NOT NULL)")
-   db.execSQL("CREATE INDEX IF NOT EXISTS index_${name}_latitude ON $name(maxLat,minLat)")
-   db.execSQL("CREATE INDEX IF NOT EXISTS index_${name}_longitude ON $name(maxLon,minLon)")
-  }
- }
 }

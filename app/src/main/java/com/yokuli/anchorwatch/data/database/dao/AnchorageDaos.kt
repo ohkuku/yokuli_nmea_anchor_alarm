@@ -92,6 +92,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface AnchoragePhotoDao{
     @Query("SELECT * FROM anchorage_photos WHERE placeId=:placeId ORDER BY COALESCE(capturedAt,createdAt) DESC") fun observeForPlace(placeId:Long):Flow<List<AnchoragePhotoEntity>>
     @Query("SELECT * FROM anchorage_photos ORDER BY id") suspend fun allNow():List<AnchoragePhotoEntity>
+    @Query("SELECT * FROM anchorage_photos WHERE placeId=:placeId ORDER BY COALESCE(capturedAt,createdAt) DESC LIMIT 1") suspend fun firstForPlace(placeId:Long):AnchoragePhotoEntity?
     @Insert suspend fun insert(value:AnchoragePhotoEntity):Long
     @Delete suspend fun delete(value:AnchoragePhotoEntity)
     @Query("SELECT COUNT(*) FROM anchorage_photos WHERE placeId=:placeId") suspend fun countForPlace(placeId:Long):Long
