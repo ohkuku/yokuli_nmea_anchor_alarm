@@ -168,3 +168,42 @@
 - Verification result: **Approach now replaces the workspace, suppresses bottom/root navigation chrome, owns the system-back action, retains the detail and Set Anchor Watch hand-off, and scrolls on constrained screens. `assembleDebug` passed in 1m12s; Compose test was written but NOT RUN.**
 - Real hardware verified: **No — verify small-screen/font-scale layout and phone back gesture in QA-P0-019.**
 - Status: **FIXED AND DEBUG ASSEMBLE PASSED — AWAITING MANUAL QA**
+
+## Finding P0-013 — Failed NMEA RX attempts can hide the error and stress a fragile gateway
+
+- Severity: **P0 / connectivity and external-device protection**
+- User story: one Connect action owns one formal RX transport; a quiet connection stays open; a refusal remains visible; retries are slow, bounded and observable; repeated taps never create a connection storm.
+- Evidence: the connection coroutine previously ended by publishing `DISCONNECTED`, overwriting the actionable transport error. Retry delay and attempt count were not exposed to the UI, and the old manual reconnect debounce was shorter than a fragile server's recovery time.
+- Reproduction steps: enter a closed or refusing TCP endpoint, tap Connect once, then inspect the status/error and server connection attempts; repeat with auto reconnect enabled and with several rapid Reconnect taps.
+- Root cause: transport ownership, presentation state and retry policy were coupled in one loop without a latched failure state, monotonic transport-generation diagnostics or a bounded retry circuit.
+- Failing test: `NmeaConnectionManagerTest.refusedConnectionKeepsOneVisibleErrorAndDoesNotOpenAnotherSocket`; `automaticOpenFailuresBackOffAndStopAfterTheBoundedCircuitLimit`; `explicitReconnectReplacesSameProfileOnceAndRapidTapsAreDebounced`; `P0NmeaEndpointStoryTest.formalInputOwnsOneSocketWhileQuietThenReceivesLater`.
+- Fix commit: **PENDING**
+- Verification result: **Passed `NmeaConnectionManagerTest` (9/9) and `P0NmeaEndpointStoryTest` (2/2) using loopback fake endpoints. Final `assembleDebug` passed in 30s. No real endpoint was contacted.**
+- Real hardware verified: **No — fragile NMEA gateway remains UNVERIFIED_HARDWARE.**
+- Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY QA**
+
+## Finding P0-014 — Formal phone NMEA output can bypass calibration or duplicate the RX endpoint
+
+- Severity: **P0 / unsafe publication and gateway protection**
+- User story: formal App-to-boat sharing starts only after calibration version, explicit fixed-mount confirmation and heading alignment all match; independent TX must never create a second client on the configured RX host+port, whether RX is open, closed, or has never been opened.
+- Evidence: UI readiness treated an old calibration/alignment as sufficient after recalibration, while runtime collectors did not immediately stop output when readiness became invalid. Independent TCP output validated only generic host/port ranges and could target the same endpoint as RX.
+- Reproduction steps: configure independent TX with the exact RX host+port before connecting RX and try endpoint test/start; repeat while RX is open. Separately recalibrate vessel zero after enabling formal output and attempt to restart without reconfirming mount/alignment.
+- Root cause: calibration facts had timestamps but no version binding, and endpoint collision was a warning rather than a mandatory policy enforced at UI, ViewModel, runtime, connection and writer boundaries.
+- Failing test: `NmeaDeviceOutputPolicyTest.duplicateIndependentTxIsBlockedByConfigurationEvenBeforeRxEverOpened`; `protectedWriterNeverCreatesDuplicateSocketWhenRxIsAlreadyOpen`; `protectedWriterNeverCreatesDuplicateSocketBeforeRxHasEverOpened`; `NmeaStreamReadinessPolicyTest.formalOutputRequiresVersionMatchedZeroMountAndHeadingAlignment`; `suspectMountImmediatelyBlocksFormalOutput`.
+- Fix commit: **PENDING**
+- Verification result: **Passed `NmeaDeviceOutputPolicyTest` (18/18) and `NmeaStreamReadinessPolicyTest` (6/6), including the open-RX and never-opened-RX zero-new-socket cases. Final `assembleDebug` passed in 30s. Tests used loopback sockets only.**
+- Real hardware verified: **No — vessel mounting and the actual TX/RX gateway ports remain UNVERIFIED_HARDWARE.**
+- Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY/SENSOR QA**
+
+## Finding P0-015 — Two publishers, BACKUP suppression and non-atomic Stop make live NMEA disappear or linger
+
+- Severity: **P0 / live navigation data and transport safety**
+- User story: one explicit Start publishes one steady Anchor Watch phone/App feed through the chosen transport; unchanged heading remains at 5 Hz; Boat input never suppresses or leaks into it; one Stop returns only after the old session can emit no more bytes.
+- Evidence: production had both `PhonePositionNmeaOutputRuntime` and `NmeaSharingRuntime`. The former could suppress phone values through `PublicationOwnershipGate/BACKUP`; the latter subscribed to `validRawSentences` and forwarded Boat instruments. Dedicated TCP registered its Socket only after blocking `connect()`, and queued writes had no publication generation. TCP server enqueue was also counted as sent without a client flush.
+- Reproduction steps: start normal phone output, feed a Boat HDT/VHW candidate, hold phone heading constant, then Stop during a blocked dedicated connect or while heading batches are queued. Separately start the old Sharing server and observe raw Boat sentences using a different feed.
+- Root cause: output source policy, feed generation, transport ownership and lifecycle were split across two engines; Stop did not own a monotonic session lease or the in-flight connect candidate.
+- Failing test: `AnchorWatchNmeaPublisherTest.constantHeadingHasFiveHertzHeartbeatForTenMinutesWithoutBlankSentence`; `boatCandidatesNeverSuppressOrRewriteTheSelectedAnchorWatchHeading`; `stopInvalidatesEveryOldPublicationGeneration`; `NmeaDeviceOutputPolicyTest.stopClosesAnInFlightConnectCandidateInsteadOfWaitingForTimeout`; `NmeaSharingServerTest.listeningWithoutAClientNeverClaimsASentenceWasSent`.
+- Fix commit: **PENDING**
+- Verification result: **One `AnchorWatchNmeaPublisher` now generates Phone GNSS, calibrated phone vessel heading/motion, phone pressure and App-derived wind. TCP client/server, UDP and advanced same-socket consume that same bounded latest-value feed. Legacy Sharing migrates stopped; raw Boat forwarding and the second runtime were deleted. Stop invalidates generation, closes connect candidates/transports, waits for the writer lease, clears Live TX and retains a separately labelled last session. `testDebugUnitTest` passed 523/523, `lintDebug` passed, and `assembleDebug` produced the APK. Tests used only deterministic clocks, loopback/fake TCP endpoints and local Android build tools; no real NMEA endpoint was contacted.**
+- Real hardware verified: **No — do not connect repeatedly to the user's fragile gateway. Run the manual receiver matrix once with packet capture.**
+- Status: **FIXED — UNIT/LINT/DEBUG BUILD PASSED; AWAITING ONE CONTROLLED HARDWARE QA RUN**

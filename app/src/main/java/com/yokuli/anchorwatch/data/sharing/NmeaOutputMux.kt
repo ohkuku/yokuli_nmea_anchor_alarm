@@ -1,7 +1,6 @@
 package com.yokuli.anchorwatch.data.sharing
 
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
-import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import java.time.Instant
@@ -13,26 +12,9 @@ import javax.inject.Singleton
 import kotlin.math.abs
 import com.yokuli.anchorwatch.domain.vessel.VesselAttitude
 import com.yokuli.anchorwatch.domain.vessel.VesselMotion
-import com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot
-import com.yokuli.anchorwatch.domain.vessel.VesselDataSource
-import com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness
 
 @Singleton
 class NmeaOutputMux @Inject constructor() {
-    private val positionTypes = setOf("RMC", "GGA", "GLL", "VTG")
-
-    fun boatSentence(line: String, selectedSource: GpsDataSource): String? {
-        val normalized = line.trim()
-        if (!NmeaChecksum.validate(normalized, required = false)) return null
-        val type = sentenceType(normalized) ?: return null
-        // Position sentences are regenerated only after the unique integrity
-        // gate accepts a fix. Forwarding the boat's raw RMC/GGA/GLL/VTG here
-        // would let a quarantined spike escape through NMEA Sharing.
-        if (type in positionTypes) return null
-        val withChecksum = if ('*' in normalized) normalized else NmeaChecksum.append(normalized.removePrefix("$"))
-        return "$withChecksum\r\n"
-    }
-
     fun acceptedPosition(fix: NavigationFix, nowElapsed: Long, maxAgeMillis:Long=3_000L): List<String> {
         if (!fix.valid || fix.latitude !in -90.0..90.0 || fix.longitude !in -180.0..180.0 ||
             fix.positionProvider !in setOf(PositionProvider.ANDROID_GNSS, PositionProvider.NMEA, PositionProvider.DEMO) ||
@@ -73,41 +55,13 @@ class NmeaOutputMux @Inject constructor() {
     }
 
     fun phoneHeading(trueHeadingDegrees:Double):String=sentence("IIHDT,${f(normalizeDegrees(trueHeadingDegrees),2)},T")
-    fun phoneMagneticHeading(magneticHeadingDegrees:Double,variationDegrees:Double):String{
-        val variation=kotlin.math.abs(variationDegrees);val direction=if(variationDegrees<0.0)"W" else "E"
-        return sentence("IIHDG,${f(normalizeDegrees(magneticHeadingDegrees),2)},,,${f(variation,2)},$direction")
+    fun phoneMagneticHeading(magneticHeadingDegrees:Double,variationDegrees:Double?):String{
+        val variation=variationDegrees?.let{kotlin.math.abs(it)};val direction=variationDegrees?.let{if(it<0.0)"W" else "E"}.orEmpty()
+        return sentence("IIHDG,${f(normalizeDegrees(magneticHeadingDegrees),2)},,,${variation?.let{f(it,2)}.orEmpty()},$direction")
     }
     fun derivedTrueWind(speedKnots:Double,directionTrueDegrees:Double,angleDegrees:Double):List<String>{
         val side=if(angleDegrees<0)"L" else "R";val magnitude=abs(angleDegrees);val mwvAngle=normalizeDegrees(angleDegrees)
         return listOf(sentence("WIMWD,${f(normalizeDegrees(directionTrueDegrees),2)},T,,M,${f(speedKnots.coerceAtLeast(0.0),2)},N,,M/S"),sentence("WIMWV,${f(mwvAngle,2)},T,${f(speedKnots.coerceAtLeast(0.0),2)},N,A"),sentence("WIVWT,${f(magnitude,2)},$side,${f(speedKnots.coerceAtLeast(0.0),2)},N,,,"))
-    }
-    /** Fixed-heartbeat, source-agnostic feed for chart plotters and clients.
-     * Every value comes from VesselDataHub's selected canonical observation;
-     * candidates that lost arbitration are never re-published here. */
-    fun canonicalFeed(snapshot:VesselDataSnapshot,nowElapsed:Long,wallUtcMillis:Long=System.currentTimeMillis()):List<String>{
-        // A measurement and its publication heartbeat are different clocks.
-        // Re-publish a Hub-held value at the fixed output heartbeat until the
-        // metric's own hold policy marks it stale. Never turn an omitted/null
-        // update into an empty sentence or a momentary "no heading" source.
-        fun usable(received:Long?,freshness:VesselDataFreshness)=received!=null&&freshness in setOf(VesselDataFreshness.FRESH,VesselDataFreshness.HELD)&&nowElapsed>=received
-        val result=mutableListOf<String>()
-        snapshot.position.value?.takeIf{usable(snapshot.position.receivedElapsedRealtime,snapshot.position.freshness)}?.let{position->
-            val provider=when(snapshot.position.source){VesselDataSource.PHONE_GNSS->PositionProvider.ANDROID_GNSS;VesselDataSource.DEMO->PositionProvider.DEMO;else->PositionProvider.NMEA}
-            result+=acceptedPosition(NavigationFix(position.latitude,position.longitude,snapshot.position.observedAtUtcMillis?:wallUtcMillis,snapshot.position.receivedElapsedRealtime?:nowElapsed,sogKnots=snapshot.sogKnots.value,cogTrueDegrees=snapshot.cogTrueDegrees.value,hdop=position.hdop,satellites=position.satellites,altitudeMeters=position.altitudeMeters,horizontalAccuracyMeters=position.horizontalAccuracyMeters,positionProvider=provider,sourceSentence="CANONICAL",valid=true),nowElapsed,30_000L)
-        }
-        snapshot.headingTrueDegrees.value?.takeIf{usable(snapshot.headingTrueDegrees.receivedElapsedRealtime,snapshot.headingTrueDegrees.freshness)}?.let{result+=phoneHeading(it)}
-        snapshot.speedThroughWaterKnots.value?.takeIf{usable(snapshot.speedThroughWaterKnots.receivedElapsedRealtime,snapshot.speedThroughWaterKnots.freshness)}?.let{stw->
-            val heading=snapshot.headingTrueDegrees.value?.takeIf{usable(snapshot.headingTrueDegrees.receivedElapsedRealtime,snapshot.headingTrueDegrees.freshness)}
-            result+=sentence("IIVHW,${heading?.let{f(it,2)}.orEmpty()},T,,M,${f(stw,2)},N,${f(stw*1.852,2)},K")
-        }
-        val aws=snapshot.apparentWind.speedKnots;val awa=snapshot.apparentWind.angleDegrees
-        if(aws.value!=null&&awa.value!=null&&usable(aws.receivedElapsedRealtime,aws.freshness)&&usable(awa.receivedElapsedRealtime,awa.freshness))result+=sentence("WIMWV,${f(normalizeDegrees(awa.value!!),2)},R,${f(aws.value!!,2)},N,A")
-        val tws=snapshot.trueWind.speedKnots;val twd=snapshot.trueWind.directionDegrees;val twa=snapshot.trueWind.angleDegrees
-        if(tws.value!=null&&twd.value!=null&&twa.value!=null&&usable(tws.receivedElapsedRealtime,tws.freshness)&&usable(twd.receivedElapsedRealtime,twd.freshness)&&usable(twa.receivedElapsedRealtime,twa.freshness))result+=derivedTrueWind(tws.value!!,twd.value!!,twa.value!!)
-        snapshot.depthMeters.value?.takeIf{usable(snapshot.depthMeters.receivedElapsedRealtime,snapshot.depthMeters.freshness)}?.let{result+=sentence("SDDBT,,f,${f(it,2)},M,,F")}
-        snapshot.rateOfTurnDegreesPerMinute.value?.takeIf{usable(snapshot.rateOfTurnDegreesPerMinute.receivedElapsedRealtime,snapshot.rateOfTurnDegreesPerMinute.freshness)}?.let{result+=phoneRateOfTurn(it)}
-        snapshot.pressureHpa.value?.takeIf{usable(snapshot.pressureHpa.receivedElapsedRealtime,snapshot.pressureHpa.freshness)}?.let{phoneXdr(null,it)?.let(result::add)}
-        return result.distinct()
     }
     fun diagnostic():String=sentence("PYOK,TEST,ANCHOR_WATCH,1")
     fun diagnosticMagneticHeading(headingDegrees:Double=123.4):String=sentence("IIHDG,${f(normalizeDegrees(headingDegrees),2)},,,,")

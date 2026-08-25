@@ -26,7 +26,34 @@ data class SensorQuaternion(val w:Double,val x:Double,val y:Double,val z:Double)
     operator fun times(other:SensorQuaternion)=SensorQuaternion(w*other.w-x*other.x-y*other.y-z*other.z,w*other.x+x*other.w+y*other.z-z*other.y,w*other.y-x*other.z+y*other.w+z*other.x,w*other.z+x*other.y-y*other.x+z*other.w)
     fun normalized():SensorQuaternion{val n=sqrt(w*w+x*x+y*y+z*z).coerceAtLeast(1e-9);return SensorQuaternion(w/n,x/n,y/n,z/n)}
 }
-data class VesselMountCalibration(val version:Int=1,val bowAxis:DeviceBowAxis=DeviceBowAxis.TOP,val neutralQuaternion:SensorQuaternion=SensorQuaternion(1.0,0.0,0.0,0.0),val calibratedAt:Long=0,val mountState:PhoneVesselMountState=PhoneVesselMountState.UNCALIBRATED,val headingAlignmentOffsetDegrees:Double=0.0,val automaticMountRecovery:Boolean=true,val headingAlignmentCompletedAt:Long=0){val headingAligned:Boolean get()=headingAlignmentCompletedAt>0L}
+data class VesselMountCalibration(
+    val version:Int=1,
+    val bowAxis:DeviceBowAxis=DeviceBowAxis.TOP,
+    val neutralQuaternion:SensorQuaternion=SensorQuaternion(1.0,0.0,0.0,0.0),
+    val calibratedAt:Long=0,
+    val mountState:PhoneVesselMountState=PhoneVesselMountState.UNCALIBRATED,
+    val headingAlignmentOffsetDegrees:Double=0.0,
+    val automaticMountRecovery:Boolean=true,
+    val headingAlignmentCompletedAt:Long=0,
+    val mountConfirmedVersion:Int=0,
+    val headingAlignmentVersion:Int=0,
+){
+    val mountConfirmed:Boolean get()=calibratedAt>0L&&mountState==PhoneVesselMountState.VESSEL_MOUNTED&&mountConfirmedVersion==version
+    val headingAligned:Boolean get()=headingAlignmentCompletedAt>0L&&headingAlignmentVersion==version
+}
+enum class PhoneVesselOutputBlocker{VESSEL_ZERO_REQUIRED,MOUNT_CONFIRMATION_REQUIRED,HEADING_ALIGNMENT_REQUIRED,MOUNT_SUSPECT}
+data class PhoneVesselOutputReadiness(val ready:Boolean,val blockers:Set<PhoneVesselOutputBlocker>)
+object PhoneVesselOutputReadinessPolicy{
+    fun evaluate(calibration:VesselMountCalibration,runtimeMountState:PhoneVesselMountState):PhoneVesselOutputReadiness{
+        val blockers=buildSet{
+            if(calibration.calibratedAt<=0L)add(PhoneVesselOutputBlocker.VESSEL_ZERO_REQUIRED)
+            if(!calibration.mountConfirmed||runtimeMountState !in setOf(PhoneVesselMountState.VESSEL_MOUNTED,PhoneVesselMountState.MOUNT_SUSPECT))add(PhoneVesselOutputBlocker.MOUNT_CONFIRMATION_REQUIRED)
+            if(runtimeMountState==PhoneVesselMountState.MOUNT_SUSPECT)add(PhoneVesselOutputBlocker.MOUNT_SUSPECT)
+            if(!calibration.headingAligned)add(PhoneVesselOutputBlocker.HEADING_ALIGNMENT_REQUIRED)
+        }
+        return PhoneVesselOutputReadiness(blockers.isEmpty(),blockers)
+    }
+}
 data class PhoneSensorCapabilities(val attitudeAvailable:Boolean=false,val gyroAvailable:Boolean=false,val magnetometerAvailable:Boolean=false,val pressureAvailable:Boolean=false,val linearAccelerationAvailable:Boolean=false)
 data class PhoneVesselAttitudeSample(val attitude:VesselAttitude?=null,val dynamicAccelerationG:Double=0.0,val mountSuspect:Boolean=false,val receivedElapsedRealtime:Long?=null)
 data class PhonePressureSample(val pressureHpa:Double?=null,val receivedElapsedRealtime:Long?=null)
@@ -35,11 +62,14 @@ private val Context.mountStore by preferencesDataStore("vessel_mount_calibration
 
 @Singleton
 class VesselMountCalibrationRepository @Inject constructor(@ApplicationContext private val context:Context){
-    private object K{val version=intPreferencesKey("calibration_version");val axis=stringPreferencesKey("bow_axis");val w=doublePreferencesKey("neutral_w");val x=doublePreferencesKey("neutral_x");val y=doublePreferencesKey("neutral_y");val z=doublePreferencesKey("neutral_z");val at=longPreferencesKey("calibrated_at");val mount=stringPreferencesKey("mount_state");val headingOffset=doublePreferencesKey("heading_alignment_offset");val headingAlignedAt=longPreferencesKey("heading_alignment_completed_at");val automaticRecovery=booleanPreferencesKey("automatic_mount_recovery")}
-    val calibration=context.mountStore.data.map{p->val at=p[K.at]?:0;VesselMountCalibration(version=p[K.version]?:1,bowAxis=p[K.axis]?.let{runCatching{DeviceBowAxis.valueOf(it)}.getOrNull()}?:DeviceBowAxis.TOP,neutralQuaternion=SensorQuaternion(p[K.w]?:1.0,p[K.x]?:0.0,p[K.y]?:0.0,p[K.z]?:0.0).normalized(),calibratedAt=at,mountState=p[K.mount]?.let{runCatching{PhoneVesselMountState.valueOf(it)}.getOrNull()}?:if(at>0)PhoneVesselMountState.HANDHELD else PhoneVesselMountState.UNCALIBRATED,headingAlignmentOffsetDegrees=p[K.headingOffset]?:0.0,automaticMountRecovery=p[K.automaticRecovery]?:true,headingAlignmentCompletedAt=p[K.headingAlignedAt]?:0L)}
-    suspend fun save(axis:DeviceBowAxis,q:SensorQuaternion){context.mountStore.edit{p->p[K.version]=(p[K.version]?:0)+1;p[K.axis]=axis.name;p[K.w]=q.w;p[K.x]=q.x;p[K.y]=q.y;p[K.z]=q.z;p[K.at]=System.currentTimeMillis();p[K.mount]=PhoneVesselMountState.VESSEL_MOUNTED.name;p[K.headingOffset]=0.0;p[K.headingAlignedAt]=0L}}
-    suspend fun setMountState(value:PhoneVesselMountState)=context.mountStore.edit{it[K.mount]=value.name}
-    suspend fun setHeadingAlignment(offsetDegrees:Double)=context.mountStore.edit{it[K.headingOffset]=((offsetDegrees+540.0)%360.0)-180.0;it[K.headingAlignedAt]=System.currentTimeMillis()}
+    private object K{val version=intPreferencesKey("calibration_version");val axis=stringPreferencesKey("bow_axis");val w=doublePreferencesKey("neutral_w");val x=doublePreferencesKey("neutral_x");val y=doublePreferencesKey("neutral_y");val z=doublePreferencesKey("neutral_z");val at=longPreferencesKey("calibrated_at");val mount=stringPreferencesKey("mount_state");val mountConfirmedVersion=intPreferencesKey("mount_confirmed_version");val headingOffset=doublePreferencesKey("heading_alignment_offset");val headingAlignedAt=longPreferencesKey("heading_alignment_completed_at");val headingAlignmentVersion=intPreferencesKey("heading_alignment_version");val automaticRecovery=booleanPreferencesKey("automatic_mount_recovery")}
+    val calibration=context.mountStore.data.map{p->
+        val at=p[K.at]?:0;val version=p[K.version]?:1
+        VesselMountCalibration(version=version,bowAxis=p[K.axis]?.let{runCatching{DeviceBowAxis.valueOf(it)}.getOrNull()}?:DeviceBowAxis.TOP,neutralQuaternion=SensorQuaternion(p[K.w]?:1.0,p[K.x]?:0.0,p[K.y]?:0.0,p[K.z]?:0.0).normalized(),calibratedAt=at,mountState=p[K.mount]?.let{runCatching{PhoneVesselMountState.valueOf(it)}.getOrNull()}?:if(at>0)PhoneVesselMountState.HANDHELD else PhoneVesselMountState.UNCALIBRATED,headingAlignmentOffsetDegrees=p[K.headingOffset]?:0.0,automaticMountRecovery=p[K.automaticRecovery]?:true,headingAlignmentCompletedAt=p[K.headingAlignedAt]?:0L,mountConfirmedVersion=p[K.mountConfirmedVersion]?:0,headingAlignmentVersion=p[K.headingAlignmentVersion]?:0)
+    }
+    suspend fun save(axis:DeviceBowAxis,q:SensorQuaternion){context.mountStore.edit{p->val version=(p[K.version]?:0)+1;p[K.version]=version;p[K.axis]=axis.name;p[K.w]=q.w;p[K.x]=q.x;p[K.y]=q.y;p[K.z]=q.z;p[K.at]=System.currentTimeMillis();p[K.mount]=PhoneVesselMountState.HANDHELD.name;p[K.mountConfirmedVersion]=0;p[K.headingOffset]=0.0;p[K.headingAlignedAt]=0L;p[K.headingAlignmentVersion]=0}}
+    suspend fun setMountState(value:PhoneVesselMountState)=context.mountStore.edit{p->p[K.mount]=value.name;p[K.mountConfirmedVersion]=if(value==PhoneVesselMountState.VESSEL_MOUNTED)p[K.version]?:1 else 0}
+    suspend fun setHeadingAlignment(offsetDegrees:Double)=context.mountStore.edit{p->p[K.headingOffset]=((offsetDegrees+540.0)%360.0)-180.0;p[K.headingAlignedAt]=System.currentTimeMillis();p[K.headingAlignmentVersion]=p[K.version]?:1}
     suspend fun setAutomaticRecovery(enabled:Boolean)=context.mountStore.edit{it[K.automaticRecovery]=enabled}
     suspend fun restore(value:VesselMountCalibration){
         val normalized=value.neutralQuaternion.normalized()
@@ -47,7 +77,7 @@ class VesselMountCalibrationRepository @Inject constructor(@ApplicationContext p
             p[K.version]=value.version.coerceAtLeast(1)
             p[K.axis]=value.bowAxis.name
             p[K.w]=normalized.w;p[K.x]=normalized.x;p[K.y]=normalized.y;p[K.z]=normalized.z
-            p[K.at]=value.calibratedAt.coerceAtLeast(0L);p[K.mount]=value.mountState.name;p[K.headingOffset]=value.headingAlignmentOffsetDegrees;p[K.headingAlignedAt]=value.headingAlignmentCompletedAt.coerceAtLeast(0L);p[K.automaticRecovery]=value.automaticMountRecovery
+            p[K.at]=value.calibratedAt.coerceAtLeast(0L);p[K.mount]=value.mountState.name;p[K.mountConfirmedVersion]=value.mountConfirmedVersion;p[K.headingOffset]=value.headingAlignmentOffsetDegrees;p[K.headingAlignedAt]=value.headingAlignmentCompletedAt.coerceAtLeast(0L);p[K.headingAlignmentVersion]=value.headingAlignmentVersion;p[K.automaticRecovery]=value.automaticMountRecovery
         }
     }
 }

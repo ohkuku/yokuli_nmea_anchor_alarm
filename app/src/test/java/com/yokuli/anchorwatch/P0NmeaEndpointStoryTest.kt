@@ -29,7 +29,7 @@ class P0NmeaEndpointStoryTest{
                 withTimeout(3_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
                 assertEquals(1,input.acceptedCount.get())
                 input.emit(NmeaChecksum.append("GPRMC,073000.00,A,3650.9100,S,17445.7980,E,0.2,180.0,250826,,,A"))
-                withTimeout(3_000){while(manager.diagnostics.value.lastPacketElapsed==null)delay(20)}
+                withTimeout(3_000){while(manager.diagnostics.value.lastSentenceReceivedElapsedRealtime==null)delay(20)}
                 assertEquals("A quiet endpoint must not be probed by a second disposable connection",1,input.acceptedCount.get())
             }finally{manager.disconnect();scope.cancel()}
         }

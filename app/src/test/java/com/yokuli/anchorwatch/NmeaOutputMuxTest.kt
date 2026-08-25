@@ -2,30 +2,15 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
 import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
-import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.domain.vessel.*
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NmeaOutputMuxTest {
     private val mux=NmeaOutputMux()
-
-    @Test fun systemSourceSuppressesEveryTalkerPositionButKeepsBoatInstruments(){
-        listOf("GPRMC,1","GNGGA,1","IIGLL,1","ECVTG,1").forEach{body->assertNull(mux.boatSentence(NmeaChecksum.append(body),GpsDataSource.SYSTEM))}
-        val depth=NmeaChecksum.append("IIDPT,12.3,0.0")
-        val heading=NmeaChecksum.append("IIHDT,123.4,T")
-        assertEquals("$depth\r\n",mux.boatSentence(depth,GpsDataSource.SYSTEM))
-        assertEquals("$heading\r\n",mux.boatSentence(heading,GpsDataSource.SYSTEM))
-    }
-
-    @Test fun nmeaSourcePassesValidSentencesAndAddsMissingChecksum(){
-        val output=mux.boatSentence("\$IIMWV,120.0,R,12.0,N,A",GpsDataSource.NMEA)!!
-        assertTrue(output.endsWith("\r\n"));assertTrue(NmeaChecksum.validate(output,true))
-    }
 
     @Test fun systemEncoderUsesGnTalkerChecksumAndNeverInventsHeading(){
         val fix=NavigationFix(-36.8485,174.7633,1_720_000_000_000,10_000,sogKnots=1.2,cogTrueDegrees=92.0,headingTrueDegrees=38.0,hdop=.8,fixQuality=1,satellites=12,altitudeMeters=4.0,horizontalAccuracyMeters=2.4,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
@@ -56,14 +41,6 @@ class NmeaOutputMuxTest {
         assertTrue(rmc(0.0,0.0).contains(",0000.00000,N,00000.00000,E,"))
         assertTrue(rmc(-0.001,179.999).contains(",0000.06000,S,17959.94000,E,"))
         assertTrue(rmc(0.001,-179.999).contains(",0000.06000,N,17959.94000,W,"))
-    }
-
-    @Test fun systemMuxReplacesBoatPositionAndKeepsHeadingDepthAndWind(){
-        val boat=listOf("GNRMC,1","GNGGA,1","GNVTG,1","GPGLL,1","IIHDT,120.0,T","IIDPT,8.0,0.0","IIMWV,90.0,R,12.0,N,A")
-        val passthrough=boat.mapNotNull{mux.boatSentence(NmeaChecksum.append(it),GpsDataSource.SYSTEM)}
-        assertEquals(3,passthrough.size);assertTrue(passthrough.any{it.contains("IIHDT")});assertTrue(passthrough.any{it.contains("IIDPT")});assertTrue(passthrough.any{it.contains("IIMWV")})
-        val generated=mux.acceptedPosition(NavigationFix(-36.0,174.0,1_720_000_000_000,10_000,sogKnots=2.4,cogTrueDegrees=123.4,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true),10_100)
-        assertTrue((passthrough+generated).all{NmeaChecksum.validate(it,true)})
     }
 
     @Test fun staleNetworkAndMockSystemPositionsAreNotShared(){
@@ -122,28 +99,4 @@ class NmeaOutputMuxTest {
         assertTrue(output.all{NmeaChecksum.validate(it,true)})
     }
 
-    @Test fun canonicalFeedPublishesOnlySelectedHubValuesAcrossRequiredFamilies(){
-        val source=VesselSourceIdentity("nmea:boat:1:IIHDT",sourceType=VesselSourceType.NMEA_INPUT,sentenceType="HDT",displayName="IIHDT")
-        fun <T> observation(value:T)=VesselObservation(value,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=10_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.BOAT_NMEA)
-        val snapshot=VesselDataSnapshot(
-            position=observation(VesselPosition(-36.8485,174.7633,horizontalAccuracyMeters=3.0,satellites=10,hdop=1.0)),sogKnots=observation(2.3),cogTrueDegrees=observation(92.0),headingTrueDegrees=observation(87.0),depthMeters=observation(8.4),speedThroughWaterKnots=observation(2.1),
-            apparentWind=VesselWindObservation(observation(12.0),VesselObservation(),observation(-25.0)),trueWind=VesselWindObservation(observation(10.0),observation(220.0),observation(35.0)),rateOfTurnDegreesPerMinute=observation(3.2),pressureHpa=observation(1013.2),
-        )
-        val output=mux.canonicalFeed(snapshot,10_100,1_720_000_000_000)
-        val types=output.mapNotNull(mux::sentenceType).toSet()
-        assertTrue(setOf("RMC","GGA","VTG","HDT","VHW","MWV","MWD","VWT","DBT","ROT","XDR").all{it in types})
-        assertTrue(output.all{NmeaChecksum.validate(it,true)})
-    }
-
-    @Test fun canonicalFeedNeverPublishesStaleSelectedValues(){
-        val stale=VesselObservation(123.0,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.STALE)
-        assertTrue(mux.canonicalFeed(VesselDataSnapshot(headingTrueDegrees=stale),10_000).isEmpty())
-    }
-
-    @Test fun canonicalFeedHeartbeatsAHeldMeasurementWithoutPublishingNull(){
-        val held=VesselObservation(123.0,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.HELD)
-        val output=mux.canonicalFeed(VesselDataSnapshot(headingTrueDegrees=held),10_000)
-        assertEquals(listOf("HDT"),output.mapNotNull(mux::sentenceType))
-        assertTrue(output.single().contains("123.00"))
-    }
 }

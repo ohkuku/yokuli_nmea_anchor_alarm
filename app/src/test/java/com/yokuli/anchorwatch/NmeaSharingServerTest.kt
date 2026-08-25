@@ -17,6 +17,15 @@ import org.junit.Test
 class NmeaSharingServerTest {
     @Test fun capacityMeetsProductMinimumAndQueuesAreBounded(){assertTrue(NmeaSharingServer.MAX_CLIENTS>=5);assertTrue(NmeaSharingServer.CLIENT_QUEUE_CAPACITY in 16..1024)}
 
+    @Test fun listeningWithoutAClientNeverClaimsASentenceWasSent(){
+        val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider())
+        try{server.start(port);waitUntil{server.status.value.state==SharingServerState.RUNNING};assertEquals(0,server.publish("\$IIHDT,123.4,T*00\r\n"));Thread.sleep(50);assertEquals(0,server.status.value.sentSentences)}finally{server.stop()}
+    }
+
+    @Test fun stoppedServerAcceptsNoClientsAndQueuesNoData(){
+        val server=NmeaSharingServer(NetworkAddressProvider());assertEquals(0,server.publish("\$IIHDT,123.4,T*00\r\n"));assertEquals(SharingServerState.STOPPED,server.status.value.state);assertEquals(0,server.status.value.sentSentences)
+    }
+
     @Test fun broadcastsCrlfSentenceToTcpClientAndStopsCleanly(){
         val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider())
         try{

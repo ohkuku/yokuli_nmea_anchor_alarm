@@ -34,7 +34,7 @@ data class NmeaInstrumentState(
  private val outboundLoopGuard:NmeaOutboundLoopGuard,
  private val sourceRegistry:VesselSourceRegistry,
 ){
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val updateRetainer=NmeaUpdateRetainer();private val headingResolver=NmeaHeadingResolver();private val connection=NmeaConnectionManager(scope,::resetHeldMeasurements)
+ private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val parser=Nmea0183Parser();private val updateRetainer=NmeaUpdateRetainer();private val headingResolver=NmeaHeadingResolver();private val connection=NmeaConnectionManager(scope,onGenerationStarted=::resetHeldMeasurements)
  private val requestGuard=Any();private var appConnectionRequested=false;private var backgroundConnectionRequested=false;@Volatile private var userDisconnected=false
  private val _fix=MutableStateFlow<NavigationFix?>(null);val fix=_fix.asStateFlow();val connectionState=connection.state
  private val _recentFixes=MutableStateFlow<List<NavigationFix>>(emptyList());val recentFixes=_recentFixes.asStateFlow()

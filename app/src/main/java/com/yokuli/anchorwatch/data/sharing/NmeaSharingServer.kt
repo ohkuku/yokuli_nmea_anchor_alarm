@@ -38,6 +38,8 @@ data class NmeaSharingStatus(
     val droppedSlowClients: Long = 0,
     val lastOutputElapsed: Long? = null,
     val clients: List<NmeaSharingClientStatus> = emptyList(),
+    /** Sentences after a client OutputStream flush, never merely queued. */
+    val recentWritten:List<String> = emptyList(),
     val lastEvent: String = "",
     val message: String = "",
 )
@@ -84,23 +86,26 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
 
     internal fun forceRebindForTest(){runCatching{serverSocket?.close()}}
 
-    fun publish(sentence: String) {
-        if (_status.value.state != SharingServerState.RUNNING) return
+    /** Queue one canonical sentence for each currently connected client.
+     * Returning zero is important: a listening server is not a successful
+     * network write until there is a receiver. */
+    fun publish(sentence: String):Int {
+        if (_status.value.state != SharingServerState.RUNNING) return 0
         var dropped = 0L
+        var queued = 0
         clients.forEach { (id, client) ->
             if (client.queue.trySend(sentence).isFailure) {
                 dropped++
                 closeClient(id, client)
-            }
+            } else queued++
         }
         _status.update{current->current.copy(
             clientCount = clients.size,
-            sentSentences = current.sentSentences + 1,
             droppedSlowClients = current.droppedSlowClients + dropped,
-            lastOutputElapsed = System.nanoTime()/1_000_000L,
             clients = clientStatuses(),
             lastEvent = if(dropped>0)"NMEA_CLIENT_DROPPED_SLOW" else current.lastEvent,
         )}
+        return queued
     }
 
     private fun addClient(socket: Socket) {
@@ -112,7 +117,17 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
         val job = scope.launch {
             try {
                 socket.getOutputStream().buffered().use { output ->
-                    for (sentence in queue) { output.write(sentence.toByteArray(Charsets.US_ASCII)); output.flush();clients[id]?.sent?.incrementAndGet();update(clientCount=clients.size) }
+                    for (sentence in queue) {
+                        output.write(sentence.toByteArray(Charsets.US_ASCII));output.flush()
+                        clients[id]?.sent?.incrementAndGet()
+                        _status.update{current->current.copy(
+                            clientCount=clients.size,
+                            sentSentences=current.sentSentences+1,
+                            lastOutputElapsed=System.nanoTime()/1_000_000L,
+                            clients=clientStatuses(),
+                            recentWritten=(current.recentWritten+sentence.trim()).takeLast(40),
+                        )}
+                    }
                 }
             } catch (cancelled:CancellationException) {
                 throw cancelled

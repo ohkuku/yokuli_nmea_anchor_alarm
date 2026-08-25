@@ -126,7 +126,7 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     val data=state.vesselData
     var detailMetric by remember{mutableStateOf<VesselMetricId?>(null)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{PageHeader(tr("Vessel data","船舶数据"),tr("One source policy for live instruments and heading assistance.","实时仪表与船首向辅助共用这一套来源策略。"))}
+        item{PageHeader(tr("App-internal vessel data","App 内部船舶数据"),tr("Choose one source for App instruments and calculations. Available or historical here does not mean it is currently transmitted; normal NMEA output is the separate phone/App-owned Anchor Watch feed.","为 App 仪表和计算选择每项数值的来源。此处显示“可用”或“历史”并不代表当前正在发送；普通 NMEA 输出是独立的 Anchor Watch 手机/App-owned 数据流。"))}
         item{Card{Column{
             SourceRoutingSummaryRow(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){detailMetric=VesselMetricId.POSITION}
             HorizontalDivider(Modifier.padding(horizontal=14.dp))
@@ -209,7 +209,7 @@ private fun observationForMetric(metric:VesselMetricId,data:com.yokuli.anchorwat
 }
 private fun <T,R> mapObservation(value:VesselObservation<T>,transform:(T)->R)=VesselObservation(value=value.value?.let(transform),source=value.source,observedAtUtcMillis=value.observedAtUtcMillis,receivedElapsedRealtime=value.receivedElapsedRealtime,quality=value.quality,freshness=value.freshness,provenance=value.provenance,sourceIdentity=value.sourceIdentity,sourceClass=value.sourceClass,reference=value.reference,provenanceDetail=value.provenanceDetail,conflict=value.conflict,sourceHeartbeatElapsedRealtime=value.sourceHeartbeatElapsedRealtime,selectionReason=value.selectionReason)
 private fun formatVesselValue(metric:VesselMetricId,value:Any?):String=when(value){null->"—";is com.yokuli.anchorwatch.domain.vessel.VesselPosition->"%.6f, %.6f".format(value.latitude,value.longitude);is Number->when(metric){VesselMetricId.POSITION->value.toString();VesselMetricId.HEADING_TRUE,VesselMetricId.COG,VesselMetricId.TRUE_WIND_DIRECTION,VesselMetricId.CURRENT_SET,VesselMetricId.WAYPOINT_BEARING->"%03.1f°T".format(value.toDouble());VesselMetricId.HEADING_MAGNETIC,VesselMetricId.DEVICE_HEADING_MAGNETIC->"%03.1f°M".format(value.toDouble());VesselMetricId.APPARENT_WIND_ANGLE,VesselMetricId.TRUE_WIND_ANGLE->windDataAngle(value.toDouble());VesselMetricId.SOG,VesselMetricId.SPEED_THROUGH_WATER,VesselMetricId.APPARENT_WIND_SPEED,VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.CURRENT_DRIFT->"%.2f kn".format(value.toDouble());VesselMetricId.DEPTH,VesselMetricId.UKC->"%.2f m".format(value.toDouble());VesselMetricId.PRESSURE->"%.1f hPa".format(value.toDouble());else->"%.2f".format(value.toDouble())};else->value.toString()}
-@Composable private fun usedBy(metric:VesselMetricId)=when(metric){VesselMetricId.POSITION->listOf(tr("Anchor Watch safety","锚警安全"),tr("Sail MFD and Trip recorder","航行仪表与航程记录"),tr("Canonical NMEA sharing","统一 NMEA 分享"));VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->listOf(tr("Sail MFD and map boat marker","航行仪表与地图船位图标"),tr("Trip recorder","航程记录"),tr("Automatic Anchor evidence with stricter gates","使用更严格门槛的自动锚点证据"),tr("Canonical NMEA sharing","统一 NMEA 分享"));VesselMetricId.DEPTH->listOf(tr("Sail MFD and Trip recorder","航行仪表与航程记录"),tr("Anchor depth guard uses only its separately qualified NMEA channel","锚泊水深警戒只使用其独立审核的 NMEA 通道"));VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_DIRECTION->listOf(tr("Sail MFD and Trip reports","航行仪表与航程报告"),tr("Canonical NMEA sharing","统一 NMEA 分享"));else->listOf(tr("Sail MFD","航行仪表"),tr("Trip recorder and reports","航程记录与报告"))}
+@Composable private fun usedBy(metric:VesselMetricId)=when(metric){VesselMetricId.POSITION->listOf(tr("Anchor Watch safety","锚警安全"),tr("Sail MFD and Trip recorder","航行仪表与航程记录"));VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->listOf(tr("Sail MFD and map boat marker","航行仪表与地图船位图标"),tr("Trip recorder","航程记录"),tr("Automatic Anchor evidence with stricter gates","使用更严格门槛的自动锚点证据"));VesselMetricId.DEPTH->listOf(tr("Sail MFD and Trip recorder","航行仪表与航程记录"),tr("Anchor depth guard uses only its separately qualified NMEA channel","锚泊水深警戒只使用其独立审核的 NMEA 通道"));VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_DIRECTION->listOf(tr("Sail MFD and Trip reports","航行仪表与航程报告"));else->listOf(tr("Sail MFD","航行仪表"),tr("Trip recorder and reports","航程记录与报告"))}
 
 @Composable private fun SourceRoutingSummaryRow(title:String,value:VesselSourcePreference,current:VesselObservation<*>,open:()->Unit){
     Row(Modifier.fillMaxWidth().clickable(onClick=open).padding(14.dp),verticalAlignment=Alignment.CenterVertically){
@@ -409,7 +409,7 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
             if(state.connectionAttempt.state==ConnectionAttemptState.WARNING)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.tertiary,style=MaterialTheme.typography.bodySmall)
             if(testing)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(testing&&!connectionRunning)Text(tr("One formal RX socket is opening. A quiet stream will remain connected as ‘No data’; the App never opens a disposable preflight socket.","正在打开唯一的正式 RX Socket。安静的数据流会保持“已连接，无数据”；应用绝不会先开一次性测试连接。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(state.settings.nmeaSharingEnabled)Text(tr("NMEA Sharing never auto-opens a saved endpoint. When its selected output uses NMEA, it keeps an already-connected upstream in use; otherwise the server stays up and waits for accepted input.","NMEA 共享不会自动打开已保存端点；当共享输出使用 NMEA 时，它会继续占用已经连接的上游，否则共享服务器会保持运行并等待可信输入。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(state.settings.nmeaSharingEnabled)Text(tr("A legacy Sharing request is being migrated to the stopped canonical NMEA output page. It will not open a listener or publish until you explicitly review and start it there.","旧版“共享”请求正在迁移到已停止的统一 NMEA 输出页；在你前往该页检查并明确启动前，不会打开监听端口或发布数据。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
     }
     if(showWatchDisconnect)ActiveWatchDisconnectDialog(pauseWatch={showWatchDisconnect=false;vm.stopActiveWatchAndDisconnect()},dismiss={showWatchDisconnect=false})
@@ -466,10 +466,10 @@ private fun ConnectionResultCard(state: MainUiState) {
                     Text(tr("Live status", "实时状态"), style = MaterialTheme.typography.titleMedium)
                     Text(
                         connectionStateLabel(state.connection),
-                        color = if (state.connection == NmeaConnectionState.CONNECTED) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                        color = when(state.connection){
+                            NmeaConnectionState.CONNECTED->MaterialTheme.colorScheme.primary
+                            NmeaConnectionState.ERROR->MaterialTheme.colorScheme.error
+                            else->MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
                 }
@@ -485,6 +485,32 @@ private fun ConnectionResultCard(state: MainUiState) {
                     "${age(state.nmeaTransportDiagnostics.lastSentenceReceivedElapsedRealtime)} / " +
                     age(state.diagnostics.lastFixElapsed),
             )
+            DiagnosticsRow(
+                tr("Socket generation / retry", "Socket 代次 / 重试"),
+                "${state.nmeaTransportDiagnostics.connectionGeneration} / ${state.nmeaTransportDiagnostics.reconnectAttempt}",
+            )
+            state.nmeaTransportDiagnostics.lastDisconnectReason?.let { reason ->
+                val retrySeconds=state.nmeaTransportDiagnostics.nextRetryElapsedRealtime?.let{((it-now).coerceAtLeast(0L)+999L)/1_000L}
+                Surface(
+                    color=MaterialTheme.colorScheme.errorContainer,
+                    shape=MaterialTheme.shapes.medium,
+                    modifier=Modifier.fillMaxWidth().testTag("nmea_transport_error"),
+                ){
+                    Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        Text(state.nmeaTransportDiagnostics.lastFailureCategory?:tr("Transport error","传输错误"),fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.onErrorContainer)
+                        SelectionContainer{Text(reason,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onErrorContainer)}
+                        Text(
+                            when{
+                                state.nmeaTransportDiagnostics.circuitOpen->tr("Automatic retries stopped to protect the server. Check the endpoint, then use Reconnect once or Stop input.","为保护服务器，自动重试已停止。请检查端点后只重连一次，或停止输入。")
+                                retrySeconds!=null->tr("One protected retry is scheduled in about $retrySeconds seconds. Do not tap Reconnect repeatedly.","约 $retrySeconds 秒后安排一次受保护重试，请勿反复点击重连。")
+                                else->tr("The failure stays visible until a successful connection, Stop input, or the next explicit attempt.","失败信息会保留到连接成功、停止输入或下一次明确尝试。")
+                            },
+                            style=MaterialTheme.typography.bodySmall,
+                            color=MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
             DiagnosticsRow(tr("Heading / wind", "船艏向 / 风"),"${age(state.nmeaInstruments.headingTrue?.second?:state.nmeaInstruments.headingMagnetic?.second)} / ${age(listOfNotNull(state.liveWind.trueSpeed?.receivedElapsedRealtime,state.liveWind.apparentSpeed?.receivedElapsedRealtime,state.liveWind.trueDirection?.receivedElapsedRealtime).maxOrNull())}")
             DiagnosticsRow(tr("Depth / STW", "水深 / 对水航速"),"${age(state.liveDepth.receivedElapsedRealtime.takeUnless{state.liveDepth.isDemo})} / ${age(state.nmeaInstruments.speedThroughWaterKnots?.second)}")
             Text(

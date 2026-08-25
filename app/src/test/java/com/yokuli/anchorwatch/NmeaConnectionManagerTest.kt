@@ -2,6 +2,7 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionManager
+import com.yokuli.anchorwatch.data.nmea.NmeaConnectionRetryPolicy
 import com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaTcpClient
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import kotlinx.coroutines.*
@@ -14,6 +15,44 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class NmeaConnectionManagerTest {
+    @Test fun refusedConnectionKeepsOneVisibleErrorAndDoesNotOpenAnotherSocket() = runBlocking {
+        val closedPort=ServerSocket(0).use{it.localPort}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        val manager=NmeaConnectionManager(managerScope)
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=closedPort,autoReconnect=false)))
+            withTimeout(3_000){manager.state.first{it==NmeaConnectionState.ERROR}}
+            val failure=manager.diagnostics.value
+            assertEquals(1,failure.connectionGeneration)
+            assertEquals("CONNECTION_REFUSED",failure.lastFailureCategory)
+            assertEquals("USER_CONNECT",failure.lastOperation)
+            assertTrue(failure.desiredConnected)
+            assertFalse("A disabled auto-reconnect policy is not a tripped retry circuit",failure.circuitOpen)
+            delay(250)
+            assertEquals("The error must remain visible instead of becoming Disconnected",NmeaConnectionState.ERROR,manager.state.value)
+            assertEquals("No hidden second transport attempt is allowed",1,manager.diagnostics.value.connectionGeneration)
+        }finally{manager.disconnect();managerScope.cancel()}
+    }
+
+    @Test fun automaticOpenFailuresBackOffAndStopAfterTheBoundedCircuitLimit() = runBlocking {
+        val closedPort=ServerSocket(0).use{it.localPort}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        val manager=NmeaConnectionManager(
+            managerScope,
+            NmeaConnectionRetryPolicy(openFailureRetryMillis=80,peerDisconnectRetryMillis=40,reconnectCoalesceMillis=20,manualReconnectCooldownMillis=100,maxContinuousFailures=3),
+        )
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=closedPort,autoReconnect=true)))
+            withTimeout(3_000){manager.diagnostics.first{it.circuitOpen}}
+            assertEquals(NmeaConnectionState.ERROR,manager.state.value)
+            assertEquals(3,manager.diagnostics.value.connectionGeneration)
+            assertEquals(3,manager.diagnostics.value.reconnectAttempt)
+            assertEquals("AUTO_RETRY",manager.diagnostics.value.lastOperation)
+            delay(200)
+            assertEquals("The open circuit must stop retry storms",3,manager.diagnostics.value.connectionGeneration)
+        }finally{manager.disconnect();managerScope.cancel()}
+    }
+
     @Test fun dedicatedTxUsesAnotherPortWithoutInterruptingRx() = runBlocking {
         val rxServer=ServerSocket(0);val txServer=ServerSocket(0)
         val rxAccepted=CompletableDeferred<Unit>();val txReceived=CompletableDeferred<String>()

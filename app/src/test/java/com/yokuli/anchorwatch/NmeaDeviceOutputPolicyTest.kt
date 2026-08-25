@@ -14,10 +14,15 @@ import com.yokuli.anchorwatch.data.vessel.NmeaOutputLeasePolicy
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.*
 import com.yokuli.anchorwatch.runtime.output.SelectedExternalSourcePresence
+import com.yokuli.anchorwatch.runtime.output.canonicalPublisherConfiguration
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
+import java.net.Socket
 import java.net.SocketTimeoutException
+import java.net.SocketAddress
+import java.net.SocketException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class NmeaDeviceOutputPolicyTest{
@@ -55,6 +60,22 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(restored.publicationEnabled);assertFalse(restored.autoStartOutput)
     }
 
+    @Test fun legacyInjectionAndBackupPoliciesCollapseToOneStoppedCanonicalPublisher(){
+        val migrated=NmeaDeviceOutputSettings(
+            purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+            phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=true,
+            proprietaryStatusEnabled=true,
+            positionPolicy=PublicationPolicy.BACKUP,headingPolicy=PublicationPolicy.ALWAYS,
+            motionPolicy=PublicationPolicy.BACKUP,pressurePolicy=PublicationPolicy.ALWAYS,
+            derivedWindPolicy=PublicationPolicy.BACKUP,autoStartOutput=true,
+        ).canonicalPublisherConfiguration()
+        assertEquals(NmeaOutputPurpose.CANONICAL_CLIENT_FEED,migrated.purpose)
+        assertFalse(migrated.phonePositionEnabled);assertFalse(migrated.phoneHeadingEnabled)
+        assertFalse(migrated.phoneMotionEnabled);assertFalse(migrated.phonePressureEnabled)
+        assertFalse(migrated.proprietaryStatusEnabled);assertFalse(migrated.autoStartOutput)
+        assertTrue(listOf(migrated.positionPolicy,migrated.headingPolicy,migrated.motionPolicy,migrated.pressurePolicy,migrated.derivedWindPolicy).all{it==PublicationPolicy.OFF})
+    }
+
     @Test fun backupLooksOnlyAtSelectedExternalSourceAndFishfinderVhwDoesNotBlockHeadingTakeover(){
         fun observation(type:String,sourceClass:VesselSourceClass=VesselSourceClass.BOAT_NMEA)=VesselObservation(123.0,source=sourceClass.toLegacySource(),receivedElapsedRealtime=10_000,freshness=VesselDataFreshness.FRESH,sourceIdentity=VesselSourceIdentity("source:$type",sourceType=VesselSourceType.NMEA_INPUT,sentenceType=type,displayName=type),sourceClass=sourceClass)
         assertTrue(SelectedExternalSourcePresence.present(observation("HDT"),10_100,3_000,setOf("HDT","HDG")))
@@ -64,7 +85,73 @@ class NmeaDeviceOutputPolicyTest{
 
     @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(),input))
-        assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port),input))
+        val duplicate=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port)
+        assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(duplicate,input))
+        assertTrue(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(duplicate,input))
+        assertFalse(NmeaOutputEndpointPolicy.isValid(duplicate,input))
+    }
+
+    @Test fun duplicateIndependentTxIsBlockedByConfigurationEvenBeforeRxEverOpened(){
+        val neverStartedRx=ConnectionProfile(protocol=Protocol.TCP,host="Fragile-Gateway.local.",port=10110)
+        val tx=NmeaDeviceOutputSettings(
+            transportMode=NmeaOutputTransportMode.DEDICATED_TCP,
+            outputHost="fragile-gateway.LOCAL",
+            outputPort=10110,
+            transportConfigured=true,
+            publicationEnabled=true,
+            phoneHeadingEnabled=true,
+        )
+        assertTrue(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,neverStartedRx))
+        assertFalse("No RX runtime state is needed to reject a second transport",NmeaOutputEndpointPolicy.isValid(tx,neverStartedRx))
+    }
+
+    @Test fun explicitSameSocketModeNeverRepresentsASecondTransport(){
+        val tx=NmeaDeviceOutputSettings(
+            transportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
+            transportConfigured=true,
+            publicationEnabled=true,
+            phoneHeadingEnabled=true,
+        )
+        assertFalse(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,input))
+        assertTrue(NmeaOutputEndpointPolicy.needsInputTransport(tx))
+        assertTrue(NmeaOutputEndpointPolicy.isValid(tx,input))
+    }
+
+    @Test fun independentTxMayUseTheSameHostOnlyOnTheServersSeparateReceivePort(){
+        val tx=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port+1)
+        assertFalse(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,input))
+        assertTrue(NmeaOutputEndpointPolicy.isValid(tx,input))
+    }
+
+    @Test fun protectedWriterNeverCreatesDuplicateSocketWhenRxIsAlreadyOpen(){
+        ServerSocket(0).use{server->
+            Socket("127.0.0.1",server.localPort).use{rxClient->server.accept().use{
+                server.soTimeout=350
+                val profile=ConnectionProfile(protocol=Protocol.TCP,host="127.0.0.1",port=server.localPort)
+                val settings=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=profile.host,outputPort=profile.port)
+                val writer=DedicatedNmeaTcpClient()
+                try{
+                    val result=writer.write(settings,profile,listOf("\$PYOK,NOSECOND*00\r\n"))
+                    assertFalse(result.success)
+                    assertEquals(NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE,result.error)
+                    try{server.accept();fail("Independent TX must not create a second socket on the open RX endpoint")}catch(_:SocketTimeoutException){/* expected */}
+                }finally{writer.close()}
+                assertFalse(rxClient.isClosed)
+            }}
+        }
+    }
+
+    @Test fun protectedWriterNeverCreatesDuplicateSocketBeforeRxHasEverOpened(){
+        ServerSocket(0).use{server->
+            server.soTimeout=350
+            val profile=ConnectionProfile(protocol=Protocol.TCP,host="127.0.0.1",port=server.localPort)
+            val settings=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=profile.host,outputPort=profile.port)
+            val writer=DedicatedNmeaTcpClient()
+            try{
+                assertFalse(writer.write(settings,profile,listOf("\$PYOK,NOFIRST*00\r\n")).success)
+                try{server.accept();fail("A matching TX configuration must be blocked without consulting RX runtime state")}catch(_:SocketTimeoutException){/* expected */}
+            }finally{writer.close()}
+        }
     }
 
     @Test fun tcpServerIsOneCanonicalOutputTransportAndDoesNotReuseInput(){
@@ -121,5 +208,21 @@ class NmeaDeviceOutputPolicyTest{
     @Test fun dedicatedFailureDoesNotReportAWrite(){
         val closedPort=ServerSocket(0).use{it.localPort};val client=DedicatedNmeaTcpClient()
         try{val result=client.write("127.0.0.1",closedPort,listOf("\$PYOK,TEST*00\r\n"));assertFalse(result.success);assertNotNull(result.error)}finally{client.close()}
+    }
+
+    @Test fun stopClosesAnInFlightConnectCandidateInsteadOfWaitingForTimeout(){
+        val entered=CountDownLatch(1);val closed=CountDownLatch(1)
+        val blocking=object:Socket(){
+            override fun connect(endpoint:SocketAddress?,timeout:Int){entered.countDown();closed.await(5,TimeUnit.SECONDS);throw SocketException("closed by stop")}
+            override fun close(){super.close();closed.countDown()}
+        }
+        val client=DedicatedNmeaTcpClient().also{it.socketFactory={blocking}}
+        val executor=java.util.concurrent.Executors.newSingleThreadExecutor()
+        try{
+            val pending=executor.submit<com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaWriteResult>{client.write("fragile.invalid",10111,listOf("\$IIHDT,123.4,T*00\r\n"))}
+            assertTrue(entered.await(1,TimeUnit.SECONDS))
+            val started=System.nanoTime();client.close();val result=pending.get(1,TimeUnit.SECONDS)
+            assertFalse(result.success);assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<1_000)
+        }finally{client.close();executor.shutdownNow()}
     }
 }

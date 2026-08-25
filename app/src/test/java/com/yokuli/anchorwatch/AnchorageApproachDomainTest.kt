@@ -127,17 +127,6 @@ class AnchorageDetailsPolicyTest {
     }
 }
 
-class ApproachSheetPolicyTest {
-    @Test fun approachTargetCollapsesTheAnchorWatchSheetToRevealTheGuidance() {
-        assertTrue(ApproachSheetPolicy.shouldCollapse("saved:1"))
-    }
-
-    @Test fun idleNearbyDiscoveryDoesNotMoveTheAnchorWatchSheet() {
-        assertFalse(ApproachSheetPolicy.shouldCollapse(null))
-        assertFalse(ApproachSheetPolicy.shouldCollapse(""))
-    }
-}
-
 class AnchorageNearbyPolicyTest {
     @Test fun nearbyUsesDistanceToTheReferenceAreaBoundary() {
         val cluster = singleCluster(50.0)
