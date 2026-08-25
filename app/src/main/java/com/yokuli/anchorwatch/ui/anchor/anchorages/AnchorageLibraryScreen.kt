@@ -1,6 +1,8 @@
 package com.yokuli.anchorwatch.ui.anchor.anchorages
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,36 +48,33 @@ fun AnchorageLibraryScreen(
     var showFilters by remember { mutableStateOf(false) }
     var showRegions by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showEditor by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val snackbar=remember{SnackbarHostState()}
+    val actionMessage=when(state.action){
+        AnchorageLibraryAction.SAVED->tr("Saved anchorage updated.","收藏锚地已更新。")
+        AnchorageLibraryAction.DELETED->tr("Saved anchorage deleted.","收藏锚地已删除。")
+        AnchorageLibraryAction.ACTIVE_WATCH_BLOCKS_DELETE->tr("This anchorage is linked to the active Anchor Watch. Lift or end that watch before deleting it.","这个锚地正关联当前锚警。请先起锚或结束该锚警，再删除。")
+        AnchorageLibraryAction.FAILED->tr("The saved anchorage could not be changed. Nothing was removed.","无法修改收藏锚地，未删除任何内容。")
+        null->null
+    }
+    LaunchedEffect(state.action,actionMessage){if(actionMessage!=null){snackbar.showSnackbar(actionMessage);vm.clearAction()}}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let(vm::importPhoto)}
 
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Box(Modifier.fillMaxSize()){
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),verticalArrangement = Arrangement.spacedBy(8.dp)) {
         PageHeader(
-            tr("Anchorage library", "锚地库"),
-            tr("Your offline Place → Spot → Visit cruising guide.", "你的离线“地点 → 锚点 → 访问”巡航资料库。"),
+            tr("Saved anchorages", "收藏锚地"),
+            tr("Your private, offline places to revisit, approach and share.", "可再次查看、接近和分享的私人离线锚地。"),
         )
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedButton(
-                onClick = { showRegions = true },
-                modifier = Modifier.weight(1f).testTag("anchorage_region_selector"),
-            ) {
-                Icon(Icons.Default.Public, contentDescription = null)
-                Spacer(Modifier.width(5.dp))
-                Text(
-                    when(state.selectedRegionId){
-                        null->tr("All regions", "全部区域")
-                        UNASSIGNED_REGION_ID->tr("Unassigned places","未归类地点")
-                        else->state.regions.firstOrNull{it.id==state.selectedRegionId}?.displayName?:tr("Selected region", "已选区域")
-                    },
-                    maxLines = 1,
-                )
-            }
+            if(state.regions.isNotEmpty()||state.allPlaces.any{it.primaryRegionId==null})OutlinedButton(onClick={showRegions=true},modifier=Modifier.weight(1f).testTag("anchorage_region_selector")){
+                Icon(Icons.Default.Public,null);Spacer(Modifier.width(5.dp));Text(when(state.selectedRegionId){null->tr("Everywhere","全部区域");UNASSIGNED_REGION_ID->tr("No region","未归类");else->state.regions.firstOrNull{it.id==state.selectedRegionId}?.displayName?:tr("Region","区域")},maxLines=1)
+            } else Spacer(Modifier.weight(1f))
             IconButton({ showFilters = true }, Modifier.testTag("anchorage_filters")) {
                 Icon(Icons.Default.FilterAlt, tr("Filters", "筛选"))
             }
@@ -88,7 +87,7 @@ fun AnchorageLibraryScreen(
             onValueChange = vm::search,
             modifier = Modifier.fillMaxWidth().testTag("anchorage_search"),
             singleLine = true,
-            label = { Text(tr("Search places, spots and notes", "搜索地点、锚点和备注")) },
+            label = { Text(tr("Search saved anchorages and notes", "搜索收藏锚地和备注")) },
             leadingIcon = { Icon(Icons.Default.Search, null) },
             trailingIcon = {
                 if (state.query.isNotBlank()) {
@@ -96,6 +95,13 @@ fun AnchorageLibraryScreen(
                 }
             },
         )
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)){
+            val all=!state.filters.favoriteOnly&&!state.filters.visitedOnly&&state.filters.planningStatus==null
+            FilterChip(all,{vm.setFilters(AnchorageFilterState())},label={Text(tr("All","全部"))})
+            FilterChip(state.filters.favoriteOnly,{vm.setFilters(AnchorageFilterState(favoriteOnly=true))},label={Text(tr("Favourites","收藏"))})
+            FilterChip(state.filters.visitedOnly,{vm.setFilters(AnchorageFilterState(visitedOnly=true))},label={Text(tr("Visited","去过"))})
+            FilterChip(state.filters.planningStatus==AnchoragePlanningStatus.WANT_TO_VISIT,{vm.setFilters(AnchorageFilterState(planningStatus=AnchoragePlanningStatus.WANT_TO_VISIT))},label={Text(tr("Planned","想去"))})
+        }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = state.displayMode == AnchorageDisplayMode.MAP,
@@ -117,6 +123,8 @@ fun AnchorageLibraryScreen(
             else -> AnchoragePlaceList(state.visiblePlaces, vm::selectPlace, Modifier.weight(1f))
         }
     }
+    SnackbarHost(snackbar,Modifier.align(Alignment.BottomCenter).padding(12.dp))
+    }
 
     state.selectedPlace?.let { bundle ->
         // One selection opens one complete surface. The former preview ->
@@ -127,8 +135,17 @@ fun AnchorageLibraryScreen(
             {spotId->vm.selectPlace(null);approachSpot(spotId)},
             openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,
             vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection,
+            {showEditor=true},{confirmDelete=true},
         )
     }
+    if(showEditor)state.selectedPlace?.let{bundle->AnchorageEditorDialog(bundle,{showEditor=false}){name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius->vm.updateSelected(name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius);showEditor=false}}
+    if(confirmDelete)AlertDialog(
+        onDismissRequest={confirmDelete=false},
+        title={Text(tr("Delete saved anchorage?","删除收藏锚地？"))},
+        text={Text(tr("Its saved positions, local notes, photos and visit links will be removed from this device. Anchor Watch reports remain in History.","本机保存的位置、备注、照片和到访关联将被移除；锚警报告仍保留在历史中。"))},
+        confirmButton={Button({confirmDelete=false;vm.deleteSelected()},colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error),modifier=Modifier.testTag("confirm_delete_saved_anchorage")){Text(tr("Delete","删除"))}},
+        dismissButton={TextButton({confirmDelete=false}){Text(tr("Cancel","取消"))}},
+    )
     if (showFilters) AnchorageFiltersSheet(state.filters, { showFilters = false }) {
         vm.setFilters(it); showFilters = false
     }
@@ -191,15 +208,15 @@ private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryVie
             if (aggregate.count > 1) {
                 Marker(
                     remember(aggregate.latitude, aggregate.longitude) { MarkerState(LatLng(aggregate.latitude, aggregate.longitude)) },
-                    title = tr("${aggregate.count} saved places", "${aggregate.count} 个收藏地点"),
-                    snippet = tr("Zoom in to separate places", "放大以查看各地点"),
+                    title = tr("${aggregate.count} saved anchorages", "${aggregate.count} 个收藏锚地"),
+                    snippet = tr("Zoom in to separate them", "放大以分别查看"),
                 )
             } else {
                 state.visiblePlaces.firstOrNull { it.id == aggregate.placeIds.single() }?.let { place ->
                     Marker(
                         remember(place.id, place.centerLatitude, place.centerLongitude) { MarkerState(LatLng(place.centerLatitude, place.centerLongitude)) },
                         title = place.displayName,
-                        snippet = tr("${place.visitCountCached + place.legacyVisitCount} visits · tap for details", "访问 ${place.visitCountCached + place.legacyVisitCount} 次 · 点击查看"),
+                        snippet = tr("Tap for details and actions", "点击查看详情和操作"),
                         onClick = { vm.selectPlace(place.id); true },
                     )
                 }
@@ -209,7 +226,7 @@ private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryVie
             Marker(
                 remember(spot.id, spot.latitude, spot.longitude) { MarkerState(LatLng(spot.latitude, spot.longitude)) },
                 title = spot.name,
-                snippet = tr("Specific anchoring spot", "具体锚点"),
+                snippet = tr("Saved anchoring position", "收藏的锚泊位置"),
             )
         }
     }
@@ -219,7 +236,7 @@ private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryVie
 private fun AnchoragePlaceList(values: List<AnchoragePlaceEntity>, open: (Long) -> Unit, modifier: Modifier) {
     if (values.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text(tr("No saved places in this view.", "当前范围没有收藏地点。"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("No saved anchorages match this view.", "当前视图没有匹配的收藏锚地。"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
@@ -234,11 +251,8 @@ private fun AnchoragePlaceList(values: List<AnchoragePlaceEntity>, open: (Long) 
                         Text(place.displayName, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         if (place.favorite) Icon(Icons.Default.Favorite, tr("Favorite", "收藏"), tint = MaterialTheme.colorScheme.primary)
                     }
-                    Text(
-                        tr("${place.visitCountCached + place.legacyVisitCount} visits · ${place.verificationStatus.lowercase().replace('_', ' ')}", "访问 ${place.visitCountCached + place.legacyVisitCount} 次 · ${place.verificationStatus}"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    val visits=place.visitCountCached+place.legacyVisitCount
+                    Text(if(visits>0)tr("Visited $visits times","到访 $visits 次")else libraryPlanningLabel(place.planningStatus),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if (place.personalNotes.isNotBlank()) Text(place.personalNotes, maxLines = 2, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -261,7 +275,7 @@ private fun AnchorageFiltersSheet(value: AnchorageFilterState, dismiss: () -> Un
                         FilterChip(
                             draft.planningStatus == status,
                             { draft = draft.copy(planningStatus = if (draft.planningStatus == status) null else status) },
-                            label = { Text(status.name.lowercase().replace('_', ' ')) },
+                            label = { Text(when(status){AnchoragePlanningStatus.WANT_TO_VISIT->tr("Planned","想去");AnchoragePlanningStatus.BACKUP->tr("Alternative","备选");else->tr("Avoid","避开")}) },
                         )
                     }
                 }
@@ -276,7 +290,7 @@ private fun AnchorageFiltersSheet(value: AnchorageFilterState, dismiss: () -> Un
 private fun RegionSelectorDialog(regions: List<AnchorageRegionEntity>, selected: Long?, hasUnassigned:Boolean, dismiss: () -> Unit, select: (Long?) -> Unit) {
     AlertDialog(
         onDismissRequest = dismiss,
-        title = { Text(tr("Browse region", "浏览区域")) },
+        title = { Text(tr("Filter by region", "按区域筛选")) },
         text = {
             LazyColumn(Modifier.heightIn(max = 400.dp)) {
                 item {
@@ -288,7 +302,7 @@ private fun RegionSelectorDialog(regions: List<AnchorageRegionEntity>, selected:
                 items(regions,key={it.id}) { region ->
                     ListItem(
                         headlineContent = { Text(region.displayName) },
-                        supportingContent={Text("${region.featureType.lowercase().replace('_',' ')} · ${if(region.official)tr("official LINZ", "LINZ 官方")else tr("personal", "个人")}")},
+                        supportingContent={Text(if(region.official)tr("Official map region", "官方地图区域")else tr("Personal region", "个人区域"))},
                         leadingContent = { RadioButton(selected == region.id, { select(region.id) }) },
                         modifier=Modifier.clickable{select(region.id)},
                     )
@@ -311,6 +325,8 @@ private fun normalize(value: Double): Double = ((value + 540) % 360) - 180
 
 @Composable
 private fun PlannedAnchorageDialog(point:Pair<Double,Double>,dismiss:()->Unit,save:(String,String,String)->Unit){
-    var name by remember(point){mutableStateOf("")};var spot by remember(point){mutableStateOf("Chart reference")};var notes by remember(point){mutableStateOf("")}
-    AlertDialog(onDismissRequest=dismiss,title={Text(tr("Save planned anchorage","保存规划锚地"))},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Map long-press creates a planning reference, not a verified anchorage.","地图长按创建的是规划参考点，不是已验证锚地。"),color=MaterialTheme.colorScheme.tertiary);Text("%.5f, %.5f".format(point.first,point.second));OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),label={Text(tr("Place name *","地点名称 *"))});OutlinedTextField(spot,{spot=it},Modifier.fillMaxWidth(),label={Text(tr("Spot name","锚点名称"))});OutlinedTextField(notes,{notes=it},Modifier.fillMaxWidth(),label={Text(tr("Planning notes","规划备注"))})}},confirmButton={Button({save(name,spot,notes)},enabled=name.isNotBlank()){Text(tr("Save planned Place","保存规划地点"))}},dismissButton={TextButton(dismiss){Text(tr("Cancel","取消"))}})
+    var name by remember(point){mutableStateOf("")};var spot by remember(point){mutableStateOf("")};var notes by remember(point){mutableStateOf("")}
+    AlertDialog(onDismissRequest=dismiss,title={Text(tr("Save a planned anchorage","保存规划锚地"))},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("This is a chart reference for a future visit, not a verified safe anchoring position.","这是以后到访的海图参考，不代表已经验证安全的锚泊位置。"),color=MaterialTheme.colorScheme.tertiary);Text("%.5f, %.5f".format(point.first,point.second));OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),label={Text(tr("Anchorage name *","锚地名称 *"))});OutlinedTextField(spot,{spot=it},Modifier.fillMaxWidth(),label={Text(tr("Position name","位置名称"))});OutlinedTextField(notes,{notes=it},Modifier.fillMaxWidth(),label={Text(tr("Planning notes","规划备注"))})}},confirmButton={Button({save(name,spot,notes)},enabled=name.isNotBlank()){Text(tr("Save anchorage","保存锚地"))}},dismissButton={TextButton(dismiss){Text(tr("Cancel","取消"))}})
 }
+
+@Composable private fun libraryPlanningLabel(raw:String)=when(runCatching{AnchoragePlanningStatus.valueOf(raw)}.getOrDefault(AnchoragePlanningStatus.NONE)){AnchoragePlanningStatus.WANT_TO_VISIT,AnchoragePlanningStatus.PLANNED->tr("Planned","想去");AnchoragePlanningStatus.BACKUP->tr("Alternative","备选");AnchoragePlanningStatus.AVOID->tr("Avoid","避开");AnchoragePlanningStatus.COMMON->tr("Regular anchorage","常用锚地");AnchoragePlanningStatus.ARCHIVED->tr("Archived","已归档");AnchoragePlanningStatus.NONE->tr("Saved reference","收藏参考")}

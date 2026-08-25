@@ -1,6 +1,7 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.anchorage.AnchorageShareContent
+import com.yokuli.anchorwatch.data.anchorage.AnchorageShareQrContract
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -8,7 +9,14 @@ import org.junit.Test
 
 class AnchorageShareContentTest{
     @Test fun shareImageUsesTheRequestedYokuliBrandLine(){
-        assertEquals("Made aboard Yokuli",AnchorageShareContent.BRANDING_LINE)
+        assertEquals("Developed aboard SV Yokuli",AnchorageShareContent.BRANDING_LINE)
+    }
+
+    @Test fun shareCardKeepsPublicNavigationAndPrivateAppImportAsTwoExplicitDestinations(){
+        val result=AnchorageShareQrContract.destinations(-36.8123456,174.7123456,"anchorwatch://anchorage?v=2&d=payload")
+        assertEquals("https://www.google.com/maps/search/?api=1&query=-36.8123456,174.7123456",result.publicMapUrl)
+        assertEquals("anchorwatch://anchorage?v=2&d=payload",result.boatWatchImportUri)
+        assertTrue(result.publicMapUrl!=result.boatWatchImportUri)
     }
 
     @Test fun googleMapsQrPayloadUsesStableLocaleIndependentCoordinates(){

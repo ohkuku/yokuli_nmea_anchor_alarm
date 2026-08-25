@@ -21,6 +21,7 @@ import com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity
 import com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef
 import com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity
 import com.yokuli.anchorwatch.data.anchorage.AnchoragePlaceRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageSpotRepository
 import com.yokuli.anchorwatch.data.database.AppDatabase
 import android.net.Uri
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
@@ -50,6 +51,7 @@ internal object AnchorageRegionFilterPolicy{
     fun matches(primaryRegionId:Long?,selectedRegionId:Long?)=when(selectedRegionId){null->true;UNASSIGNED_REGION_ID->primaryRegionId==null;else->primaryRegionId==selectedRegionId}
 }
 data class AnchorageFilterState(val favoriteOnly:Boolean=false,val planningStatus:AnchoragePlanningStatus?=null,val visitedOnly:Boolean=false)
+enum class AnchorageLibraryAction { SAVED, DELETED, ACTIVE_WATCH_BLOCKS_DELETE, FAILED }
 data class AnchorageLibraryUiState(
     val allPlaces:List<AnchoragePlaceEntity> = emptyList(),
     val regions:List<AnchorageRegionEntity> = emptyList(),
@@ -61,26 +63,31 @@ data class AnchorageLibraryUiState(
     val query:String="",
     val loading:Boolean=true,
     val collections:List<AnchorageCollectionEntity> = emptyList(),
+    val action:AnchorageLibraryAction?=null,
 )
 
-@HiltViewModel class AnchorageLibraryViewModel @Inject constructor(private val app:Application,private val database:AppDatabase,private val library:AnchorageLibraryRepository,private val places:AnchoragePlaceRepository,private val search:AnchorageSearchRepository,private val saver:AnchorageSaveRepository,private val photos:AnchoragePhotoRepository,private val qr:AnchorageV2QrImageGenerator):ViewModel(){
+@HiltViewModel class AnchorageLibraryViewModel @Inject constructor(private val app:Application,private val database:AppDatabase,private val library:AnchorageLibraryRepository,private val places:AnchoragePlaceRepository,private val spots:AnchorageSpotRepository,private val search:AnchorageSearchRepository,private val saver:AnchorageSaveRepository,private val photos:AnchoragePhotoRepository,private val qr:AnchorageV2QrImageGenerator):ViewModel(){
     private val visible=MutableStateFlow<List<AnchoragePlaceEntity>>(emptyList());private val selected=MutableStateFlow<AnchoragePlaceBundle?>(null);private val controls=MutableStateFlow(Controls());private var viewportJob:Job?=null;private var queryJob:Job?=null
+    private val action=MutableStateFlow<AnchorageLibraryAction?>(null)
     private val planning=MutableStateFlow<Pair<Double,Double>?>(null);val planningPoint=planning.asStateFlow()
     private data class Controls(val regionId:Long?=null,val filters:AnchorageFilterState=AnchorageFilterState(),val mode:AnchorageDisplayMode=AnchorageDisplayMode.MAP,val query:String="")
     private val libraryIndex=combine(library.places,database.anchorageRegionDao().observeAll()){all,regions->all to regions}
-    val state:StateFlow<AnchorageLibraryUiState> = combine(libraryIndex,visible,selected,controls,library.collections){(all,regions),inViewport,selectedPlace,control,collections->
+    private val libraryState = combine(libraryIndex,visible,selected,controls,library.collections){(all,regions),inViewport,selectedPlace,control,collections->
         val base=(if(control.query.isBlank())inViewport.ifEmpty{all}else inViewport).filter{place->
             val inRegion=AnchorageRegionFilterPolicy.matches(place.primaryRegionId,control.regionId)
             inRegion&&(!control.filters.favoriteOnly||place.favorite)&&(!control.filters.visitedOnly||place.visitCountCached+place.legacyVisitCount>0)&&(control.filters.planningStatus==null||place.planningStatus==control.filters.planningStatus.name)
         }
         AnchorageLibraryUiState(all,regions,base,selectedPlace,control.regionId,control.filters,control.mode,control.query,false,collections)
-    }.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5_000),AnchorageLibraryUiState())
+    }
+    val state:StateFlow<AnchorageLibraryUiState> = combine(libraryState,action){value,result->value.copy(action=result)}
+        .stateIn(viewModelScope,SharingStarted.WhileSubscribed(5_000),AnchorageLibraryUiState())
     fun updateViewport(value:AnchorageViewport){viewportJob?.cancel();viewportJob=viewModelScope.launch{delay(225);visible.value=library.viewport(value)}}
     fun setMode(value:AnchorageDisplayMode){controls.value=controls.value.copy(mode=value)}
     fun setFilters(value:AnchorageFilterState){controls.value=controls.value.copy(filters=value)}
     fun setRegion(id:Long?){controls.value=controls.value.copy(regionId=id)}
     fun search(value:String){controls.value=controls.value.copy(query=value);queryJob?.cancel();queryJob=viewModelScope.launch{delay(250);visible.value=if(value.isBlank())state.value.allPlaces else search.search(value)}}
     fun selectPlace(id:Long?){viewModelScope.launch{selected.value=id?.let{library.bundle(it)}}}
+    fun clearAction(){action.value=null}
     fun importLegacyQr(value:SavedAnchorageEntity)=viewModelScope.launch{
         val draft=com.yokuli.anchorwatch.domain.anchorage.AnchorageSaveDraft(null,value.latitude,value.longitude,"QR_IMPORTED",value.coordinateUncertaintyMeters,value.typicalWaterDepthMeters,value.typicalRodeLengthMeters,value.preferredAlarmRadiusMeters,value.seabedType)
         val result=saver.save(AnchorageSaveRequest(draft,AnchorageSavePlaceInput(displayName=value.name,personalNotes=value.notes),AnchorageSaveSpotInput(name="Main spot",personalNotes=value.customSeabedText.orEmpty())))
@@ -104,5 +111,39 @@ data class AnchorageLibraryUiState(
     fun planAt(latitude:Double,longitude:Double){planning.value=latitude to longitude}
     fun cancelPlan(){planning.value=null}
     fun savePlan(name:String,spotName:String,notes:String)=viewModelScope.launch{planning.value?.let{(lat,lon)->runCatching{saver.save(AnchorageSaveRequest(AnchorageSaveDraftFactory.fromMap(lat,lon),AnchorageSavePlaceInput(displayName=name.trim(),planningStatus=AnchoragePlanningStatus.WANT_TO_VISIT,personalNotes=notes,favorite=true),AnchorageSaveSpotInput(name=spotName.trim().ifBlank{"Chart reference"}))).also{result->planning.value=null;selected.value=library.bundle(result.placeId)}}}}
+    fun updateSelected(
+        name:String,
+        description:String,
+        personalNotes:String,
+        spotId:Long?,
+        spotName:String,
+        approachNotes:String,
+        spotNotes:String,
+        depthMeters:Double?,
+        rodeMeters:Double?,
+        radiusMeters:Double?,
+    )=viewModelScope.launch{
+        val bundle=selected.value?:return@launch
+        action.value=null
+        runCatching{
+            val now=System.currentTimeMillis()
+            places.save(bundle.place.copy(displayName=name.trim(),description=description.trim(),personalNotes=personalNotes.trim(),updatedAt=now))
+            spotId?.let{id->bundle.spots.firstOrNull{it.id==id}?.let{spot->
+                spots.save(spot.copy(name=spotName.trim(),approachNotes=approachNotes.trim(),personalNotes=spotNotes.trim(),typicalWaterDepthMeters=depthMeters,typicalRodeLengthMeters=rodeMeters,preferredAlarmRadiusMeters=radiusMeters,updatedAt=now))
+            }}
+        }.onSuccess{selected.value=library.bundle(bundle.place.id);action.value=AnchorageLibraryAction.SAVED}
+            .onFailure{action.value=AnchorageLibraryAction.FAILED}
+    }
+    fun deleteSelected()=viewModelScope.launch{
+        val bundle=selected.value?:return@launch
+        action.value=null
+        val activePlaceId=database.anchorDao().active()?.anchoragePlaceId
+        if(activePlaceId==bundle.place.id){action.value=AnchorageLibraryAction.ACTIVE_WATCH_BLOCKS_DELETE;return@launch}
+        runCatching{
+            check(places.delete(bundle.place.id,activePlaceId)){"Saved anchorage was not deleted"}
+            bundle.photos.forEach{photos.delete(it)}
+        }.onSuccess{selected.value=null;action.value=AnchorageLibraryAction.DELETED}
+            .onFailure{action.value=AnchorageLibraryAction.FAILED}
+    }
     fun mapModels():List<AnchorageMapPlace> = state.value.visiblePlaces.map{place->AnchorageMapPlace(place.id,place.centerLatitude,place.centerLongitude,place.displayName,place.favorite,runCatching{AnchoragePlanningStatus.valueOf(place.planningStatus)}.getOrDefault(AnchoragePlanningStatus.NONE),place.visitCountCached+place.legacyVisitCount,state.value.selectedPlace?.takeIf{it.place.id==place.id}?.spots?.size?:0)}
 }

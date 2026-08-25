@@ -55,6 +55,13 @@ class AnchorageGisRepositoryTest {
         assertTrue(spots.delete(spotId));assertNull(database.anchorageVisitDao().get(visitId)?.spotId);assertEquals(7.0,database.anchorageVisitDao().get(visitId)?.waterDepthMeters?:-1.0,0.0)
     }
 
+    @Test fun savedAnchorageUsedByActiveWatchCannotBeDeletedBelowTheUi()=runBlocking{
+        val placeId=places.save(place(name="Active Watch Bay",lat=-36.5,lon=175.0))
+        val failure=runCatching{places.delete(placeId,activeAnchorPlaceId=placeId)}.exceptionOrNull()
+        assertTrue(failure is IllegalArgumentException)
+        assertNotNull(database.anchoragePlaceDao().get(placeId))
+    }
+
     private fun place(name:String,lat:Double,lon:Double,notes:String="")=AnchoragePlaceEntity(displayName=name,placeType="BAY",geometryType="POINT",centerLatitude=lat,centerLongitude=lon,bboxMinLatitude=lat,bboxMaxLatitude=lat,bboxMinLongitude=lon,bboxMaxLongitude=lon,personalNotes=notes,verificationStatus="VISITED",createdAt=1,updatedAt=1)
     private fun spot(placeId:Long,lat:Double,lon:Double,name:String,radius:Double)=AnchorageSpotEntity(placeId=placeId,name=name,spotType="ANCHOR_SPOT",latitude=lat,longitude=lon,coordinateSource="CONFIRMED_ANCHOR",preferredAlarmRadiusMeters=radius,verificationStatus="VISITED",createdAt=1,updatedAt=1)
 }
