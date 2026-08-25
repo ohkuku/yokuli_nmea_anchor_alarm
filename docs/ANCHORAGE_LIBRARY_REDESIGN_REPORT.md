@@ -6,7 +6,8 @@
 - Base commit: `f22c8fe`
 - State-machine/navigation commit: `ee00062`
 - Final schema/library implementation commit: `e3b02a0`
-- Room schema: `20 → 21`
+- Categorical personal-assessment commit: `fc6176b`
+- Room schema: `20 → 22`
 - Backup format: remains v5; legacy adapters are retained
 
 This report describes the checked-in implementation. Real GNSS movement, fragile NMEA hardware, TalkBack, rotation and device screenshots remain explicit manual gates rather than assumed verification.
@@ -54,13 +55,14 @@ The persisted state contains only episode, Place, Spot, Session and suppression 
 
 ## Schema migration and legacy counts
 
-Schema 21 performs these changes:
+Schemas 21 and 22 perform these changes:
 
 1. Renames `anchorage_personal_ratings` to `anchorage_personal_assessments`.
 2. Separates imported aggregate visit history from normalized Visit cache counts.
 3. Resets the incorrectly duplicated normalized cache only for legacy-migrated Place/Spot rows.
 4. Keeps every old row independent: `N legacy rows → N Places → N Spots`.
 5. Creates a Visit only when a valid linked source Session exists.
+6. Replaces legacy integer/star assessment columns with categorical `wouldReturn`, holding, comfort, shore-access, crowding and quietness values while retaining the legacy overall star only as compatibility metadata.
 
 Count contract:
 
@@ -83,6 +85,8 @@ The completed-session write path now freezes its draft before UI interaction and
 ```
 
 Known Session fields—coordinate and source, uncertainty, depth, rode and alarm radius—are prefilled. Place matching and Spot matching are separate. Spot matching uses coordinate uncertainty and Place identity; a fixed 75 m exception no longer blocks legitimate Spots. Existing records are not overwritten by blank input.
+
+The final review step can optionally store a small personal assessment: whether the crew would return, holding, comfort, shore access, crowding, quietness and a note. These categorical values are saved in the same transaction; directional Protection remains a separate editor.
 
 The repository saves Place/Spot/Visit and Session links in one Room transaction. Success names the exact Place and Spot and offers **View** and transaction-scoped **Undo**. Undo removes only rows created by that completed transaction.
 
@@ -147,14 +151,14 @@ The Region provider contract and LINZ Gazetteer implementation remain offline-sa
 | Gate | Result |
 |---|---|
 | Anchorage JVM unit tests | passed |
-| Full Debug JVM unit tests | 532 passed, 0 failed, 0 skipped |
+| Full Debug JVM unit tests | 533 passed, 0 failed, 0 skipped |
 | Unit/instrumentation Kotlin compilation | passed |
 | Room migration instrumentation | compiled; not executed locally |
 | Android lintDebug | passed |
 | Debug APK | passed; `app/build/outputs/apk/debug/app-debug.apk` |
 | Emulator/real device | not run; use `docs/MANUAL_QA_CHECKLIST.md` |
 
-Primary automated coverage includes state transitions/restoration, uncertainty matching, 80 m distinct Spot creation, transactional save/undo, existing Place+Spot Visit-only save, immutable Visit coordinates, 16-sector protection round-trip, QR validation, migration 19→20→21 and high-volume visual aggregation.
+Primary automated coverage includes state transitions/restoration, uncertainty matching, 80 m distinct Spot creation, transactional save/undo/assessment, existing Place+Spot Visit-only save, immutable Visit coordinates, 16-sector protection round-trip, legacy assessment normalization, QR validation, migration 19→20→21→22 and high-volume visual aggregation.
 
 ## Known limitations
 

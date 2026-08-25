@@ -17,10 +17,11 @@
 
 - Base commit: `f22c8fe`
 - Working branch: `codex/anchorage-library-final`
-- Room schema: `20 → 21`
+- Room schema: `20 → 22`
 - State-machine commit: `ee00062`
 - Library/schema implementation commit: `e3b02a0`
-- Verification: **532/532 Debug JVM tests passed; `lintDebug` passed; `assembleDebug` passed; unit and instrumentation Kotlin sources compiled. Emulator/device tests were not run.**
+- Categorical assessment commit: `fc6176b`
+- Verification: **533/533 Debug JVM tests passed; `lintDebug` passed; `assembleDebug` passed; unit and instrumentation Kotlin sources compiled. Emulator/device tests were not run.**
 
 ## Finding P0-001 — Anchor primary action can appear to do nothing
 
@@ -226,7 +227,7 @@
 - Root cause: normalized Place/Spot storage had been projected back through the legacy SavedAnchorage cluster state instead of owning one explicit product state.
 - Failing test: `AnchorageExperienceStateTest`; rewritten `AnchorageApproachStoryTest`.
 - Fix commit: **`ee00062`**
-- Verification result: **A persisted, mutually exclusive Place/Spot state machine now owns Browsing, Nearby, Approaching, Arrived, Anchored and DepartureCooldown. Guidance and map selection use stable Room IDs; the duplicate Watch-sheet prompt and live cluster projection were removed. `AnchorageExperienceStateTest` passed as part of the 532/532 JVM gate; all instrumentation sources compile.**
+- Verification result: **A persisted, mutually exclusive Place/Spot state machine now owns Browsing, Nearby, Approaching, Arrived, Anchored and DepartureCooldown. Guidance and map selection use stable Room IDs; the duplicate Watch-sheet prompt and live cluster projection were removed. `AnchorageExperienceStateTest` passed as part of the 533/533 JVM gate; all instrumentation sources compile.**
 - Real hardware verified: **No — execute Anchorage QA section on a real moving phone/boat source.**
 - Status: **FIXED — JVM/LINT/DEBUG BUILD PASSED; AWAITING MANUAL GPS QA**
 
@@ -238,8 +239,8 @@
 - Reproduction steps: save a session near an existing Spot with large or small coordinate uncertainty; on a narrow/high-font-scale phone attempt to review every field and protection sector.
 - Root cause: a legacy card editor remained in the write path after the normalized repository and uncertainty matcher were introduced.
 - Failing test: `AnchorageMatchEnginesTest.anEightyMetreSpotIsAllowedWhenUncertaintyDoesNotOverlap`; `AnchorageSaveFlowRepositoryTest.completedSaveCanUndoOnlyItsNewPlaceSpotAndVisit`.
-- Fix commit: **`ee00062`, `e3b02a0`**
-- Verification result: **Save is now a full-screen three-step flow, requires an explicit Spot decision when matches exist, creates immutable Visit snapshots transactionally, reports Place/Spot IDs and supports scoped Undo. Detail is full-screen; map selection is compact; wind/swell protection uses separate 3×3 compass editors. Fixed-distance rejection was removed. JVM/lint/build gates passed and all device tests compile.**
+- Fix commit: **`ee00062`, `e3b02a0`, `fc6176b`**
+- Verification result: **Save is now a full-screen three-step flow, requires an explicit Spot decision when matches exist, creates immutable Visit snapshots and an optional categorical personal assessment transactionally, reports Place/Spot IDs and supports scoped Undo. Detail is full-screen; map selection is compact; wind/swell protection uses separate 3×3 compass editors. Fixed-distance rejection was removed. JVM/lint/build gates passed and all device tests compile.**
 - Real hardware verified: **No — high font scale, TalkBack and rotation remain manual QA items.**
 - Status: **FIXED — JVM/LINT/DEBUG BUILD PASSED; AWAITING UI QA**
 
@@ -251,7 +252,7 @@
 - Reproduction steps: migrate a legacy row with `visitCount=3` and a valid source session; open the Place list and compare the displayed count with the source row.
 - Root cause: cached normalized Visits and imported aggregate history were not separated during migration.
 - Failing test: `Migration5To6Test.migration19To20KeepsEveryLegacyRowAndCreatesPlaceSpotVisitLinks` schema-21 assertions.
-- Fix commit: **`e3b02a0`**
-- Verification result: **Schema 21 renames the assessment table to `anchorage_personal_assessments`, resets cached counts only for legacy rows, and Visit refresh subtracts the imported linked-session baseline. New installations receive the corrected 19→20 values directly. Migration and repository instrumentation sources compile; the exported schema is committed.**
+- Fix commit: **`e3b02a0`, `fc6176b`**
+- Verification result: **Schema 21 renames the assessment table and fixes duplicated legacy counts; schema 22 replaces legacy integer assessment columns with the FINAL categorical contract. Old star values are normalized conservatively and retained as compatibility metadata. Visit refresh subtracts the imported linked-session baseline. Migration and repository instrumentation sources compile; both exported schemas are committed.**
 - Real hardware verified: **Not applicable; Room migration test is the authority. Device migration test is written but not executed in this turn.**
 - Status: **FIXED IN CODE — MIGRATION SOURCE COMPILES; AWAITING DEVICE MIGRATION GATE**
