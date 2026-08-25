@@ -3,7 +3,6 @@ package com.yokuli.anchorwatch.runtime.output
 import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.data.nmea.output.NmeaGeneratedSentenceValidator
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
-import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.PhoneHeadingOutputFormat
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
@@ -12,21 +11,20 @@ import com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot
 import com.yokuli.anchorwatch.domain.vessel.VesselObservation
 import com.yokuli.anchorwatch.domain.vessel.VesselMetricId
 import com.yokuli.anchorwatch.domain.vessel.CandidateValidity
-import com.yokuli.anchorwatch.domain.vessel.VesselPosition
+import com.yokuli.anchorwatch.domain.vessel.VesselProvenance
+import com.yokuli.anchorwatch.domain.vessel.VesselSourceClass
+import com.yokuli.anchorwatch.domain.vessel.VesselSourceType
 import com.yokuli.anchorwatch.domain.vessel.persistentKey
 import com.yokuli.anchorwatch.domain.vessel.toLegacySource
-import com.yokuli.anchorwatch.domain.vessel.source.MetricSourceEligibility
 import javax.inject.Inject
 import javax.inject.Singleton
 
 enum class AnchorWatchNmeaStream(val periodMillis:Long){
     POSITION(1_000L),
-    HEADING(200L),
-    MOTION(500L),
+    HEADING(1_000L),
+    MOTION(1_000L),
     PRESSURE(1_000L),
-    DERIVED_WIND(500L),
-    DEPTH(1_000L),
-    SPEED_THROUGH_WATER(500L),
+    DERIVED_WIND(1_000L),
 }
 
 data class AnchorWatchNmeaFeedBatch(
@@ -55,7 +53,7 @@ data class PublishedMetricValue<T>(
     val sourceChanged:Boolean,
 )
 
-class CanonicalNmeaMetricLeaseBank @Inject constructor(){
+class PhoneAppNmeaMetricLeaseBank @Inject constructor(){
     private val leases=linkedMapOf<String,PublishedMetricLease<Any>>()
 
     @Suppress("UNCHECKED_CAST")
@@ -105,14 +103,15 @@ class CanonicalNmeaMetricLeaseBank @Inject constructor(){
     @Synchronized fun reset(){leases.clear()}
 }
 
-/** Destination-aware encoder for the single product publisher. Independent
- * destinations consume VesselDataHub's selected values; SAME_AS_INPUT consumes
- * only provenance-proven local evidence. Raw Boat sentences and BACKUP
- * ownership state never enter this boundary. */
+/** Phone/App-owned encoder for the single product publisher. Transport choice
+ * changes only where bytes go; it can never change what data is eligible.
+ * Every destination receives only provenance-proven Phone sensors or values
+ * explicitly computed by Anchor Watch. Raw/re-encoded Boat measurements and
+ * legacy BACKUP ownership state never enter this boundary. */
 @Singleton
 class AnchorWatchNmeaFeedEncoder @Inject constructor(
     private val mux:NmeaOutputMux,
-    private val leases:CanonicalNmeaMetricLeaseBank=CanonicalNmeaMetricLeaseBank(),
+    private val leases:PhoneAppNmeaMetricLeaseBank=PhoneAppNmeaMetricLeaseBank(),
 ){
     private var activeInputTransportGeneration:Long?=null
     private var activeInputProfileId:String?=null
@@ -126,18 +125,15 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
         inputTransportGeneration:Long?=null,
         inputProfileId:String?=null,
     ):AnchorWatchNmeaFeedBatch{
-        val sameInput=settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
-        activeInputTransportGeneration=inputTransportGeneration.takeIf{sameInput}
-        activeInputProfileId=inputProfileId.takeIf{sameInput}
+        activeInputTransportGeneration=inputTransportGeneration
+        activeInputProfileId=inputProfileId
         try{
         val encoded=when(stream){
-            AnchorWatchNmeaStream.POSITION->if(sameInput)localPosition(phoneFix,nowElapsed)else position(snapshot,phoneFix,nowElapsed)
-            AnchorWatchNmeaStream.HEADING->if(sameInput)localHeading(snapshot,settings.phoneHeadingFormat,nowElapsed)else heading(snapshot,settings.phoneHeadingFormat,nowElapsed)
-            AnchorWatchNmeaStream.MOTION->if(sameInput)localMotion(snapshot,nowElapsed)else motion(snapshot,nowElapsed)
-            AnchorWatchNmeaStream.PRESSURE->if(!settings.includePressure)EncodedStream(suppressionReason="USER_DISABLED")else if(sameInput)localPressure(snapshot,nowElapsed)else pressure(snapshot,nowElapsed)
-            AnchorWatchNmeaStream.DERIVED_WIND->if(!settings.includeDerivedWind)EncodedStream(suppressionReason="USER_DISABLED")else if(sameInput)localOnlyWind(snapshot,nowElapsed)else wind(snapshot,nowElapsed)
-            AnchorWatchNmeaStream.DEPTH->if(sameInput)EncodedStream(suppressionReason="SAME_SOCKET_BOAT_METRIC_BLOCKED")else depth(snapshot,nowElapsed)
-            AnchorWatchNmeaStream.SPEED_THROUGH_WATER->if(sameInput)EncodedStream(suppressionReason="SAME_SOCKET_BOAT_METRIC_BLOCKED")else speedThroughWater(snapshot,nowElapsed)
+            AnchorWatchNmeaStream.POSITION->localPosition(phoneFix,nowElapsed)
+            AnchorWatchNmeaStream.HEADING->localHeading(snapshot,settings.phoneHeadingFormat,nowElapsed)
+            AnchorWatchNmeaStream.MOTION->localMotion(snapshot,nowElapsed)
+            AnchorWatchNmeaStream.PRESSURE->if(!settings.includePressure)EncodedStream(suppressionReason="USER_DISABLED")else localPressure(snapshot,nowElapsed)
+            AnchorWatchNmeaStream.DERIVED_WIND->if(!settings.includeDerivedWind)EncodedStream(suppressionReason="USER_DISABLED")else appDerivedWind(snapshot,nowElapsed)
         }
         return AnchorWatchNmeaFeedBatch(stream,encoded.sentences.filter(::completePrimaryMeasurement).filter(NmeaGeneratedSentenceValidator::isValid).distinct(),encoded.sourceStableKey,encoded.suppressionReason,encoded.sourceConflict)
         }finally{activeInputTransportGeneration=null;activeInputProfileId=null}
@@ -145,10 +141,10 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
 
     private data class EncodedStream(val sentences:List<String> = emptyList(),val sourceStableKey:String?=null,val suppressionReason:String?=null,val sourceConflict:Boolean=false)
 
-    /** SAME_AS_INPUT position is one atomic Android Location observation. */
+    /** Every destination receives one atomic Android Location observation. */
     private fun localPosition(phoneFix:NavigationFix?,now:Long):EncodedStream{
         val fix=phoneFix?.takeIf{value->
-            value.valid&&value.positionProvider in setOf(PositionProvider.ANDROID_GNSS,PositionProvider.ANDROID_NETWORK)&&
+            value.valid&&!value.isMockLocation&&value.positionProvider==PositionProvider.ANDROID_GNSS&&
                 now-value.receivedElapsedRealtime in 0L..POSITION_LEASE_MILLIS
         }?:return EncodedStream(suppressionReason="PHONE_GPS_STALE")
         return EncodedStream(mux.phonePosition(fix,now,POSITION_LEASE_MILLIS),"phone:gnss")
@@ -180,98 +176,20 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
         return EncodedStream(pressure.value.let{mux.phoneXdr(null,it)}?.let(::listOf).orEmpty(),pressure.sourceStableKey,sourceConflict=sourceConflict(snapshot,VesselMetricId.PRESSURE,allowed))
     }
 
-    private fun localOnlyWind(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
-        val observations=listOf(snapshot.trueWind.speedKnots,snapshot.trueWind.directionDegrees,snapshot.trueWind.angleDegrees)
-        val decisions=observations.map{SameSocketProvenanceFirewall.evaluate(it,activeInputProfileId,activeInputTransportGeneration)}
-        if(decisions.any{!it.allowed})return EncodedStream(suppressionReason=decisions.first{!it.allowed}.reason.name)
-        val speed=resolve(VesselMetricId.TRUE_WIND_SPEED,snapshot.trueWind.speedKnots,snapshot,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
-        val direction=resolve(VesselMetricId.TRUE_WIND_DIRECTION,snapshot.trueWind.directionDegrees,snapshot,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
-        val angle=resolve(VesselMetricId.TRUE_WIND_ANGLE,snapshot.trueWind.angleDegrees,snapshot,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
-        if(speed==null||direction==null||angle==null)return EncodedStream(suppressionReason="NO_LOCAL_DERIVED_WIND")
+    private fun appDerivedWind(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
+        val speed=resolveAppDerived(VesselMetricId.TRUE_WIND_SPEED,snapshot.trueWind.speedKnots,snapshot,now)
+        val direction=resolveAppDerived(VesselMetricId.TRUE_WIND_DIRECTION,snapshot.trueWind.directionDegrees,snapshot,now)
+        val angle=resolveAppDerived(VesselMetricId.TRUE_WIND_ANGLE,snapshot.trueWind.angleDegrees,snapshot,now)
+        if(speed==null||direction==null||angle==null)return EncodedStream(suppressionReason="NO_APP_DERIVED_WIND")
         return EncodedStream(mux.derivedTrueWind(speed.value,direction.value,angle.value),listOf(speed.sourceStableKey,direction.sourceStableKey,angle.sourceStableKey).distinct().joinToString("+"))
     }
 
-    private fun position(snapshot:VesselDataSnapshot,phoneFix:NavigationFix?,now:Long):EncodedStream{
-        val resolved=resolve(VesselMetricId.POSITION,snapshot.position,snapshot,now,POSITION_LEASE_MILLIS,POSITION_LEASE_MILLIS,false)?:return EncodedStream()
-        val position=resolved.value
-        val phoneMetadata=phoneFix?.takeIf{fix->snapshot.position.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.PHONE_GNSS&&kotlin.math.abs(fix.latitude-position.latitude)<0.000001&&kotlin.math.abs(fix.longitude-position.longitude)<0.000001}
-        val sog=resolve(VesselMetricId.SOG,snapshot.sogKnots,snapshot,now,5_000L,5_000L)?.value
-        val cog=resolve(VesselMetricId.COG,snapshot.cogTrueDegrees,snapshot,now,5_000L,5_000L)?.value
-        val fix=NavigationFix(
-            latitude=position.latitude,longitude=position.longitude,
-            timestampUtcMillis=snapshot.position.observedAtUtcMillis?:phoneMetadata?.timestampUtcMillis,
-            receivedElapsedRealtime=snapshot.position.receivedElapsedRealtime?:now,
-            sogKnots=sog?:phoneMetadata?.sogKnots,cogTrueDegrees=cog?:phoneMetadata?.cogTrueDegrees,
-            hdop=position.hdop?:phoneMetadata?.hdop,satellites=position.satellites?:phoneMetadata?.satellites,
-            altitudeMeters=position.altitudeMeters?:phoneMetadata?.altitudeMeters,
-            horizontalAccuracyMeters=position.horizontalAccuracyMeters?:phoneMetadata?.horizontalAccuracyMeters,
-            positionProvider=when(snapshot.position.sourceClass){
-                com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA->PositionProvider.NMEA
-                com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.DEMO->PositionProvider.DEMO
-                else->PositionProvider.ANDROID_GNSS
-            },
-            isMockLocation=phoneMetadata?.isMockLocation?:false,
-            sourceSentence="ANCHOR_WATCH_CANONICAL",valid=true,
-        )
-        return EncodedStream(mux.phonePosition(fix,now,POSITION_LEASE_MILLIS),resolved.sourceStableKey)
-    }
-
-    private fun heading(snapshot:VesselDataSnapshot,format:PhoneHeadingOutputFormat,now:Long):EncodedStream{
-        val trueHeading=resolve(VesselMetricId.HEADING_TRUE,snapshot.headingTrueDegrees,snapshot,now,HEADING_LEASE_MILLIS,HEADING_HEARTBEAT_MILLIS)
-        val magnetic=resolve(VesselMetricId.HEADING_MAGNETIC,snapshot.headingMagneticDegrees,snapshot,now,HEADING_LEASE_MILLIS,HEADING_HEARTBEAT_MILLIS)
-        val sentences=buildList{
-            if(format!=PhoneHeadingOutputFormat.HDG_MAGNETIC&&trueHeading!=null)add(mux.phoneHeading(trueHeading.value))
-            if(format!=PhoneHeadingOutputFormat.HDT_TRUE&&magnetic!=null){
-                val variation=trueHeading?.let{signedAngle(it.value-magnetic.value)}
-                add(mux.phoneMagneticHeading(magnetic.value,variation))
-            }
-        }
-        return EncodedStream(sentences,trueHeading?.sourceStableKey?:magnetic?.sourceStableKey)
-    }
-
-    private fun motion(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
-        val rateOfTurn=resolve(VesselMetricId.RATE_OF_TURN,snapshot.rateOfTurnDegreesPerMinute,snapshot,now,ROT_LEASE_MILLIS,ROT_HEARTBEAT_MILLIS)
-        val attitude=eligibleObservation(snapshot.attitude)?.let{leases.resolve("ATTITUDE",null,it,emptyList(),now,5_000L,5_000L)}
-        val sentences=buildList{
-        (rateOfTurn?.value?:attitude?.value?.yawRateDegreesPerSecond?.times(60.0))?.let{add(mux.phoneRateOfTurn(it))}
-        attitude?.value?.let{attitude->
-            mux.phoneXdr(attitude,null)?.let(::add)
-        }
-        }
-        return EncodedStream(sentences,rateOfTurn?.sourceStableKey?:attitude?.sourceStableKey)
-    }
-
-    private fun pressure(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
-        val pressure=resolve(VesselMetricId.PRESSURE,snapshot.pressureHpa,snapshot,now,PRESSURE_LEASE_MILLIS,PRESSURE_HEARTBEAT_MILLIS)
-        return EncodedStream(pressure?.value?.let{mux.phoneXdr(null,it)}?.let(::listOf).orEmpty(),pressure?.sourceStableKey)
-    }
-
-    private fun wind(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
-        val speed=resolve(VesselMetricId.TRUE_WIND_SPEED,snapshot.trueWind.speedKnots,snapshot,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
-        val direction=resolve(VesselMetricId.TRUE_WIND_DIRECTION,snapshot.trueWind.directionDegrees,snapshot,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
-        val angle=resolve(VesselMetricId.TRUE_WIND_ANGLE,snapshot.trueWind.angleDegrees,snapshot,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
-        if(speed==null||direction==null||angle==null)return EncodedStream()
-        return EncodedStream(mux.derivedTrueWind(speed.value,direction.value,angle.value),listOf(speed.sourceStableKey,direction.sourceStableKey,angle.sourceStableKey).distinct().joinToString("+"))
-    }
-
-    private fun depth(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
-        val depth=resolve(VesselMetricId.DEPTH,snapshot.depthMeters,snapshot,now,DEPTH_LEASE_MILLIS,DEPTH_HEARTBEAT_MILLIS)?:return EncodedStream()
-        if(depth.value !in 0.05..12_000.0)return EncodedStream()
-        return EncodedStream(listOf(mux.canonicalDepth(depth.value)),depth.sourceStableKey)
-    }
-
-    private fun speedThroughWater(snapshot:VesselDataSnapshot,now:Long):EncodedStream{
-        val speed=resolve(VesselMetricId.SPEED_THROUGH_WATER,snapshot.speedThroughWaterKnots,snapshot,now,STW_LEASE_MILLIS,STW_HEARTBEAT_MILLIS)?:return EncodedStream()
-        if(speed.value !in 0.0..200.0)return EncodedStream()
-        val trueHeading=snapshot.headingTrueDegrees.value.takeIf{snapshot.headingTrueDegrees.freshness in setOf(VesselDataFreshness.FRESH,VesselDataFreshness.HELD)}
-        val magneticHeading=snapshot.headingMagneticDegrees.value.takeIf{snapshot.headingMagneticDegrees.freshness in setOf(VesselDataFreshness.FRESH,VesselDataFreshness.HELD)}
-        return EncodedStream(listOf(mux.canonicalSpeedThroughWater(speed.value,trueHeading,magneticHeading)),speed.sourceStableKey)
-    }
-
-    private fun <T> resolve(metric:VesselMetricId,observation:VesselObservation<T>,snapshot:VesselDataSnapshot,now:Long,lease:Long,heartbeat:Long,allowHeartbeat:Boolean=true):PublishedMetricValue<T>?{
-        val eligible=eligibleObservation(observation)?:return null
-        val candidates=snapshot.candidates[metric].orEmpty().filter{candidate->candidate.sourceClass!=com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA||activeInputTransportGeneration==null||candidate.source.connectionGeneration==activeInputTransportGeneration}
-        return leases.resolve(metric.name,metric,eligible,candidates,now,lease,heartbeat,allowHeartbeat)
+    private fun <T> resolveAppDerived(metric:VesselMetricId,observation:VesselObservation<T>,snapshot:VesselDataSnapshot,now:Long):PublishedMetricValue<T>?{
+        val allowedClasses=setOf(VesselSourceClass.DERIVED_WATER,VesselSourceClass.DERIVED_GROUND)
+        val derivation=observation.provenanceDetail as? VesselProvenance.Derived?:return null
+        if(observation.value==null||observation.sourceClass !in allowedClasses||observation.sourceIdentity?.sourceType!=VesselSourceType.APP_DERIVED||derivation.inputs.any{it.sourceType==VesselSourceType.PHONE_TX_ECHO})return null
+        val appCandidates=snapshot.candidates[metric].orEmpty().filter{it.sourceClass in allowedClasses&&it.source.sourceType==VesselSourceType.APP_DERIVED}
+        return leases.resolve("APP_DERIVED_${metric.name}",metric,observation,appCandidates,now,WIND_LEASE_MILLIS,WIND_HEARTBEAT_MILLIS)
     }
 
     private fun <T> resolveLocal(
@@ -328,11 +246,6 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
         val candidates=snapshot.candidates[metric].orEmpty()
         return candidates.any{it.sourceClass in localClasses}&&candidates.any{it.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA}
     }
-    private fun <T> eligibleObservation(observation:VesselObservation<T>):VesselObservation<T>?{
-        val expected=activeInputTransportGeneration
-        if(expected!=null&&observation.sourceClass==com.yokuli.anchorwatch.domain.vessel.VesselSourceClass.BOAT_NMEA&&observation.sourceIdentity?.connectionGeneration!=expected){observation.sourceIdentity?.persistentKey?.let(leases::invalidateSource);return null}
-        return observation
-    }
     private fun signedAngle(value:Double)=((value+540.0)%360.0)-180.0
 
     fun reset(){leases.reset()}
@@ -347,8 +260,6 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
             "XDR"->fields.size>=5&&fields.drop(1).chunked(4).all{it.size==4&&it[1].isNotBlank()}
             "MWD"->fields.getOrNull(1)?.isNotBlank()==true&&fields.getOrNull(5)?.isNotBlank()==true
             "MWV","VWT"->fields.getOrNull(1)?.isNotBlank()==true&&fields.getOrNull(3)?.isNotBlank()==true
-            "DBT"->fields.getOrNull(3)?.isNotBlank()==true
-            "VHW"->fields.getOrNull(5)?.isNotBlank()==true
             "RMC","GGA"->fields.getOrNull(3)?.isNotBlank()==true&&fields.getOrNull(5)?.isNotBlank()==true
             "VTG"->fields.getOrNull(1)?.isNotBlank()==true&&fields.getOrNull(5)?.isNotBlank()==true
             "ZDA"->fields.getOrNull(1)?.isNotBlank()==true
@@ -364,12 +275,6 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
         const val PRESSURE_HEARTBEAT_MILLIS=60_000L
         const val WIND_LEASE_MILLIS=10_000L
         const val WIND_HEARTBEAT_MILLIS=10_000L
-        const val DEPTH_LEASE_MILLIS=60_000L
-        const val DEPTH_HEARTBEAT_MILLIS=60_000L
-        const val STW_LEASE_MILLIS=10_000L
-        const val STW_HEARTBEAT_MILLIS=10_000L
-        const val ROT_LEASE_MILLIS=3_000L
-        const val ROT_HEARTBEAT_MILLIS=3_000L
     }
 }
 

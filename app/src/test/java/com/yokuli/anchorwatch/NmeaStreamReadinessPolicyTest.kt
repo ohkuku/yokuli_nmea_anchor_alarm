@@ -1,13 +1,19 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.domain.vessel.NmeaStreamReadiness
+import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
+import com.yokuli.anchorwatch.location.vessel.PhoneMountMovementPolicy
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputBlocker
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputReadinessPolicy
+import com.yokuli.anchorwatch.runtime.output.AnchorWatchNmeaStream
+import com.yokuli.anchorwatch.runtime.output.FormalOutputSessionReadinessPolicy
 import com.yokuli.anchorwatch.runtime.output.NmeaStreamReadinessPolicy
+import com.yokuli.anchorwatch.runtime.output.PhoneOwnedRuntimeSafety
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -67,5 +73,28 @@ class NmeaStreamReadinessPolicyTest {
         val result=PhoneVesselOutputReadinessPolicy.evaluate(calibrated,PhoneVesselMountState.MOUNT_SUSPECT)
         assertFalse(result.ready)
         assertTrue(PhoneVesselOutputBlocker.MOUNT_SUSPECT in result.blockers)
+    }
+
+    @Test fun magneticFusionJumpWithoutPhysicalGyroEvidenceDoesNotInvalidateTheMount(){
+        assertFalse(PhoneMountMovementPolicy.suspect(rotationJumpDegrees=90.0,angularVelocityRadPerSecond=0.02))
+        assertTrue(PhoneMountMovementPolicy.suspect(rotationJumpDegrees=90.0,angularVelocityRadPerSecond=0.8))
+        assertTrue(PhoneMountMovementPolicy.suspect(rotationJumpDegrees=2.0,angularVelocityRadPerSecond=4.0))
+    }
+
+    @Test fun activeOutputMountWarningSuppressesOnlyUnsafeVesselFrameStreamsOnEveryTransport(){
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.MOTION,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.POSITION,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.PRESSURE,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+    }
+
+    @Test fun runtimeMountWarningCannotTurnOffAnAlreadyStartedPublicationSession(){
+        val blocked=PhoneVesselOutputReadinessPolicy.evaluate(
+            VesselMountCalibration(),
+            PhoneVesselMountState.MOUNT_SUSPECT,
+        )
+        assertTrue(FormalOutputSessionReadinessPolicy.blocksStart(requestedRunning=true,currentlyEnabled=false,readiness=blocked))
+        assertFalse(FormalOutputSessionReadinessPolicy.blocksStart(requestedRunning=true,currentlyEnabled=true,readiness=blocked))
     }
 }

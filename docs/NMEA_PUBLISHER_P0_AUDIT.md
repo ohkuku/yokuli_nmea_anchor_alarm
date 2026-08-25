@@ -6,13 +6,13 @@ Scope: live NMEA publication only. This audit does not reopen Anchorage GIS work
 
 ## Product invariant
 
-There is one normal-product publisher: `AnchorWatchNmeaPublisher`. It consumes the selected, typed `VesselDataHub` snapshot, re-encodes complete measurements, and sends the same canonical stream scheduler to every transport. Raw Boat sentences are never a publication input.
+There is one normal-product publisher: `AnchorWatchNmeaPublisher`. It uses `VesselDataHub` only to locate provenance-proven Phone sensor candidates and explicit `APP_DERIVED` results, then sends that same Phone/App-owned feed to every transport. Direct Boat measurements are never a publication input, whether raw or re-encoded.
 
 ## Runtime inventory
 
 | Runtime | Owner | Purpose | Normal product state |
 |---|---|---|---|
-| `AnchorWatchNmeaPublisher` | `YokuliRuntimeCoordinator` | Per-stream schedule, metric leases, bounded latest-value queue, publication generation | Active only after explicit Start |
+| `AnchorWatchNmeaPublisher` | `YokuliRuntimeCoordinator` | Phone/App-owned stream schedule, metric leases, bounded latest-value queue, publication generation | Active only after explicit Start |
 | `NmeaDeviceOutputConnection` | `AnchorWatchNmeaPublisher` | Destination lifecycle, packet-path diagnostics, hard-stop write lease | One instance |
 | `NmeaSharingServer` | `NmeaDeviceOutputConnection` | TCP-server destination only | Never an independent Sharing publisher |
 | `DedicatedNmeaTcpClient` | `NmeaDeviceOutputConnection` | Write-only TCP-client destination | Owns connecting + connected sockets |
@@ -29,7 +29,7 @@ There is no production `NmeaSharingRuntime`, no raw Boat repeater, and no collec
 | Dedicated TX candidate | `DedicatedNmeaTcpClient.connectingSocket` | Publisher writer actor | `close()` immediately closes candidate |
 | Dedicated TX connected socket | `DedicatedNmeaTcpClient.connected socket` | Candidate promotion after connect and ownership check | `close()` immediately closes active socket |
 | TCP output listener + clients | `NmeaSharingServer` as destination | Publisher config selects TCP server | Hard Stop closes listener/clients and joins old writer jobs |
-| UDP TX | `NmeaUdpClient` | First canonical write | Hard Stop closes socket |
+| UDP TX | `NmeaUdpClient` | First Phone/App feed write | Hard Stop closes socket |
 | Same-input TCP write | Existing `NmeaConnection` | Recommended/default route after explicit Output setup and Start | Stop blocks on the publisher byte barrier until the old write returns; it does not open a second socket |
 
 ## Configuration ownership
@@ -55,19 +55,18 @@ NMEA dependency shutdown is also owned inside `YokuliRuntimeCoordinator`; it sav
 
 ## Sentence generation paths
 
-### `CANONICAL_PUBLISHER`
+### `LOCAL_SENSOR_INJECTION`
 
 `VesselDataHub` → `AnchorWatchNmeaFeedEncoder` → `LatestPerStreamQueue` → `NmeaDeviceOutputConnection` → selected destination.
 
-- Position: 1 Hz, selected numeric Position only; blank position heartbeats never renew it.
-- Heading: 5 Hz, selected Heading, fixed outward `IIHDT` / optional `IIHDG` identity.
-- Motion/attitude: 2 Hz.
-- Pressure: 1 Hz when enabled and complete.
-- Coherent true wind: 2 Hz when enabled and complete.
-- Depth: 1 Hz, selected complete typed depth with a 60-second publication lease; blank DBT/DPT fields never become an empty outbound sentence.
-- Speed through water: 2 Hz, selected complete typed STW with a 10-second publication lease.
+- Position: 1 Hz from one atomic Android GNSS fix; RMC/VTG SOG and COG can never come from Boat input.
+- Heading: 1 Hz from the calibrated Phone vessel-heading source, with fixed outward `IIHDT` / optional `IIHDG` identity.
+- Motion/attitude: 1 Hz from the mounted Phone IMU.
+- Pressure: 1 Hz from the Phone barometer when enabled and complete.
+- True wind: 1 Hz only when the result carries explicit Anchor Watch `APP_DERIVED` identity and derivation provenance. A direct Boat MWD/MWV/VWT observation is never published.
+- Depth and speed through water are not publisher streams. Boat DBT/DPT/VHW is input-only on every transport.
 
-No new sentence families were introduced in this P0 pass.
+Changing between same-socket, dedicated TCP, TCP server or UDP changes only the byte destination. It never changes source eligibility and cannot turn the App into a selected Boat-data fan-out.
 
 ### `DIAGNOSTIC_TEST`
 
@@ -81,26 +80,28 @@ Explicit stopped-only endpoint test → known complete diagnostic sentence(s) �
 
 ## Source freshness and publication leases
 
-`VesselSourceCandidate` exposes separate numeric measurement and physical-source heartbeat times. `MetricSourceEligibility` applies metric-specific rules:
+`VesselSourceCandidate` exposes separate numeric measurement and physical-source heartbeat times. The Phone/App publication boundary applies metric-specific rules:
 
 - Position: numeric freshness only.
-- Heading, Depth, Pressure, Wind, STW and motion metrics: a complete value may remain `HELD` while the exact source heartbeat is fresh.
+- Phone Heading/Pressure/Motion and explicit App-derived Wind: a complete value may remain `HELD` while the exact owning source heartbeat is fresh.
 - `INVALID` / `DISABLED`: immediate rejection, regardless of heartbeat.
 
-`CanonicalNmeaMetricLeaseBank` separately owns the last complete published value, numeric time, heartbeat time, expiry and stable source key. A READY source switch replaces the lease in one tick; the previous source is never published after the switch and no blank transition sentence is generated.
+`PhoneAppNmeaMetricLeaseBank` is the internal lease primitive and separately owns the last complete published value, numeric time, heartbeat time, expiry and stable source key. Only Phone/App-owned observations can reach it from the live encoder. A READY local-source switch replaces the lease in one tick; no blank transition sentence is generated.
 
 ## Stream scheduling and queueing
 
-`AnchorWatchNmeaHeartbeat` has an independent monotonic period per stream. The writer uses one bounded latest-value slot per stream, preventing a 5 Hz Heading backlog from evicting Position or replaying stale batches after reconnect. Every batch carries its publication generation, source stable key and—when reusing input TCP—the exact transport generation. The shared socket rejects old-generation batches after reconnect.
+`AnchorWatchNmeaHeartbeat` runs every normal product stream at 1 Hz. The writer uses one bounded latest-value slot per stream, then coalesces everything due on that tick into one contiguous socket payload and one flush. A blocked gateway therefore keeps only the newest value of each family and never replays stale batches after reconnect. A write that takes at least 500 ms gets a full one-second recovery period after completion, so missed periods collapse in place instead of becoming a catch-up burst. Every batch carries its publication generation, source stable key and—when reusing input TCP—the exact transport generation. The shared socket rejects old-generation batches after reconnect.
 
-The scheduler advances at the normal attempt cadence, not on immediate retry. Successful socket time is recorded separately. This is deliberate for a fragile gateway: a failed 5 Hz Heading write is retried by the next normal 200 ms sample, never by a tight failure loop.
+The scheduler advances at the normal attempt cadence, not on immediate retry. Successful socket time is recorded separately. This is deliberate for a fragile gateway: a failed write waits for the next 1 Hz fresh batch, never a tight failure loop.
+
+The live transport watchdog labels an in-flight write `CONGESTED` at 500 ms. At three seconds it closes only the exact current same-input Socket generation once; the existing bounded RX reconnect state machine owns recovery and no independent Boat client is created. The TX UI exposes current backpressure, last/maximum write duration and the abort count.
 
 ## Packet-path diagnostics
 
 `NmeaPacketPathDiagnostic` records:
 
 - publisher session and generation;
-- canonical/legacy/diagnostic/raw path;
+- Phone/App publisher, legacy, diagnostic or raw path;
 - generated/write-start/queued/written/source-changed stage;
 - stream, transport, destination and sentence type;
 - generated/write times and source stable key.
@@ -112,11 +113,11 @@ Before a frame reaches any destination, `NmeaGeneratedSentenceValidator` require
 
 The supplied analysis inspected an older `main` architecture. It was used as an audit checklist, not applied as a patch:
 
-- Already resolved in the current publisher: independent stream clocks, one production runtime owner, canonical selected-value re-encoding, no raw repeater, publication generation, hard Stop and real GNSS-based declination validity.
+- Already resolved in the current publisher: independent stream clocks, one production runtime owner, Phone/App-owned value encoding, no selected-Boat re-encoder or raw repeater, publication generation, hard Stop and real GNSS-based declination validity.
 - Adopted from the audit: input transport generation on queued writes, structured same-socket write failures, per-packet dropped diagnostics, occurrence-based echo quarantine, time-driven field expiry, PHONE_BARO XDR semantics, strict output validation and randomized TCP framing coverage.
-- Intentionally retained: 5 Hz Heading. The current verified product contract is 5 Hz with a maximum 400 ms receiver gap; increasing to 10 Hz without MFD evidence would double load on the user's fragile gateway.
+- Current compatibility contract: every normal stream is 1 Hz. Unchanged valid Heading is still resent as one complete sentence every second; change-only output is forbidden.
 - Intentionally retained: retry on the next normal stream period. Immediate failure retry would recreate a connection/write storm; attempted and written clocks/counters remain separate.
-- Not enabled as a default: combined attitude+pressure XDR packing. Separate complete standard XDR frames remain the canonical output. Converter-specific combined packing needs one controlled Pi/MFD A/B capture and must also remain within the 82-byte sentence limit.
+- Not enabled as a default: combined attitude+pressure XDR packing. Separate complete standard XDR frames remain the product output. Converter-specific combined packing needs one controlled Pi/MFD A/B capture and must also remain within the 82-byte sentence limit.
 
 Data → NMEA Output displays the live session/generation, per-stream source epoch/rates/ages/suppression, and recent packet-path events. Stop clears Live TX while preserving separately labelled last-session history.
 

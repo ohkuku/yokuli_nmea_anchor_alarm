@@ -44,13 +44,13 @@ class NmeaPublisherRealtimeSoakTest{
             val encoder=AnchorWatchNmeaFeedEncoder(NmeaOutputMux())
             val start=System.nanoTime()
             try{
-                repeat(3_000){index->
-                    val target=start+TimeUnit.MILLISECONDS.toNanos(index*200L)
+                repeat(600){index->
+                    val target=start+TimeUnit.MILLISECONDS.toNanos(index*1_000L)
                     while(true){
                         val remaining=target-System.nanoTime();if(remaining<=0L)break
                         TimeUnit.NANOSECONDS.sleep(remaining)
                     }
-                    val elapsed=index*200L
+                    val elapsed=index*1_000L
                     assertTrue(AnchorWatchNmeaStream.HEADING in heartbeat.due(elapsed))
                     val observation=VesselObservation(
                         value=123.4,source=VesselDataSource.PHONE_MAGNETOMETER,
@@ -64,17 +64,17 @@ class NmeaPublisherRealtimeSoakTest{
             }finally{client.close()}
             receiver.get(5,TimeUnit.SECONDS);receiverExecutor.shutdownNow()
 
-            assertEquals(3_000,lines.size)
+            assertEquals(600,lines.size)
             assertTrue(lines.all{it.contains("HDT,123.40,T")&&!it.contains("HDT,,")})
             val maximumGapMillis=arrivals.zipWithNext().maxOf{(left,right)->TimeUnit.NANOSECONDS.toMillis(right-left)}
-            assertTrue("Maximum receiver gap was ${maximumGapMillis}ms",maximumGapMillis<=400L)
+            assertTrue("Maximum receiver gap was ${maximumGapMillis}ms",maximumGapMillis<=1_200L)
 
             // Hard Stop already closed the only writer. Keep the fake receiver
             // listening for a real 60 seconds: no stale generation may reconnect.
             try{
                 server.accept().use{throw AssertionError("Stopped publisher opened a new TCP connection")}
             }catch(_:SocketTimeoutException){/* expected: full sixty-second zero-connection window */}
-            assertEquals(3_000,lines.size)
+            assertEquals(600,lines.size)
             assertFalse(client.isConnected("127.0.0.1",server.localPort))
         }
     }

@@ -9,12 +9,10 @@ import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
-import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputLeasePolicy
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportDefaults
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.*
-import com.yokuli.anchorwatch.runtime.output.SelectedExternalSourcePresence
 import com.yokuli.anchorwatch.runtime.output.canonicalPublisherConfiguration
 import com.yokuli.anchorwatch.runtime.output.NmeaPublisherConfig
 import org.junit.Assert.*
@@ -51,10 +49,9 @@ class NmeaDeviceOutputPolicyTest{
         assertTrue(NmeaDeviceOutputSettings(phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true).anyEnabled)
     }
 
-    @Test fun canonicalFeedIsACompletePurposeWithoutPhoneInjectionStreams(){
+    @Test fun legacyCanonicalPurposeCannotPublishWithoutExplicitPhoneAppStreams(){
         val value=NmeaDeviceOutputSettings(purpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,transportConfigured=true,publicationEnabled=true)
-        assertTrue(value.anyStreamSelected);assertTrue(value.anyEnabled)
-        assertFalse(value.phonePositionPublishing)
+        assertFalse(value.anyStreamSelected);assertFalse(value.anyEnabled)
     }
 
     @Test fun processRestartNeverResumesRuntimeLeaseEvenForLegacyAutoStartConfiguration(){
@@ -96,16 +93,9 @@ class NmeaDeviceOutputPolicyTest{
         ))
         assertTrue(live.running);assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,live.transportMode)
         val canonical=live.asOutputSettings()
-        assertEquals(NmeaOutputPurpose.CANONICAL_CLIENT_FEED,canonical.purpose)
-        assertFalse(canonical.phoneHeadingEnabled);assertEquals(PublicationPolicy.OFF,canonical.headingPolicy)
+        assertEquals(NmeaOutputPurpose.BOAT_BUS_INJECTION,canonical.purpose)
+        assertTrue(canonical.phoneHeadingEnabled);assertEquals(PublicationPolicy.ALWAYS,canonical.headingPolicy)
         assertFalse(canonical.proprietaryStatusEnabled);assertFalse(canonical.autoStartOutput)
-    }
-
-    @Test fun backupLooksOnlyAtSelectedExternalSourceAndFishfinderVhwDoesNotBlockHeadingTakeover(){
-        fun observation(type:String,sourceClass:VesselSourceClass=VesselSourceClass.BOAT_NMEA)=VesselObservation(123.0,source=sourceClass.toLegacySource(),receivedElapsedRealtime=10_000,freshness=VesselDataFreshness.FRESH,sourceIdentity=VesselSourceIdentity("source:$type",sourceType=VesselSourceType.NMEA_INPUT,sentenceType=type,displayName=type),sourceClass=sourceClass)
-        assertTrue(SelectedExternalSourcePresence.present(observation("HDT"),10_100,3_000,setOf("HDT","HDG")))
-        assertFalse(SelectedExternalSourcePresence.present(observation("VHW"),10_100,3_000,setOf("HDT","HDG")))
-        assertFalse(SelectedExternalSourcePresence.present(observation("HDT",VesselSourceClass.PHONE_VESSEL_HEADING),10_100,3_000,setOf("HDT","HDG")))
     }
 
     @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){

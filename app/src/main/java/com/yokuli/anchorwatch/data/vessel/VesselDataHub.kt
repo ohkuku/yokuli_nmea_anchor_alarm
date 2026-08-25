@@ -35,14 +35,13 @@ private enum class ResolvedWindField{SPEED,DIRECTION,ANGLE}
 
 /** Unified instrument/presentation truth. It never feeds Anchor safety. */
 @Singleton
-class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:LiveDepthRepository,wind:LiveWindRepository,phoneHeading:PhoneHeadingRepository,positions:VesselPositionRepository,settings:VesselSettingsRepository,outputSettings:OutputSettingsRepository,attitude:PhoneVesselAttitudeRepository,pressure:PhonePressureRepository,nmeaFields:NmeaFieldRepository,private val sourceRegistry:VesselSourceRegistry,mountCalibration:VesselMountCalibrationRepository,private val pressureHistory:PressureHistoryRepository){
+class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:LiveDepthRepository,wind:LiveWindRepository,phoneHeading:PhoneHeadingRepository,positions:VesselPositionRepository,settings:VesselSettingsRepository,attitude:PhoneVesselAttitudeRepository,pressure:PhonePressureRepository,nmeaFields:NmeaFieldRepository,private val sourceRegistry:VesselSourceRegistry,mountCalibration:VesselMountCalibrationRepository,private val pressureHistory:PressureHistoryRepository){
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private val _snapshot=MutableStateFlow(VesselDataSnapshot());val snapshot=_snapshot.asStateFlow()
     private var boatPosition=VesselObservation<VesselPosition>();private var phonePosition=VesselObservation<VesselPosition>();private var sog=VesselObservation<Double>();private var cog=VesselObservation<Double>();private var speedThroughWater=VesselObservation<Double>();private var boatHeading=VesselObservation<Double>();private var magneticHeading=VesselObservation<Double>();private var phoneHeadingValue=VesselObservation<Double>();private var phoneMagneticHeadingValue=VesselObservation<Double>();private var depthValue=VesselObservation<Double>();private var trueWindSpeed=VesselObservation<Double>();private var trueWindDirection=VesselObservation<Double>();private var trueWindAngle=VesselObservation<Double>();private var apparentWindSpeed=VesselObservation<Double>();private var apparentWindAngle=VesselObservation<Double>();private var attitudeValue=VesselObservation<VesselAttitude>();private var motionValue=VesselObservation<VesselMotion>();private var pressureValue=VesselObservation<Double>();private var rateOfTurn=VesselObservation<Double>();private var rudderAngle=VesselObservation<Double>();private var waterTemperature=VesselObservation<Double>();private var airTemperature=VesselObservation<Double>();private var currentSet=VesselObservation<Double>();private var currentDrift=VesselObservation<Double>();private var crossTrackError=VesselObservation<Double>();private var waypointBearing=VesselObservation<Double>();private var waypointDistance=VesselObservation<Double>();private var destinationWaypoint=VesselObservation<String>();private var totalLog=VesselObservation<Double>();private var tripLog=VesselObservation<Double>();private val motionAnalyzer=VesselMotionAnalyzer()
     private val arbitrator=VesselSourceArbitrator();private val trueWindHysteresis=TrueWindSourceHysteresis()
     @Volatile private var positionPreference=VesselSourcePreference.AUTO;@Volatile private var headingPreference=VesselSourcePreference.AUTO
     @Volatile private var tripPositionPreference:VesselSourcePreference?=null
     @Volatile private var pinnedPositionSourceId:String?=null;@Volatile private var pinnedHeadingSourceId:String?=null;@Volatile private var allowPinnedFallback=false
-    @Volatile private var phonePositionOutputEnabled=false
     @Volatile private var vesselDraftMeters=0.0
     @Volatile private var depthReference:DepthReference?=null
     @Volatile private var mountState=PhoneVesselMountState.UNCALIBRATED;@Volatile private var calibration=VesselMountCalibration()
@@ -91,15 +90,16 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
             textual(NmeaFieldSemantic.DESTINATION_WAYPOINT)?.let{destinationWaypoint=fieldObservation(it,it.text!!)}
         }}
         scope.launch{settings.settings.collect{value->positionPreference=value.positionPreference;headingPreference=value.headingPreference;pinnedPositionSourceId=value.pinnedPositionSourceId?.let(VesselSourcePinPolicy::normalize);pinnedHeadingSourceId=value.boatHeadingSourceId?.let(VesselSourcePinPolicy::normalize);allowPinnedFallback=value.allowPinnedFallback;vesselDraftMeters=value.draftMeters?:0.0;navigation.pinBoatHeadingSource(pinnedHeadingSourceId?.substringAfterLast(':'),allowPinnedFallback)}}
-        scope.launch{outputSettings.settings.collect{phonePositionOutputEnabled=it.phonePositionPublishing}}
         scope.launch{while(isActive){publish(SystemClock.elapsedRealtime());delay(250)}}
     }
     @Synchronized fun hasFreshPhonePosition(now:Long)=classify(phonePosition,now,3_000,10_000).let{it.value!=null&&it.freshness==VesselDataFreshness.FRESH}
     @Synchronized fun setTripPositionPreference(value:VesselSourcePreference?){tripPositionPreference=value?.takeUnless{it==VesselSourcePreference.DERIVED};arbitrator.reset()}
     @Synchronized private fun publish(now:Long){
         val effectivePositionPreference=tripPositionPreference?:positionPreference
-        val positionSelection=registrySelection<VesselPosition>(VesselMetricId.POSITION,effectivePositionPreference,pinnedPositionSourceId,now,excludeBoat=phonePositionOutputEnabled)
-        val selectedPosition=selectionObservation(positionSelection)?:run{val classifiedBoatPosition=classify(boatPosition,now,3_000,30_000).let{if(phonePositionOutputEnabled)it.copy(value=null,freshness=VesselDataFreshness.UNAVAILABLE,provenance="BLOCKED_BY_PHONE_POSITION_OUTPUT")else it};VesselSourceSelector.select(effectivePositionPreference,classifiedBoatPosition,classify(phonePosition,now,3_000,10_000))}
+        // Output reads its own accepted Phone fix directly. Starting Phone TX
+        // must never mutate the Hub's Boat/Phone presentation arbitration.
+        val positionSelection=registrySelection<VesselPosition>(VesselMetricId.POSITION,effectivePositionPreference,pinnedPositionSourceId,now)
+        val selectedPosition=selectionObservation(positionSelection)?:VesselSourceSelector.select(effectivePositionPreference,classify(boatPosition,now,3_000,30_000),classify(phonePosition,now,3_000,10_000))
         val headingSelection=registrySelection<Double>(VesselMetricId.HEADING_TRUE,headingPreference,pinnedHeadingSourceId,now)
         val selectedHeading=selectionObservation(headingSelection)?:VesselSourceSelector.select(headingPreference,classify(boatHeading,now,5_000,30_000),classify(phoneHeadingValue,now,1_500,5_000))
         val freshCog=selectionObservation(registrySelection<Double>(VesselMetricId.COG,VesselSourcePreference.AUTO,null,now))?:classify(cog,now,5_000,30_000)
@@ -154,7 +154,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         val sourceSelections=sourceSnapshot.keys.associateWith{metric->
             val preference=when(metric){VesselMetricId.POSITION->effectivePositionPreference;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->headingPreference;else->VesselSourcePreference.AUTO}
             val pin=when(metric){VesselMetricId.POSITION->pinnedPositionSourceId;VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->pinnedHeadingSourceId;else->null}
-            registrySelection<Any>(metric,preference,pin,now,excludeBoat=metric==VesselMetricId.POSITION&&phonePositionOutputEnabled)
+            registrySelection<Any>(metric,preference,pin,now)
         }
         val evaluatedCandidates=sourceSelections.mapValues{(_,selection)->selection.candidates}
         val conflicts=sourceSelections.mapNotNull{(metric,selection)->selection.conflict.takeIf{it.active}?.let{metric to it}}.toMap()
@@ -166,8 +166,8 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         VesselMetricId.HEADING_TRUE->boatHeading=VesselObservation();VesselMetricId.HEADING_MAGNETIC->magneticHeading=VesselObservation();VesselMetricId.TRUE_WIND_SPEED->trueWindSpeed=VesselObservation();VesselMetricId.TRUE_WIND_DIRECTION->trueWindDirection=VesselObservation();VesselMetricId.TRUE_WIND_ANGLE->trueWindAngle=VesselObservation();VesselMetricId.APPARENT_WIND_SPEED->apparentWindSpeed=VesselObservation();VesselMetricId.APPARENT_WIND_ANGLE->apparentWindAngle=VesselObservation();
         VesselMetricId.RATE_OF_TURN->rateOfTurn=VesselObservation();VesselMetricId.RUDDER_ANGLE->rudderAngle=VesselObservation();VesselMetricId.XTE->crossTrackError=VesselObservation();VesselMetricId.WAYPOINT_BEARING->waypointBearing=VesselObservation();VesselMetricId.WAYPOINT_DISTANCE->waypointDistance=VesselObservation();VesselMetricId.DESTINATION_WAYPOINT->destinationWaypoint=VesselObservation();else->Unit
     }}}
-    private fun <T> registrySelection(metric:VesselMetricId,preference:VesselSourcePreference,pinnedId:String?,now:Long,excludeBoat:Boolean=false):VesselSourceSelection<T>{
-        val candidates=sourceRegistry.candidates<T>(metric).filterNot{excludeBoat&&it.sourceClass==VesselSourceClass.BOAT_NMEA}
+    private fun <T> registrySelection(metric:VesselMetricId,preference:VesselSourcePreference,pinnedId:String?,now:Long):VesselSourceSelection<T>{
+        val candidates=sourceRegistry.candidates<T>(metric)
         val resolvedPin=pinnedId?.let{stored->VesselSourcePinPolicy.resolve(candidates,stored)?:stored}
         return arbitrator.select(metric,candidates,MetricSourcePreference(preference,resolvedPin,allowPinnedFallback),now)
     }

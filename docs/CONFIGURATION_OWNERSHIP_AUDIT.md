@@ -16,7 +16,7 @@ This audit defines the only screen allowed to mutate each durable concept. A sec
 | Instrument heading source | `headingPreference`, exact boat source pin | `VesselSettingsRepository` | Data → Vessel → Heading | Vessel Hub and Anchor evidence router | Global | Anchor Setup and active Anchor had enable switches | All Anchor switches and commands removed; Anchor is status-only |
 | NMEA input profile | protocol, RX host, RX port, checksum, reconnect policy | `SettingsRepository` | Data → NMEA input | `NavigationRepository` | Global | Save & Connect also mutated TX | Input action now saves/connects RX only |
 | NMEA output destination | transport mode, TX host, TX port | `OutputSettingsRepository` | Data → NMEA output | `PhonePositionNmeaOutputRuntime` | Global | Choosing separate TX produced validation before fields existed | Route is a local draft until valid and explicitly saved |
-| NMEA publication lease | `publicationEnabled` | `OutputSettingsRepository` plus runtime | Data → NMEA output Start/Stop | output runtime | Runtime only | legacy auto-start and individual stream controls | One canonical feed; no auto-start; calibration gate; one Start/Stop |
+| NMEA publication lease | `publicationEnabled` | `OutputSettingsRepository` plus runtime | Data → NMEA output Start/Stop | output runtime | Runtime only | legacy auto-start and individual stream controls | One Phone/App-owned feed; no auto-start; calibration gate; one Start/Stop |
 | Base map style | `mapType` | `SettingsRepository` | Map → Layers | Watch map renderer | Current display | Settings also exposed display controls | Settings no longer mutates display state |
 | Nautical source | compatibility field `offlineMapEnabled` interpreted as `NauticalSourcePreference` | `SettingsRepository` | Map → Layers | `NauticalSourceResolver` | Current display | file installation and source selection were mixed | Map chooses Default online or imported MBTiles; Settings manages files only |
 | LINZ NZ overlay | `linzHydroEnabled`, `linzHydroOpacity` | `SettingsRepository` | Map → Layers → Overlays | LINZ tile overlay | Current display | Settings duplicated visibility/opacity | Map is the only mutation surface; preference survives unsupported regions |
@@ -32,7 +32,7 @@ This audit defines the only screen allowed to mutate each durable concept. A sec
 
 - `AnchorSessionEntity.usePhoneHeading` and `headingEvidenceEnabled` remain in Room and backup format 5. They are always written/upgraded to `true` and are never read as an evidence gate.
 - `headingEvidenceEpoch` and `headingEvidenceSourceId` remain meaningful for source-change isolation.
-- `NmeaDeviceOutputSettings` retains old per-stream fields so existing DataStore and backups decode safely. Product output normalizes to `CANONICAL_CLIENT_FEED`; no UI or public ViewModel command mutates the old stream switches.
+- `NmeaDeviceOutputSettings` retains old per-stream fields and `CANONICAL_CLIENT_FEED` so existing DataStore and backups decode safely. Live product output always normalizes to `BOAT_BUS_INJECTION`: Phone sensors plus explicit App-derived results only. No UI or public ViewModel command can enable Boat-data forwarding or mutate the old stream switches.
 - `offlineMapEnabled` remains the persisted compatibility bit for the two-value nautical preference. Domain/UI interpretation is `DEFAULT_ONLINE` versus `USER_MBTILES`.
 - `saved_anchorages` remains in schema 20 for old backup compatibility. User-visible lists and approach geometry no longer collect it.
 

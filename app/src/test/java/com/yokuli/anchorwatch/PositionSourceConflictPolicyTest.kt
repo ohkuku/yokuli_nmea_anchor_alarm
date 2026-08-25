@@ -8,11 +8,11 @@ import org.junit.Test
 class PositionSourceConflictPolicyTest {
     private fun state(output:Boolean=false,selected:GpsDataSource=GpsDataSource.SYSTEM,active:GpsDataSource?=null)=PositionSourceConflictState(output,selected,active)
 
-    @Test fun phoneOutputAndNmeaPositionAreMutuallyExclusive(){
+    @Test fun phoneOwnedOutputAndNmeaInputMayCoexistWithoutChangingEitherSource(){
         assertTrue(PositionSourceConflictPolicy.canSelectNmeaPosition(state()))
-        assertFalse(PositionSourceConflictPolicy.canSelectNmeaPosition(state(output=true)))
-        assertFalse(PositionSourceConflictPolicy.canEnablePhonePositionOutput(state(selected=GpsDataSource.NMEA)))
-        assertFalse(PositionSourceConflictPolicy.canEnablePhonePositionOutput(state(active=GpsDataSource.NMEA)))
+        assertTrue(PositionSourceConflictPolicy.canSelectNmeaPosition(state(output=true)))
+        assertTrue(PositionSourceConflictPolicy.canEnablePhonePositionOutput(state(selected=GpsDataSource.NMEA)))
+        assertTrue(PositionSourceConflictPolicy.canEnablePhonePositionOutput(state(active=GpsDataSource.NMEA)))
     }
 
     @Test fun nonPositionBoatDataRemainsAvailableDuringPhoneOutput(){

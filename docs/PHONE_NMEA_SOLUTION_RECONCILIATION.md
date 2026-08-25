@@ -9,7 +9,9 @@ This report compares `CODEX_PHONE_NMEA_COMPLETE_PROBLEM_AND_SOLUTION.md` with th
 
 The normal path is now:
 
-`Phone/System/Boat typed observations → VesselDataHub selection → AnchorWatchNmeaFeedEncoder → independent stream scheduler → bounded latest-per-stream queue → one writer → selected destination`
+`Phone sensors + explicit App calculations → provenance gate → AnchorWatchNmeaFeedEncoder → independent stream scheduler → bounded latest-per-stream queue → one writer → selected destination`
+
+Boat observations still enter `VesselDataHub` for display, anchoring, sailing and reports, but they have no edge into NMEA Output. Output may query the Hub only to find Phone candidates and explicit `APP_DERIVED` results; it never re-encodes the selected Boat value.
 
 For `SAME_AS_INPUT_CONNECTION`, the writer reuses the already-open formal TCP input socket. It never opens a second connection. Each queued batch binds both the publication generation and the input transport generation. Reconnect invalidates the latter; old data is dropped and diagnosed rather than written onto the new socket.
 
@@ -42,14 +44,14 @@ Implemented residual fixes from the audit:
 | Stream | Period | Rate |
 |---|---:|---:|
 | Position | 1000 ms | 1 Hz |
-| Heading | 200 ms | 5 Hz |
-| Motion / ROT / attitude | 500 ms | 2 Hz |
+| Heading | 1000 ms | 1 Hz |
+| Motion / ROT / attitude | 1000 ms | 1 Hz |
 | Pressure | 1000 ms | 1 Hz |
-| Derived wind | 500 ms | 2 Hz |
-| Depth | 1000 ms | 1 Hz |
-| Speed through water | 500 ms | 2 Hz |
+| Anchor Watch `APP_DERIVED` wind | 1000 ms | 1 Hz |
 
-Every stream has its own clock. A failed write waits for the next normal period; no immediate retry loop is allowed. Socket-success counters advance only after actual write/flush succeeds.
+These Phone/App-owned streams share the 1 Hz product cadence. Boat Depth/STW and direct Boat Position/Heading/Motion/Pressure/Wind are deliberately absent from the publisher. Values due on the same tick are encoded as one contiguous payload and use one socket write/flush. A failed write waits for the next fresh period; no immediate retry loop or stale replay is allowed. A write lasting at least 500 ms gets a full one-second recovery window after it returns, preventing queued periods from becoming a catch-up burst. At three seconds a same-input stall closes only the exact current transport generation once; the existing bounded RX reconnect state machine owns recovery. Socket-success counters advance only after actual write/flush succeeds.
+
+NMEA Input and Phone Position Output may run together. Selecting NMEA as the App/Anchor position no longer changes Hub arbitration or disables Phone TX. Position output reads only `VesselPositionRepository.acceptedPhoneFix`; both `SystemLocationRepository` and the encoder reject mock feedback, and the encoder additionally rejects network/coarse providers.
 
 ## D. Same-socket reuse
 
@@ -57,7 +59,8 @@ The App-to-boat path in same-socket mode calls `NmeaConnectionManager.writeExpec
 
 ## E. Automated evidence
 
-- Existing deterministic 10-minute Heading scheduler and real-time loopback soak remain 5 Hz with complete non-blank HDT and ≤400 ms allowed gap.
+- Deterministic and opt-in real-time Heading soaks now specify 1 Hz complete non-blank HDT with a ≤1,200 ms allowed gap. They were updated with the cadence change and remain to be rerun.
+- Cadence policy asserts that healthy writes remain fixed-rate while congested writes cannot produce an immediate catch-up attempt. Backpressure thresholds and exact-generation, single-abort behavior have deterministic JVM regressions; they are written and remain to be run.
 - Old transport generation is rejected after reconnect.
 - TCP input framing reconstructs identical sentence lists across 300 random fragment seeds.
 - Exact and transformed echoes each consume only the number of frames actually written.

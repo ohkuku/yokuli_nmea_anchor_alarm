@@ -1,7 +1,12 @@
 package com.yokuli.anchorwatch.domain.vessel
 
 enum class PublicationPolicy{OFF,BACKUP,ALWAYS}
-enum class NmeaOutputPurpose{BOAT_BUS_INJECTION,CANONICAL_CLIENT_FEED}
+enum class NmeaOutputPurpose{
+    BOAT_BUS_INJECTION,
+    /** Restore-only compatibility value. Live output always normalizes to the
+     * Phone/App-owned BOAT_BUS_INJECTION contract. */
+    CANONICAL_CLIENT_FEED,
+}
 enum class PublisherOwnershipState{STANDBY_EXTERNAL_PRESENT,TAKEOVER_PENDING,PHONE_ACTIVE,SUPPRESSED,SOURCE_CONFLICT,ERROR}
 enum class NmeaStreamReadiness{READY,WAITING_CALIBRATION,WAITING_POSITION,STANDBY,PUBLISHING}
 enum class NmeaSentenceFamily{POSITION,HEADING,MOTION,PRESSURE,DERIVED_WIND,PROPRIETARY_STATUS,CANONICAL_FEED}

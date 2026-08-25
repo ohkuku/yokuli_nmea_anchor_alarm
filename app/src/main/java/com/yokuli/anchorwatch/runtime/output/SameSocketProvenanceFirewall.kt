@@ -9,12 +9,9 @@ import com.yokuli.anchorwatch.domain.vessel.VesselSourceType
 /** Why a value was accepted or rejected for the current Boat input socket. */
 enum class SameSocketProvenanceReason {
     LOCAL_PHONE_SOURCE,
-    LOCAL_ONLY_DERIVED,
     BOAT_INPUT_SOURCE,
     SAME_TRANSPORT_BOAT_SOURCE,
     PHONE_TX_ECHO,
-    DERIVED_FROM_BOAT_INPUT,
-    DERIVED_ANCESTRY_UNKNOWN,
     NON_LOCAL_SOURCE,
 }
 
@@ -24,12 +21,14 @@ data class SameSocketProvenanceDecision(
 )
 
 /**
- * Destination-specific provenance firewall.
+ * Product output provenance firewall. The historical type name predates the
+ * strict all-transport source boundary.
  *
- * SAME_AS_INPUT is a local sensor injection path, not a vessel-data fan-out.
- * A value is allowed only when its complete ancestry is demonstrably local.
- * Unknown derived ancestry is rejected deliberately: a missing proof must
- * never become a feedback loop on a bidirectional 0183/N2K gateway.
+ * Every transport is a Phone/App sensor injection path, never a vessel-data
+ * fan-out. Direct Boat and TX-echo observations are rejected. Local Phone
+ * measurements require demonstrably local ancestry. App calculations that
+ * are intentionally publishable are admitted separately by the encoder only
+ * with explicit APP_DERIVED identity and derivation provenance.
  */
 object SameSocketProvenanceFirewall {
     private val localClasses=setOf(
@@ -54,16 +53,11 @@ object SameSocketProvenanceFirewall {
             return denied(if(sameTransport)SameSocketProvenanceReason.SAME_TRANSPORT_BOAT_SOURCE else SameSocketProvenanceReason.BOAT_INPUT_SOURCE)
         }
         if(observation.sourceClass in localClasses){
-            return when(val detail=observation.provenanceDetail){
+            return when(observation.provenanceDetail){
                 is VesselProvenance.Nmea->denied(SameSocketProvenanceReason.BOAT_INPUT_SOURCE)
-                is VesselProvenance.Derived->derivedDecision(detail)
+                is VesselProvenance.Derived->denied(SameSocketProvenanceReason.NON_LOCAL_SOURCE)
                 is VesselProvenance.PhoneSensor,null->allowed(SameSocketProvenanceReason.LOCAL_PHONE_SOURCE)
             }
-        }
-        if(observation.sourceClass in setOf(VesselSourceClass.DERIVED_WATER,VesselSourceClass.DERIVED_GROUND)){
-            val derived=observation.provenanceDetail as? VesselProvenance.Derived
-                ?:return denied(SameSocketProvenanceReason.DERIVED_ANCESTRY_UNKNOWN)
-            return derivedDecision(derived)
         }
         return denied(SameSocketProvenanceReason.NON_LOCAL_SOURCE)
     }
@@ -90,15 +84,6 @@ object SameSocketProvenanceFirewall {
         val profileMatches=profileId==null||transportProfileId==null||transportProfileId==profileId
         val generationMatches=generation==null||connectionGeneration==null||connectionGeneration==generation
         return profileMatches&&generationMatches
-    }
-    private fun derivedDecision(derived:VesselProvenance.Derived):SameSocketProvenanceDecision{
-        if(derived.inputs.isEmpty())return denied(SameSocketProvenanceReason.DERIVED_ANCESTRY_UNKNOWN)
-        if(derived.inputs.any{it.sourceType==VesselSourceType.PHONE_TX_ECHO})return denied(SameSocketProvenanceReason.PHONE_TX_ECHO)
-        if(derived.inputs.any{it.sourceType==VesselSourceType.NMEA_INPUT})return denied(SameSocketProvenanceReason.DERIVED_FROM_BOAT_INPUT)
-        // A nested App-derived identity does not carry its own dependency graph
-        // in the current model. Reject it rather than assume safety.
-        if(derived.inputs.any{it.sourceType!=VesselSourceType.PHONE_SENSOR})return denied(SameSocketProvenanceReason.DERIVED_ANCESTRY_UNKNOWN)
-        return allowed(SameSocketProvenanceReason.LOCAL_ONLY_DERIVED)
     }
     private fun allowed(reason:SameSocketProvenanceReason)=SameSocketProvenanceDecision(true,reason)
     private fun denied(reason:SameSocketProvenanceReason)=SameSocketProvenanceDecision(false,reason)

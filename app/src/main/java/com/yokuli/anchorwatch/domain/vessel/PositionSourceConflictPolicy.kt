@@ -16,16 +16,12 @@ enum class PositionSourceAvailabilityReason {
 }
 
 object PositionSourceConflictPolicy {
-    fun nmeaPositionAvailability(state:PositionSourceConflictState)=when{
-        state.phonePositionOutputEnabled->PositionSourceAvailabilityReason.PHONE_POSITION_OUTPUT_ACTIVE
-        else->PositionSourceAvailabilityReason.AVAILABLE
-    }
+    /** NMEA can remain the App/Anchor input while an independently acquired,
+     * non-mock Android fix is shared as Phone output. Output source provenance,
+     * not the App's selected presentation source, prevents feedback. */
+    fun nmeaPositionAvailability(@Suppress("UNUSED_PARAMETER") state:PositionSourceConflictState)=PositionSourceAvailabilityReason.AVAILABLE
 
-    fun phonePositionOutputAvailability(state:PositionSourceConflictState)=when{
-        state.activeAnchorGpsSource==GpsDataSource.NMEA->PositionSourceAvailabilityReason.ACTIVE_ANCHOR_SOURCE_LOCKED
-        state.selectedGpsSource==GpsDataSource.NMEA->PositionSourceAvailabilityReason.NMEA_POSITION_SOURCE_ACTIVE
-        else->PositionSourceAvailabilityReason.AVAILABLE
-    }
+    fun phonePositionOutputAvailability(@Suppress("UNUSED_PARAMETER") state:PositionSourceConflictState)=PositionSourceAvailabilityReason.AVAILABLE
 
     fun canSelectNmeaPosition(state:PositionSourceConflictState)=nmeaPositionAvailability(state)==PositionSourceAvailabilityReason.AVAILABLE
     fun canEnablePhonePositionOutput(state:PositionSourceConflictState)=phonePositionOutputAvailability(state)==PositionSourceAvailabilityReason.AVAILABLE

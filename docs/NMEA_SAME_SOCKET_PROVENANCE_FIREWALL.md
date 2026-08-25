@@ -2,74 +2,73 @@
 
 ## Product invariant
 
-`SAME_AS_INPUT_CONNECTION` is **Local Sensor Injection**. It reuses the one
-already-open full-duplex Boat TCP Socket and never creates a second Boat
-connection. It is not a unified vessel repeater.
+Every NMEA Output destination is **Phone/App Sensor Injection**. Transport
+choice changes only where bytes go. It never changes which sources are
+eligible and never turns Anchor Watch into a Boat-data repeater.
 
-Independent destinations (`DEDICATED_TCP`, `TCP_SERVER`, UDP unicast and UDP
-broadcast) are **Unified Vessel Stream / fan-out** destinations. They may encode
-the source selected by `VesselDataHub`, including Boat input and App-derived
-values, because they do not write those values back into their source Socket.
+`SAME_AS_INPUT_CONNECTION` reuses the one already-open full-duplex Boat TCP
+Socket and never creates a second Boat connection. Explicit advanced
+destinations (`DEDICATED_TCP`, `TCP_SERVER`, UDP unicast and UDP broadcast)
+receive exactly the same Phone/App-owned feed.
 
-## Same-input decision
+## All-transport source decision
 
-A same-input value is accepted only when the complete provenance available to
-the App proves that it is local:
+A directly measured value is accepted only when its source proves that it is
+owned by the Phone:
 
-- Phone GNSS
-- calibrated Phone vessel/device heading
-- Phone IMU
-- Phone barometer
-- an App-derived value whose complete direct input list contains only Phone
-  sensor identities
+- real, non-mock Android GNSS;
+- calibrated Phone vessel/device heading;
+- Phone IMU;
+- Phone barometer;
+- an explicit `APP_DERIVED` true-wind result computed by Anchor Watch.
 
 It is rejected when it is:
 
 - `BOAT_NMEA`, including an AUTO-selected Boat candidate;
 - `PHONE_TX_ECHO`;
-- derived from any `NMEA_INPUT` identity;
-- derived from mixed Boat/Phone inputs;
-- nested App-derived data whose ancestry is unavailable;
-- Demo, unknown or another non-local source.
+- Demo, mock, network/coarse, unknown or another non-local source.
 
-Unknown ancestry is rejected conservatively. A freshly generated App sentence
-does not prove that the value is safe; the inputs that produced the value are
-the authority.
+Direct Boat data is never eligible. A true-wind result is eligible only when
+the output observation itself has `APP_DERIVED` identity and explicit
+`VesselProvenance.Derived`; this permits a value Anchor Watch actually
+calculated, while a Boat MWD/MWV/VWT value remains input-only. Any returned TX
+echo is quarantined and direct Boat input can never become the next output.
 
 ## Transport generation
 
-Boat identities carry input profile and connection generation. Output batches
-also carry the input generation that existed when they were created. The
-writer rejects a batch if reconnect N+1 has replaced generation N. The
-same-input provenance policy rejects Boat input regardless, and distinguishes a
-current-transport Boat source in diagnostics.
+Boat identities carry input profile and connection generation. Same-input
+output batches also carry the input generation that existed when they were
+created. The writer rejects a batch if reconnect N+1 has replaced generation
+N. The provenance policy rejects Boat input regardless of destination and
+distinguishes a current-transport Boat source in diagnostics.
 
 ## Stream rules
 
 ### Position
 
-RMC/GGA/VTG/ZDA are generated directly from one accepted Android
+RMC/GGA/VTG/ZDA are generated directly from one accepted real Android GNSS
 `NavigationFix`. Latitude, longitude, SOG, COG, UTC, altitude and accuracy are
 never assembled from independently selected vessel observations. Boat SOG/COG
-therefore cannot leak into a Phone RMC or VTG.
+therefore cannot leak into a Phone RMC or VTG. Selecting NMEA as the App or
+Anchor position source does not change the independent Phone output source.
 
 ### Heading
 
-Same-input publication searches explicitly for a fresh Phone vessel/device
-heading candidate. A Raymarine/KC-2W Heading may create a visible source
-conflict, but does not suppress or replace the Phone HDT/HDG heartbeat.
+Publication searches explicitly for a fresh calibrated Phone vessel/device
+heading candidate on every transport. A Raymarine/KC-2W Heading may create a
+visible source conflict, but does not suppress or replace the Phone HDT/HDG
+heartbeat.
 
 ### Motion and pressure
 
-Same-input ROT/heel/pitch use Phone IMU only. Pressure uses Phone barometer
-only. External values remain available to VesselDataHub and independent feeds.
+ROT/heel/pitch use Phone IMU only. Pressure uses Phone barometer only. External
+values remain available to `VesselDataHub` but never enter any output feed.
 
 ### Depth, STW and wind
 
-Depth and STW are Boat metrics and are never injected back into the input
-Socket. Derived wind is allowed only if every declared dependency is a local
-Phone sensor. Boat apparent wind, heading or speed anywhere in the ancestry
-blocks MWD/MWV/VWT on the same Socket.
+Depth and STW are Boat metrics and are absent from the publisher on every
+transport. Direct Boat wind is also absent. Anchor Watch may publish only a
+true-wind result carrying explicit App-calculation identity and provenance.
 
 ## Echo handling
 
@@ -80,16 +79,21 @@ if one reaches the provenance boundary, is denied explicitly.
 
 ## Publication ownership
 
-Normal same-input Phone streams use `ALWAYS`, not `BACKUP`. A stream publishes
-while it is enabled, its local sample is fresh/valid, calibration is valid and
-the transport is writable. External-source presence is diagnostic only. Stale
-or invalid local evidence still suppresses the individual stream with an
-explicit reason.
+Normal Phone/App streams use `ALWAYS`, not `BACKUP`. A stream publishes while
+its eligible local/App sample is fresh and valid, required calibration is
+valid, and the transport is writable. External-source presence is diagnostic
+only. Stale or invalid eligible evidence suppresses the individual stream with
+an explicit reason.
+
+Starting output does not change `VesselDataHub` arbitration and does not block
+an Anchor or Trip from using NMEA position. `SystemLocationRepository` rejects
+Android mock locations, while the output boundary also requires non-mock GNSS,
+so the global NMEA GPS proxy cannot loop back as Phone GNSS output.
 
 ## External uncertainty
 
 The software boundary prevents an avoidable App feedback loop. It does not yet
-prove how KC-2W firmware maps NMEA0183 talkers to N2K source addresses, or how
+prove how KC-2W firmware maps NMEA 0183 talkers to N2K source addresses, or how
 Raymarine MDS and Simrad IS42 select competing physical N2K sources. Those
 behaviours require one controlled hardware test with App generated/written
 counters, KC-2W Data List and IS42 N2K diagnostics recorded before and after

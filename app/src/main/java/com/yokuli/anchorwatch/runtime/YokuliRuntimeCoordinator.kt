@@ -48,12 +48,6 @@ import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
-import com.yokuli.anchorwatch.data.vessel.withPolicy
-import com.yokuli.anchorwatch.data.vessel.effectivePositionPolicy
-import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
-import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
-import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictPolicy
-import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictState
 import com.yokuli.anchorwatch.runtime.output.PhonePositionNmeaOutputRuntime
 import com.yokuli.anchorwatch.runtime.trip.TripRuntime
 import com.yokuli.anchorwatch.runtime.sonar.SonarRuntime
@@ -108,7 +102,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private var scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private var stateReady=CompletableDeferred<Unit>();private val alarmTestGeneration=AtomicLong(0L);private val acceptedIncidentBatch=AtomicLong(0L);private val pendingCommands=AtomicInteger(0);private val audioArbiter=AlarmAudioArbiter();private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;private var lastSonarContinuity=SonarSurveyContinuityState.IDLE;@Volatile private var idleStopJob:Job?=null;@Volatile private var armPending=false;@Volatile private var alarmTestActive=false;@Volatile private var demoMode=false;@Volatile private var appLanguage=AppLanguage.ENGLISH;@Volatile private var started=false
 
  private data class SourcedFix(val source:GpsDataSource,val fix:NavigationFix)
- private data class PhoneOutputConfiguration(val output:NmeaDeviceOutputSettings,val selected:GpsDataSource,val activeSource:GpsDataSource?,val readiness:PhoneVesselOutputReadiness)
+ private data class PhoneOutputConfiguration(val output:NmeaDeviceOutputSettings,val readiness:PhoneVesselOutputReadiness)
  @Synchronized fun start(host:RuntimeServiceHost){
   // The coordinator is application-scoped while Android Service instances are
   // not. Pause/idle may destroy the Service and a later user action can create
@@ -217,9 +211,9 @@ class YokuliRuntimeCoordinator @Inject constructor(
   }}
   scope.launch{
    startupReady.await();outputSettings.activateAutoStart()
-   combine(outputSettings.settings,preferences.settings,dao.sessions(),vesselMountCalibration.calibration,vesselAttitude.mountState){output,settings,sessions,calibration,mount->
-    PhoneOutputConfiguration(output,settings.gpsDataSource,sessions.firstOrNull{it.active}?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()},PhoneVesselOutputReadinessPolicy.evaluate(calibration,mount))
-   }.distinctUntilChanged().collect{request->configurePhoneOutput(request.output,request.selected,request.activeSource,request.readiness)}
+   combine(outputSettings.settings,vesselMountCalibration.calibration,vesselAttitude.mountState){output,calibration,mount->
+    PhoneOutputConfiguration(output,PhoneVesselOutputReadinessPolicy.evaluate(calibration,mount))
+   }.distinctUntilChanged().collect{request->configurePhoneOutput(request.output,request.readiness)}
   }
   scope.launch{
    startupReady.await()
@@ -266,13 +260,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
    RuntimeCommand.PauseWatch->launchCommand{anchorActor.execute{conditionRuntime.flush();refreshSessionFromDatabase();pause();conditionRuntime.sync(activeSession())};clearConditionSources()}
    RuntimeCommand.ResumeWatch->launchCommand{anchorActor.execute{resume();conditionRuntime.sync(activeSession())}}
    is RuntimeCommand.SwitchWatchGpsSource->launchCommand{anchorActor.execute{
-    val output=outputSettings.settings.first()
-    if(command.source==GpsDataSource.NMEA&&output.phonePositionPublishing){
-     notifySeparate("GPS source not changed","Turn off Phone Position output before using NMEA Position for this anchor session.",true)
-    }else{
-     switchPausedPositionSource(command.source)
-     conditionRuntime.sync(activeSession())
-    }
+    switchPausedPositionSource(command.source)
+    conditionRuntime.sync(activeSession())
    }}
    RuntimeCommand.LiftAnchor->launchCommand{
     val demoSurvey=anchorRuntime.activeSession()?.let{it.positionSource==GpsDataSource.DEMO.name}==true&&sonarRuntime.status.value.activeSurvey!=null
@@ -324,10 +313,10 @@ class YokuliRuntimeCoordinator @Inject constructor(
    RuntimeCommand.StopAlarmTest->{alarmTestGeneration.incrementAndGet();setAlarmSource(ConditionAlarmSource.ALARM_TEST,false);launchCommand{stopAlarmTest()}}
    is RuntimeCommand.SetSharing->launchCommand{
     val current=preferences.settings.first();if(current.nmeaSharingEnabled)preferences.save(current.copy(nmeaSharingEnabled=false))
-    notifySeparate("NMEA Sharing moved","Use Data → NMEA output. One canonical feed now owns every output destination; the old parallel sharing publisher cannot be started.",false)
+    notifySeparate("NMEA Sharing moved","Use Data → NMEA output. One Phone/App-owned feed now owns every output destination; the old parallel sharing publisher cannot be started.",false)
     refreshNotification();releaseIfIdle()
    }
-   RuntimeCommand.RefreshPhoneSensorOutput->launchCommand{val settings=preferences.settings.first();configurePhoneOutput(outputSettings.settings.first(),settings.gpsDataSource,anchorRuntime.activeSession()?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()})}
+   RuntimeCommand.RefreshPhoneSensorOutput->launchCommand{configurePhoneOutput(outputSettings.settings.first())}
    is RuntimeCommand.StartTrip->launchCommand{
     if(preferences.settings.first().demoMode)notifySeparate("Trip Watch not started","Developer Demo mode simulates Anchor Watch only. Disable Demo mode before recording a real Trip.",true)
     else if(anchorRuntime.activeSession()!=null)notifySeparate("Trip Watch not started","Lift the current anchor before starting Trip Watch.",true)
@@ -583,22 +572,27 @@ class YokuliRuntimeCoordinator @Inject constructor(
   if(!result.started)notifySeparate(result.title?:"Sonar survey not started",result.message?:"Sonar runtime rejected the request.",true)
   refreshNotification()
  }
- private suspend fun configurePhoneOutput(requested:NmeaDeviceOutputSettings,selected:GpsDataSource,activeSource:GpsDataSource?,knownReadiness:PhoneVesselOutputReadiness?=null){
+ private suspend fun configurePhoneOutput(requested:NmeaDeviceOutputSettings,knownReadiness:PhoneVesselOutputReadiness?=null){
   val appSettings=preferences.settings.first()
   if(!requested.anyEnabled){phonePositionOutput.configure(requested,appSettings.profile);nmeaRuntime.releaseIfUnowned();return}
   val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(vesselMountCalibration.calibration.first(),vesselAttitude.mountState.first())
-  if(!readiness.ready){
+  if(!readiness.ready&&!phonePositionOutput.enabled){
    val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.save(stopped)
    notifySeparate("NMEA output blocked","Complete vessel zero, confirm the current phone mount, and align heading for this calibration before formal sharing.",true);return
+  }
+  if(!readiness.ready&&phonePositionOutput.enabled){
+   // This session already passed the formal Start gate. Keep the transport and
+   // independent safe streams alive; the publisher pauses Heading/Motion until
+   // the mounted-vessel frame becomes trustworthy again.
+   phonePositionOutput.configure(requested,appSettings.profile)
+   notifySeparate("Phone vessel output degraded","Phone Heading and Motion are paused because the vessel mount is not currently trusted. Phone GPS and pressure continue without reconnecting the NMEA server.",true)
+   refreshNotification();return
   }
   if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requested,appSettings.profile)){
    val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.save(stopped)
    notifySeparate("NMEA output endpoint blocked",NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE,true);return
   }
-  var effective=requested
-  val phonePositionPublishing=requested.phonePositionPublishing
-  val allowed=PositionSourceConflictPolicy.canEnablePhonePositionOutput(PositionSourceConflictState(phonePositionPublishing,selected,activeSource))
-  if(phonePositionPublishing&&!allowed){effective=effective.withPolicy("position",PublicationPolicy.OFF);outputSettings.save(effective);notifySeparate("Phone GPS output blocked","NMEA Position is the App GPS source. Other enabled phone vessel sensors may continue.",true)}
+  val effective=requested
   if(effective.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
    val destinationValid=if(effective.transportMode==NmeaOutputTransportMode.TCP_SERVER)effective.outputPort in 1024..65535 else effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
    if(!destinationValid){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("NMEA output needs an endpoint",if(effective.transportMode==NmeaOutputTransportMode.TCP_SERVER)"Enter a TCP server listening port from 1024 to 65535." else "Enter a valid dedicated output host and port.",true);return}

@@ -9,8 +9,6 @@ import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.data.vessel.*
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.vessel.*
-import com.yokuli.anchorwatch.location.PhoneHeadingRepository
-import com.yokuli.anchorwatch.location.PhoneHeadingSample
 import com.yokuli.anchorwatch.location.vessel.*
 import com.yokuli.anchorwatch.runtime.*
 import javax.inject.Inject
@@ -22,8 +20,8 @@ import kotlinx.coroutines.flow.*
 typealias PhonePositionOutputStatus=NmeaTxStatus
 
 /** The only configuration visible to the live publisher. Legacy BACKUP values
- * are normalized to ALWAYS before this boundary. Destination semantics decide
- * whether the feed is local injection or unified fan-out. */
+ * are normalized to ALWAYS before this boundary. A destination changes only
+ * where the Phone/App-owned bytes go, never which data sources may publish. */
 data class NmeaPublisherConfig(
     val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
     val host:String="",
@@ -43,8 +41,8 @@ data class NmeaPublisherConfig(
     ).publisherConfiguration()
     companion object{
         fun from(value:NmeaDeviceOutputSettings):NmeaPublisherConfig{
-            val canonical=value.publisherConfiguration()
-            return NmeaPublisherConfig(canonical.transportMode,canonical.outputHost.trim(),canonical.outputPort,canonical.phoneHeadingFormat,canonical.includePressure,canonical.includeDerivedWind,canonical.transportConfigured,canonical.publicationEnabled)
+            val productFeed=value.publisherConfiguration()
+            return NmeaPublisherConfig(productFeed.transportMode,productFeed.outputHost.trim(),productFeed.outputPort,productFeed.phoneHeadingFormat,productFeed.includePressure,productFeed.includeDerivedWind,productFeed.transportConfigured,productFeed.publicationEnabled)
         }
     }
 }
@@ -59,17 +57,22 @@ internal class LatestPerStreamQueue<T>(private val key:(T)->String){
     @Synchronized fun size()=values.size
 }
 
-object SelectedExternalSourcePresence{
-    fun present(observation:VesselObservation<*>,now:Long,maxAge:Long,acceptedSentenceTypes:Set<String>?=null):Boolean{
-        if(observation.value==null||observation.sourceClass!=VesselSourceClass.BOAT_NMEA||observation.freshness!=VesselDataFreshness.FRESH)return false
-        if(observation.receivedElapsedRealtime?.let{now-it in 0L..maxAge}!=true)return false
-        return acceptedSentenceTypes==null||observation.sourceIdentity?.sentenceType?.uppercase() in acceptedSentenceTypes
+/** A slow gateway must not trigger a catch-up burst when a blocked write
+ * finally returns. Healthy writes keep fixed-rate 1 Hz starts; a write that
+ * crossed the congestion boundary gets one full recovery period after it
+ * completes. Pending stream slots continue to collapse to their newest value
+ * while the actor waits. */
+object NmeaWireAttemptCadence{
+    const val PERIOD_MILLIS=1_000L
+    fun nextAllowed(startedAt:Long,completedAt:Long):Long{
+        val duration=(completedAt-startedAt).coerceAtLeast(0L)
+        return if(duration>=com.yokuli.anchorwatch.data.nmea.output.NmeaWriteBackpressurePolicy.CONGESTED_AFTER_MILLIS)completedAt+PERIOD_MILLIS else startedAt+PERIOD_MILLIS
     }
 }
 
-/** The single normal-product NMEA feed engine. Acquisition stays independent
- * from publication. SAME_AS_INPUT is local-only injection; independent
- * destinations receive the selected unified vessel state. */
+/** The single Phone/App-owned NMEA feed engine. Acquisition stays independent
+ * from publication. Every transport receives the same locally-owned sensor and
+ * App-derived values; transport choice can never enable Boat-data forwarding. */
 @Singleton
 class AnchorWatchNmeaPublisher @Inject constructor(
     private val outputConnection:NmeaDeviceOutputConnection,
@@ -92,24 +95,57 @@ class AnchorWatchNmeaPublisher @Inject constructor(
     private val writerWake=Channel<Unit>(capacity=Channel.CONFLATED)
     val status=outputConnection.status
     init{
-        scope.launch{combine(vesselAttitude.mountState,mountCalibration.calibration){mount,value->mount to value}.collect{(mount,value)->mountState=mount;calibration=value;enforceProductionReadiness()}}
-        // One socket writer actor, with one latest-value slot per stream. A 5 Hz
-        // heading heartbeat may replace older heading snapshots while a fragile
-        // gateway is blocked, but it can never evict the independent 1 Hz
-        // position slot. No stream keeps historical batches for reconnect replay.
-        scope.launch{for(ignored in writerWake){
-            while(isActive){
-                val batch=pending.poll()?:break
-                if(!sessionGate.accepts(batch.generation)){outputConnection.recordDropped(batch.stream);continue}
-                outputConnection.write(batch.profile,batch.sentences,batch.types,batch.stream,batch.sequence,batch.generation,batch.sourceStableKey,path=batch.path,expectedInputTransportGeneration=batch.inputTransportGeneration)
+        scope.launch{combine(vesselAttitude.mountState,mountCalibration.calibration){mount,value->mount to value}.collect{(mount,value)->mountState=mount;calibration=value}}
+        // One socket writer actor, with one latest-value slot per stream. Every
+        // stream has the same 1 Hz product cadence. All values due on that tick
+        // are drained into one wire write/flush, while a blocked gateway can
+        // retain only the newest value for each stream and never a replay log.
+        scope.launch{
+            var nextWireAttemptElapsed=0L
+            for(ignored in writerWake){
+                val wait=(nextWireAttemptElapsed-SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                if(wait>0)delay(wait)
+                // Drain only after the cadence wait, so any values accumulated
+                // during congestion are replaced in-place before encoding the
+                // next physical wire payload. There is no catch-up replay.
+                val drained=buildList{while(true){val value=pending.poll()?:break;add(value)}}
+                if(drained.isEmpty())continue
+                val currentInputGeneration=outputConnection.currentInputTransportGeneration()
+                val deliverable=drained.filter{batch->
+                    val accepted=sessionGate.accepts(batch.generation)&&
+                        (batch.inputTransportGeneration==null||batch.inputTransportGeneration==currentInputGeneration)
+                    if(!accepted)outputConnection.recordDropped(batch.stream,"Queued NMEA value expired before the next 1 Hz wire batch.")
+                    accepted
+                }
+                if(deliverable.isEmpty())continue
+                val first=deliverable.first();val writeStarted=SystemClock.elapsedRealtime()
+                val success=outputConnection.write(
+                    input=first.profile,
+                    sentences=deliverable.flatMap{it.sentences},
+                    sentenceTypes=deliverable.flatMap{it.types}.toSet(),
+                    logicalStream=null,
+                    generationSequence=null,
+                    generation=first.generation,
+                    sourceStableKey=deliverable.mapNotNull{it.sourceStableKey}.distinct().joinToString("+").takeIf{it.isNotBlank()},
+                    path=first.path,
+                    expectedInputTransportGeneration=first.inputTransportGeneration,
+                )
+                val writeCompleted=SystemClock.elapsedRealtime()
+                nextWireAttemptElapsed=NmeaWireAttemptCadence.nextAllowed(writeStarted,writeCompleted)
+                if(!success)deliverable.forEach{outputConnection.recordDropped(it.stream,"The coalesced 1 Hz socket batch was not written.")}
             }
-        }}
+        }
         scope.launch{while(isActive){delay(50L);publishDue(SystemClock.elapsedRealtime())}}
     }
 
     @Synchronized fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile=inputProfile){
         val requested=NmeaPublisherConfig.from(value);val requestedSettings=requested.asOutputSettings()
-        val safe=if(requested.running&&(!PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState).ready||NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input)))requested.copy(publicationEnabled=false) else requested
+        // Readiness is a hard gate for beginning a formal publication session.
+        // Once that session exists, a transient mount warning degrades only the
+        // affected local streams below; it must not flap the shared socket or
+        // make independent Phone GNSS/pressure data disappear.
+        val readinessBlocksNewSession=FormalOutputSessionReadinessPolicy.blocksStart(requested.running,enabled,PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState))
+        val safe=if(readinessBlocksNewSession||requested.running&&NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input))requested.copy(publicationEnabled=false) else requested
         if(safe==config&&input==inputProfile&&enabled==safe.running)return
         pending.clear().forEach{outputConnection.recordDropped(it.stream)}
         val generation=if(safe.running)sessionGate.start()else sessionGate.stop()
@@ -119,7 +155,6 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=true,needsNmeaTransport=safe.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=true,needsPhoneMotion=true,needsPhonePressure=safe.includePressure))
         else resources.release(RuntimeOwner.PHONE_NMEA_OUTPUT)
     }
-    @Synchronized private fun enforceProductionReadiness(){if(enabled&&!PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState).ready)configure(config.copy(publicationEnabled=false).asOutputSettings(),inputProfile)}
     @Synchronized fun configure(value:Boolean)=configure(NmeaDeviceOutputSettings(transportConfigured=value,publicationEnabled=value))
 
     private fun publishDue(now:Long){
@@ -127,21 +162,29 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         outputConnection.refreshTransportState()
         val inputTransportGeneration=outputConnection.currentInputTransportGeneration()
         val snapshot=vesselDataHub.snapshot.value;val phoneFix=vesselPositionRepository.acceptedPhoneFix.value
-        heartbeat.due(now).forEach{stream->val batch=encoder.encode(stream,snapshot,configured.asOutputSettings(),now,phoneFix,inputTransportGeneration,inputProfile.stableId);val name=stream.name
+        val prepared=heartbeat.due(now).mapNotNull{stream->
+            val name=stream.name
+            val runtimeSuppression=PhoneOwnedRuntimeSafety.suppression(configured.transportMode,stream,mountState)
+            if(runtimeSuppression!=null){
+                outputConnection.recordDecision(name,PublicationPolicy.ALWAYS,PublicationDecision(false,PublisherOwnershipState.SUPPRESSED),false,NmeaStreamReadiness.WAITING_CALIBRATION)
+                outputConnection.recordSuppressed(name,runtimeSuppression)
+                return@mapNotNull null
+            }
+            val batch=encoder.encode(stream,snapshot,configured.asOutputSettings(),now,phoneFix,inputTransportGeneration,inputProfile.stableId)
             val ready=batch.sentences.isNotEmpty();val ownership=when{ready&&batch.sourceConflict->PublisherOwnershipState.SOURCE_CONFLICT;ready->PublisherOwnershipState.PHONE_ACTIVE;else->PublisherOwnershipState.SUPPRESSED}
             outputConnection.recordDecision(name,PublicationPolicy.ALWAYS,PublicationDecision(ready,ownership),ready,NmeaStreamReadinessPolicy.sensor(ready))
-            if(ready)write(generation,name,batch.sentences,now,batch.sourceStableKey,inputTransportGeneration)else outputConnection.recordSuppressed(name,batch.suppressionReason?:"NO_COMPLETE_VALUE")
+            if(ready)prepare(generation,name,batch.sentences,now,batch.sourceStableKey,inputTransportGeneration)else{outputConnection.recordSuppressed(name,batch.suppressionReason?:"NO_COMPLETE_VALUE");null}
         }
+        prepared.forEach{batch->pending.offer(batch)?.let{outputConnection.recordDropped(it.stream,"A newer 1 Hz value replaced this blocked stream batch.")}}
+        if(prepared.isNotEmpty())writerWake.trySend(Unit)
     }
 
-    private fun write(generation:Long,stream:String,sentences:List<String>,now:Long,sourceStableKey:String?,inputTransportGeneration:Long){
-        if(sentences.isEmpty()||!sessionGate.accepts(generation))return
+    private fun prepare(generation:Long,stream:String,sentences:List<String>,now:Long,sourceStableKey:String?,inputTransportGeneration:Long):OutputBatch?{
+        if(sentences.isEmpty()||!sessionGate.accepts(generation))return null
         val transportGeneration=inputTransportGeneration.takeIf{config.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION}
-        val path=if(config.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)com.yokuli.anchorwatch.data.nmea.output.NmeaPacketPath.LOCAL_SENSOR_INJECTION else com.yokuli.anchorwatch.data.nmea.output.NmeaPacketPath.CANONICAL_PUBLISHER
-        val sequence=outputConnection.recordGenerated(stream,sentences,now,generation,sourceStableKey,path,inputTransportGeneration=transportGeneration)?:return
-        val batch=OutputBatch(generation,inputProfile,stream,sentences,sentences.mapNotNull(mux::sentenceType).toSet(),sequence,sourceStableKey,transportGeneration,path)
-        pending.offer(batch)?.let{outputConnection.recordDropped(it.stream)}
-        writerWake.trySend(Unit)
+        val path=com.yokuli.anchorwatch.data.nmea.output.NmeaPacketPath.LOCAL_SENSOR_INJECTION
+        val sequence=outputConnection.recordGenerated(stream,sentences,now,generation,sourceStableKey,path,inputTransportGeneration=transportGeneration)?:return null
+        return OutputBatch(generation,inputProfile,stream,sentences,sentences.mapNotNull(mux::sentenceType).toSet(),sequence,sourceStableKey,transportGeneration,path)
     }
 
     fun testOutput(value:NmeaDeviceOutputSettings=config.asOutputSettings(),input:ConnectionProfile=inputProfile):Boolean{
@@ -158,20 +201,35 @@ class AnchorWatchNmeaPublisher @Inject constructor(
 /** Source-compatible name retained while callers and backup DTOs migrate. */
 typealias PhonePositionNmeaOutputRuntime=AnchorWatchNmeaPublisher
 
+object FormalOutputSessionReadinessPolicy{
+    fun blocksStart(requestedRunning:Boolean,currentlyEnabled:Boolean,readiness:PhoneVesselOutputReadiness)=requestedRunning&&!currentlyEnabled&&!readiness.ready
+}
+
+/** Runtime degradation is stream-local. It is intentionally separate from the
+ * formal Start gate so a suspect handset heading cannot flap GPS/pressure or
+ * the shared TCP transport. */
+object PhoneOwnedRuntimeSafety{
+    fun suppression(mode:NmeaOutputTransportMode,stream:AnchorWatchNmeaStream,mountState:PhoneVesselMountState):String?{
+        @Suppress("UNUSED_VARIABLE") val destinationOnly=mode
+        if(stream !in setOf(AnchorWatchNmeaStream.HEADING,AnchorWatchNmeaStream.MOTION))return null
+        if(mountState==PhoneVesselMountState.VESSEL_MOUNTED)return null
+        return if(mountState==PhoneVesselMountState.MOUNT_SUSPECT)"MOUNT_SUSPECT" else "PHONE_NOT_MOUNTED"
+    }
+}
+
 fun NmeaDeviceOutputSettings.publisherConfiguration():NmeaDeviceOutputSettings{
-    val localInjection=transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
     return copy(
-    purpose=if(localInjection)NmeaOutputPurpose.BOAT_BUS_INJECTION else NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
-    phonePositionEnabled=localInjection,
-    phoneHeadingEnabled=localInjection,
-    phoneMotionEnabled=localInjection,
-    phonePressureEnabled=localInjection&&includePressure,
+    purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+    phonePositionEnabled=true,
+    phoneHeadingEnabled=true,
+    phoneMotionEnabled=true,
+    phonePressureEnabled=includePressure,
     proprietaryStatusEnabled=false,
-    positionPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-    headingPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-    motionPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-    pressurePolicy=if(localInjection&&includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-    derivedWindPolicy=if(localInjection&&includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    positionPolicy=PublicationPolicy.ALWAYS,
+    headingPolicy=PublicationPolicy.ALWAYS,
+    motionPolicy=PublicationPolicy.ALWAYS,
+    pressurePolicy=if(includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    derivedWindPolicy=if(includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     autoStartOutput=false,
 )
 }

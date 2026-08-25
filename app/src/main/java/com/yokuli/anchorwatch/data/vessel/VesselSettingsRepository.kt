@@ -75,7 +75,7 @@ data class NmeaDeviceOutputSettings(
      * starts output. This prevents a restored Service from silently resuming TX.
      */
     val publicationEnabled:Boolean=false,
-    val purpose:NmeaOutputPurpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
+    val purpose:NmeaOutputPurpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
     val autoStartOutput:Boolean=false,
     val includePressure:Boolean=true,
     val includeDerivedWind:Boolean=true,
@@ -86,9 +86,8 @@ val NmeaDeviceOutputSettings.effectivePositionPolicy get()=positionPolicy.takeIf
 val NmeaDeviceOutputSettings.effectiveHeadingPolicy get()=headingPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneHeadingEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
 val NmeaDeviceOutputSettings.effectiveMotionPolicy get()=motionPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneMotionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
 val NmeaDeviceOutputSettings.effectivePressurePolicy get()=pressurePolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phonePressureEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
-val NmeaDeviceOutputSettings.anyStreamSelected:Boolean get()=purpose==NmeaOutputPurpose.CANONICAL_CLIENT_FEED||effectivePositionPolicy!=PublicationPolicy.OFF||effectiveHeadingPolicy!=PublicationPolicy.OFF||effectiveMotionPolicy!=PublicationPolicy.OFF||effectivePressurePolicy!=PublicationPolicy.OFF||derivedWindPolicy!=PublicationPolicy.OFF||proprietaryStatusEnabled
+val NmeaDeviceOutputSettings.anyStreamSelected:Boolean get()=effectivePositionPolicy!=PublicationPolicy.OFF||effectiveHeadingPolicy!=PublicationPolicy.OFF||effectiveMotionPolicy!=PublicationPolicy.OFF||effectivePressurePolicy!=PublicationPolicy.OFF||derivedWindPolicy!=PublicationPolicy.OFF||proprietaryStatusEnabled
 val NmeaDeviceOutputSettings.anyEnabled:Boolean get()=publicationEnabled&&transportConfigured&&anyStreamSelected
-val NmeaDeviceOutputSettings.phonePositionPublishing:Boolean get()=purpose==NmeaOutputPurpose.BOAT_BUS_INJECTION&&publicationEnabled&&transportConfigured&&effectivePositionPolicy!=PublicationPolicy.OFF
 object NmeaOutputLeasePolicy{
     /** Output owns a socket and can displace the only reader accepted by a
      * small marine gateway. It therefore always requires an explicit Start in
@@ -97,15 +96,6 @@ object NmeaOutputLeasePolicy{
     fun shouldAutoStart(@Suppress("UNUSED_PARAMETER") value:NmeaDeviceOutputSettings)=false
     fun afterRestore(value:NmeaDeviceOutputSettings)=value.copy(publicationEnabled=false,autoStartOutput=false)
 }
-fun NmeaDeviceOutputSettings.withPolicy(family:String,policy:PublicationPolicy)=when(family){
-    "position"->copy(phonePositionEnabled=policy!=PublicationPolicy.OFF,positionPolicy=policy)
-    "heading"->copy(phoneHeadingEnabled=policy!=PublicationPolicy.OFF,headingPolicy=policy)
-    "motion"->copy(phoneMotionEnabled=policy!=PublicationPolicy.OFF,motionPolicy=policy)
-    "pressure"->copy(phonePressureEnabled=policy!=PublicationPolicy.OFF,pressurePolicy=policy)
-    "wind"->copy(derivedWindPolicy=policy)
-    else->this
-}
-
 @Singleton
 class VesselSettingsRepository @Inject constructor(@ApplicationContext private val context:Context){
     private object K{val position=stringPreferencesKey("position_preference");val heading=stringPreferencesKey("heading_preference");val workspace=stringPreferencesKey("watch_workspace");val draft=doublePreferencesKey("vessel_draft_m");val nav=stringPreferencesKey("instrument_layout_nav");val sailing=stringPreferencesKey("instrument_layout_sailing");val motion=stringPreferencesKey("instrument_layout_motion");val weather=stringPreferencesKey("instrument_layout_weather");val custom=stringPreferencesKey("instrument_layout_custom");val customFields=stringPreferencesKey("instrument_custom_nmea_fields");val boatHeadingSource=stringPreferencesKey("boat_heading_source_id");val pinnedPositionSource=stringPreferencesKey("pinned_position_source_id");val allowPinnedFallback=booleanPreferencesKey("allow_pinned_source_fallback")}
@@ -129,7 +119,6 @@ class VesselSettingsRepository @Inject constructor(@ApplicationContext private v
 class OutputSettingsRepository @Inject constructor(@ApplicationContext private val context:Context){
     private object K{val purpose=stringPreferencesKey("output_purpose");val autoStart=booleanPreferencesKey("output_auto_start");val phonePosition=booleanPreferencesKey("phone_position_enabled");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val proprietary=booleanPreferencesKey("phone_proprietary_enabled");val mode=stringPreferencesKey("transport_mode");val host=stringPreferencesKey("output_host");val port=intPreferencesKey("output_port");val headingFormat=stringPreferencesKey("phone_heading_format");val transportConfigured=booleanPreferencesKey("transport_configured");val publicationEnabled=booleanPreferencesKey("publication_enabled");val positionPolicy=stringPreferencesKey("publication_position_policy");val headingPolicy=stringPreferencesKey("publication_heading_policy");val motionPolicy=stringPreferencesKey("publication_motion_policy");val pressurePolicy=stringPreferencesKey("publication_pressure_policy");val windPolicy=stringPreferencesKey("publication_derived_wind_policy");val destinations=stringPreferencesKey("output_destinations_json");val includePressure=booleanPreferencesKey("canonical_feed_include_pressure");val includeDerivedWind=booleanPreferencesKey("canonical_feed_include_derived_wind")}
     private val gson=Gson();private val destinationType=object:TypeToken<List<NmeaOutputDestination>>(){}.type
-    private fun policy(stored:String?,legacy:Boolean?,newDefault:PublicationPolicy)=stored?.let{runCatching{PublicationPolicy.valueOf(it)}.getOrNull()}?:legacy?.let{if(it)PublicationPolicy.ALWAYS else PublicationPolicy.OFF}?:newDefault
     private val outputRunning=MutableStateFlow(false)
     private val persistedSettings=context.outputSettingsStore.data.map{p->
         // A first-run setup explicitly skips NMEA Output. Existing saved
@@ -143,21 +132,21 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
         val restoredDestinations=p[K.destinations]?.let{json->runCatching{gson.fromJson<List<NmeaOutputDestination>>(json,destinationType)}.getOrNull()}?.filter{it.id.isNotBlank()&&it.port in 1..65535}?.map{it.copy(enabled=false)}.orEmpty()
         val migratedDestination=NmeaOutputDestination(transport=mode.destinationTransport(),host=host,port=port,enabled=false)
         val includePressure=p[K.includePressure]?:true;val includeWind=p[K.includeDerivedWind]?:true
-        val localInjection=mode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
-        // BACKUP was a legacy publisher-ownership mode. SAME_AS_INPUT now has
-        // strict Local Sensor Injection semantics: enabled local streams are
-        // ALWAYS publishers and external Boat sources are diagnostics only.
+        // BACKUP and CANONICAL_CLIENT_FEED were legacy publisher-ownership
+        // modes. Every transport now has strict Phone/App-owned semantics:
+        // external Boat sources are input/diagnostics only and are never
+        // republished merely because an independent endpoint was selected.
         NmeaDeviceOutputSettings(
-            purpose=if(localInjection)NmeaOutputPurpose.BOAT_BUS_INJECTION else NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
-            phonePositionEnabled=localInjection,phoneHeadingEnabled=localInjection,phoneMotionEnabled=localInjection,phonePressureEnabled=localInjection&&includePressure,
+            purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+            phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=includePressure,
             transportMode=mode,outputHost=host,outputPort=port,
             phoneHeadingFormat=p[K.headingFormat]?.let{runCatching{PhoneHeadingOutputFormat.valueOf(it)}.getOrNull()}?:PhoneHeadingOutputFormat.HDT_TRUE,
             transportConfigured=configured,
-            positionPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            headingPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            motionPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            pressurePolicy=if(localInjection&&includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            derivedWindPolicy=if(localInjection&&includeWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            positionPolicy=PublicationPolicy.ALWAYS,
+            headingPolicy=PublicationPolicy.ALWAYS,
+            motionPolicy=PublicationPolicy.ALWAYS,
+            pressurePolicy=if(includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            derivedWindPolicy=if(includeWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
             destinations=if(restoredDestinations.isNotEmpty())restoredDestinations else if(configured)listOf(migratedDestination)else emptyList(),
             publicationEnabled=false,autoStartOutput=false,includePressure=includePressure,includeDerivedWind=includeWind,
         )
@@ -165,16 +154,15 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
     val settings=combine(persistedSettings,outputRunning){persisted,running->persisted.copy(publicationEnabled=running)}
     suspend fun activateAutoStart(){outputRunning.value=NmeaOutputLeasePolicy.shouldAutoStart(persistedSettings.first())}
     suspend fun save(value:NmeaDeviceOutputSettings){
-        val localInjection=value.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
         val canonical=value.copy(
-            purpose=if(localInjection)NmeaOutputPurpose.BOAT_BUS_INJECTION else NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
-            phonePositionEnabled=localInjection,phoneHeadingEnabled=localInjection,phoneMotionEnabled=localInjection,phonePressureEnabled=localInjection&&value.includePressure,
+            purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+            phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=value.includePressure,
             proprietaryStatusEnabled=false,
-            positionPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            headingPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            motionPolicy=if(localInjection)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            pressurePolicy=if(localInjection&&value.includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            derivedWindPolicy=if(localInjection&&value.includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            positionPolicy=PublicationPolicy.ALWAYS,
+            headingPolicy=PublicationPolicy.ALWAYS,
+            motionPolicy=PublicationPolicy.ALWAYS,
+            pressurePolicy=if(value.includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            derivedWindPolicy=if(value.includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
             autoStartOutput=false,
         )
         outputRunning.value=canonical.publicationEnabled

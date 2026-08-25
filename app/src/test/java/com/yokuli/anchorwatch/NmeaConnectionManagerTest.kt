@@ -4,7 +4,10 @@ import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionManager
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionRetryPolicy
 import com.yokuli.anchorwatch.data.nmea.NmeaTransportWriteFailure
+import com.yokuli.anchorwatch.data.nmea.NmeaWireBatch
 import com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaTcpClient
+import com.yokuli.anchorwatch.data.nmea.output.NmeaWriteBackpressurePolicy
+import com.yokuli.anchorwatch.data.nmea.output.NmeaWriteBackpressureState
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -16,6 +19,19 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class NmeaConnectionManagerTest {
+    @Test fun writeBackpressureHasAWarningWindowBeforeTheHardStallBoundary(){
+        assertEquals(NmeaWriteBackpressureState.NORMAL,NmeaWriteBackpressurePolicy.evaluate(499))
+        assertEquals(NmeaWriteBackpressureState.CONGESTED,NmeaWriteBackpressurePolicy.evaluate(500))
+        assertEquals(NmeaWriteBackpressureState.CONGESTED,NmeaWriteBackpressurePolicy.evaluate(2_999))
+        assertEquals(NmeaWriteBackpressureState.STALLED,NmeaWriteBackpressurePolicy.evaluate(3_000))
+    }
+
+    @Test fun oneHertzSchedulerTickIsOneContiguousCrlfWirePayload(){
+        val sentences=listOf("\$IIHDT,123.40,T*2B\r\n","\$GNRMC,000000.00,V,,,,,,,260826,,,N*00\r\n")
+        assertArrayEquals(sentences.joinToString("").toByteArray(Charsets.US_ASCII),NmeaWireBatch.encode(sentences))
+        assertEquals(2,NmeaWireBatch.encode(sentences).toString(Charsets.US_ASCII).split("\r\n").count{it.isNotBlank()})
+    }
+
     @Test fun refusedConnectionKeepsOneVisibleErrorAndDoesNotOpenAnotherSocket() = runBlocking {
         val closedPort=ServerSocket(0).use{it.localPort}
         val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
@@ -81,6 +97,26 @@ class NmeaConnectionManagerTest {
             assertEquals("\$PYOK,SAME*00",withTimeout(3_000){received.await()})
         }finally{manager.disconnect();managerScope.cancel();runCatching{server.close()};serverJob.cancelAndJoin()}
     }}
+
+    @Test fun sharedWriteStallAbortTargetsOnlyTheExpectedTransportGenerationAndRunsOnce() = runBlocking {
+        val server=ServerSocket(0);val accepted=CompletableDeferred<Socket>()
+        var serverClient:Socket?=null
+        val serverJob=launch(Dispatchers.IO){runCatching{accepted.complete(server.accept());awaitCancellation()}}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort,autoReconnect=false)))
+            serverClient=withTimeout(3_000){accepted.await()}
+            withTimeout(3_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
+            val generation=manager.diagnostics.value.connectionGeneration
+            assertFalse("An old queued generation must never close the current socket",manager.abortWriteStall(generation-1,"old generation"))
+            assertTrue(manager.abortWriteStall(generation,"test write stall"))
+            assertFalse("The same generation may be aborted only once",manager.abortWriteStall(generation,"duplicate abort"))
+            assertEquals("TX_WRITE_STALL",manager.diagnostics.value.lastFailureCategory)
+            assertEquals("TX_WRITE_STALL_ABORT",manager.diagnostics.value.lastOperation)
+        }finally{
+            manager.disconnect();managerScope.cancel();runCatching{serverClient?.close()};runCatching{server.close()};serverJob.cancelAndJoin()
+        }
+    }
 
     @Test fun queuedBatchFromOldTransportGenerationIsNeverWrittenAfterReconnect() = runBlocking {
         val server=ServerSocket(0);val clients=CopyOnWriteArrayList<Socket>();val accepted=AtomicInteger()

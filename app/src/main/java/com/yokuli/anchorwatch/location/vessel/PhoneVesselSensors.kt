@@ -58,6 +58,26 @@ data class PhoneSensorCapabilities(val attitudeAvailable:Boolean=false,val gyroA
 data class PhoneVesselAttitudeSample(val attitude:VesselAttitude?=null,val dynamicAccelerationG:Double=0.0,val mountSuspect:Boolean=false,val receivedElapsedRealtime:Long?=null)
 data class PhonePressureSample(val pressureHpa:Double?=null,val receivedElapsedRealtime:Long?=null)
 
+/**
+ * A rotation-vector discontinuity alone does not prove that the handset moved.
+ * Starting an MFD or another high-current instrument can disturb the magnetic
+ * part of Android's fused vector while the phone remains fixed. A vector jump
+ * therefore needs corroborating gyro motion; an extreme gyro event remains
+ * sufficient on its own.
+ */
+object PhoneMountMovementPolicy{
+    fun suspect(rotationJumpDegrees:Double?,angularVelocityRadPerSecond:Double):Boolean{
+        if(!angularVelocityRadPerSecond.isFinite())return false
+        if(angularVelocityRadPerSecond>EXTREME_ANGULAR_VELOCITY_RAD_PER_SECOND)return true
+        return rotationJumpDegrees?.let{jump->
+            jump.isFinite()&&jump>ROTATION_JUMP_DEGREES&&angularVelocityRadPerSecond>CORROBORATING_ANGULAR_VELOCITY_RAD_PER_SECOND
+        }==true
+    }
+    private const val ROTATION_JUMP_DEGREES=35.0
+    private const val CORROBORATING_ANGULAR_VELOCITY_RAD_PER_SECOND=0.35
+    private const val EXTREME_ANGULAR_VELOCITY_RAD_PER_SECOND=3.5
+}
+
 private val Context.mountStore by preferencesDataStore("vessel_mount_calibration")
 
 @Singleton
@@ -106,7 +126,7 @@ class PhoneVesselAttitudeRepository @Inject constructor(@ApplicationContext cont
         // Keep currentQuaternion available so the user can calibrate, but never
         // expose the Android device frame as if it were a vessel frame.
         if(calibration.calibratedAt<=0L){previousQuaternion=current;_mountState.value=PhoneVesselMountState.UNCALIBRATED;_sample.value=PhoneVesselAttitudeSample(receivedElapsedRealtime=now);return}
-        val corrected=(calibration.neutralQuaternion.inverse()*current*axisCorrection(calibration.bowAxis)).normalized();val sinRoll=2*(corrected.w*corrected.x+corrected.y*corrected.z);val cosRoll=1-2*(corrected.x*corrected.x+corrected.y*corrected.y);val roll=Math.toDegrees(atan2(sinRoll,cosRoll));val sinPitch=2*(corrected.w*corrected.y-corrected.z*corrected.x);val pitch=Math.toDegrees(if(abs(sinPitch)>=1)if(sinPitch>=0)Math.PI/2 else -Math.PI/2 else asin(sinPitch));val rates=mapRates(gyroValues,calibration.bowAxis);val previous=previousQuaternion;previousQuaternion=current;val jump=previous?.let{old->2*Math.toDegrees(acos(abs(old.w*current.w+old.x*current.x+old.y*current.y+old.z*current.z).coerceIn(0.0,1.0)))>35.0}?:false;val angular=sqrt(gyroValues.sumOf{it*it});val suspect=jump||angular>3.5
+        val corrected=(calibration.neutralQuaternion.inverse()*current*axisCorrection(calibration.bowAxis)).normalized();val sinRoll=2*(corrected.w*corrected.x+corrected.y*corrected.z);val cosRoll=1-2*(corrected.x*corrected.x+corrected.y*corrected.y);val roll=Math.toDegrees(atan2(sinRoll,cosRoll));val sinPitch=2*(corrected.w*corrected.y-corrected.z*corrected.x);val pitch=Math.toDegrees(if(abs(sinPitch)>=1)if(sinPitch>=0)Math.PI/2 else -Math.PI/2 else asin(sinPitch));val rates=mapRates(gyroValues,calibration.bowAxis);val previous=previousQuaternion;previousQuaternion=current;val jumpDegrees=previous?.let{old->2*Math.toDegrees(acos(abs(old.w*current.w+old.x*current.x+old.y*current.y+old.z*current.z).coerceIn(0.0,1.0)))};val angular=sqrt(gyroValues.sumOf{it*it});val suspect=PhoneMountMovementPolicy.suspect(jumpDegrees,angular)
         val configuredMounted=calibration.mountState==PhoneVesselMountState.VESSEL_MOUNTED
         if(configuredMounted&&suspect){_mountState.value=PhoneVesselMountState.MOUNT_SUSPECT;stableSince=null}
         else if(_mountState.value==PhoneVesselMountState.MOUNT_SUSPECT){if(!suspect&&abs(roll)<20&&abs(pitch)<20){if(stableSince==null)stableSince=now;if(calibration.automaticMountRecovery&&now-(stableSince?:now)>=7_000L)_mountState.value=PhoneVesselMountState.VESSEL_MOUNTED}else stableSince=null}

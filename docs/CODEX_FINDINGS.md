@@ -236,6 +236,8 @@
 
 ## Finding P0-018 — Depth, STW and selected Boat ROT were omitted from the independent canonical scheduler
 
+> **SUPERSEDED 2026-08-26:** this earlier requirement was rejected after product review. NMEA Output is a Phone/App sensor node, not a Boat-data repeater. DBT/DPT/VHW and Boat ROT are now deliberately absent from every output transport; see Finding P0-023. The historical evidence below is retained only to explain the removed behavior.
+
 - Severity: **P0 / canonical feed completeness**
 - User story: every already-supported selected typed vessel metric listed by the P0 contract must keep its own cadence and lease; a Boat ROT must not disappear merely because phone attitude is absent.
 - Evidence: the initial replacement scheduler contained only Position, Heading, Motion, Pressure and Derived Wind. The sentence completeness filter recognized DBT/VHW, but no stream ever generated either sentence, and Motion read only phone attitude yaw rather than `rateOfTurnDegreesPerMinute`.
@@ -245,7 +247,7 @@
 - Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
 - Verification result: **Both tests failed before implementation and now pass. DBT is 1 Hz with a 60-second metric lease, VHW/STW is 2 Hz with a 10-second lease, and Boat ROT uses the 2 Hz Motion stream with a three-second lease. Out-of-range or incomplete primary fields suppress the whole sentence. Final aggregate unit, lint, assemble, targeted Output Compose and real-time Heading/Stop soak gates pass.**
 - Real hardware verified: **No.**
-- Status: **FIXED — LOCAL SOFTWARE VERIFIED; CONTROLLED HARDWARE QA REQUIRED**
+- Status: **SUPERSEDED — BEHAVIOR REMOVED FROM PRODUCT**
 
 ## Finding P2-019 — Pressure history test could observe the first asynchronous upsert before replacement
 
@@ -299,15 +301,42 @@
 - Real hardware verified: **No — Pi/converter/MFD are NOT YET PROVEN.**
 - Status: **FIXED IN CODE — LOCAL TARGETS PASS; EXTERNAL CHAIN QA REQUIRED**
 
-## Finding P0-023 — Same-socket canonical feed could re-inject Raymarine/KC-2W Boat data
+## Finding P0-023 — Output transport choice could re-publish Raymarine/KC-2W Boat data
 
 - Severity: **P0 / bidirectional gateway feedback and disappearing instruments**
-- User story: when Phone Vessel Output uses the already-open KC-2W TCP connection, each healthy local phone stream remains stable even after a Raymarine MFD joins the N2K network; no value originating from that Boat connection may be written back to it directly, reformatted, AUTO-selected or indirectly derived.
+- User story: every Phone Vessel Output route publishes only Phone sensors and explicit Anchor Watch calculations. Selecting a separate TCP/UDP/server destination must never re-publish values the App received from Raymarine/KC-2W or another Boat instrument.
 - Evidence: `AnchorWatchNmeaFeedEncoder` consumed `VesselDataHub` selected Position, SOG, COG, Heading, ROT, Pressure, Wind, Depth and STW for every transport. `VesselDataHub` AUTO normally prioritizes `BOAT_NMEA`; only Position had a partial exclusion while phone position publication was active, and RMC still resolved SOG/COG independently. A bidirectional KC-2W could therefore return Raymarine/N2K candidates that the App encoded back onto the same Socket.
 - Reproduction steps: create a Phone GNSS fix and phone Heading candidate; add higher-priority Raymarine-like Boat SOG/COG/HDT/MWV/DBT candidates from the current input generation; encode each stream for `SAME_AS_INPUT_CONNECTION`. Before the fix, Boat Heading/Depth/STW and Boat-derived wind were emitted and Phone RMC could contain Boat SOG/COG.
-- Root cause: destination semantics were unified too early. Sentence generation was treated as sufficient proof of safety, while the dependency provenance of selected and App-derived values was not enforced at the same-input encoding boundary.
-- Failing test: `AnchorWatchNmeaPublisherTest.sameInputRmcUsesOneAtomicPhoneFixAndNeverBoatSogCog`; `selectedBoatHeadingIsBlockedOnSameInputButAllowedForIndependentUnifiedFeed`; `raymarineLikeExternalHeadingDoesNotSuppressPhoneHeadingOnSameSocket`; `externalPressureDoesNotSuppressFreshPhonePressureOnSameSocket`; `boatDerivedWindIsBlockedOnSameInputButAllowedOnDedicatedFeed`; `phoneTxEchoIdentityIsAlwaysDeniedBySameSocketFirewall`; existing Depth/STW/ROT destination split regressions.
+- Root cause: transport and source semantics were coupled. Same-socket had a provenance firewall, but choosing an independent transport silently switched the encoder to selected VesselDataHub fan-out and made Boat data eligible again.
+- Failing test: `AnchorWatchNmeaPublisherTest.boatHeadingIsBlockedOnEveryTransportAndPhoneCandidateWins`; `independentPositionFeedUsesOnlyTheAtomicPhoneFix`; `mockOrNetworkPositionCanNeverEnterPhoneOutput`; `boatDepthAndStwAreNotPublisherStreamsOnAnyTransport`; `transportChoiceNeverTurnsBoatInputIntoOutput`; `selectedBoatRotIsNeverRepublishedWithoutPhoneAttitude`; `appDerivedWindIsPublishableButDirectBoatWindIsNot`; `tcpServerAndTcpClient_useSameFeedScheduler`; `PositionSourceConflictPolicyTest.phoneOwnedOutputAndNmeaInputMayCoexistWithoutChangingEitherSource`.
 - Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
-- Verification result: **`SAME_AS_INPUT_CONNECTION` is now Local Sensor Injection. It uses one accepted Android `NavigationFix` atomically for position/SOG/COG/time, explicitly selects local phone Heading/IMU/Barometer candidates even when AUTO selects Boat data, blocks Depth/STW, and rejects derived ancestry containing NMEA input, TX echo or unknown nested derivation. Dedicated TCP/UDP/TCP Server retain unified selected-vessel semantics. BACKUP is normalized to ALWAYS for normal same-socket local streams; source conflict remains diagnostic while publication continues. The focused firewall/settings/field/echo/hard-stop group passed 55/55. The final Debug JVM gate passed 557 tests with 0 failures/errors and one opt-in real-time soak skipped; `lintDebug` and `assembleDebug` passed.**
+- Verification result: **Superseding 2026-08-26 change: all transports now use the same Phone/App-owned encoder. One accepted Android `NavigationFix` atomically owns Position/SOG/COG/time; calibrated Phone candidates own Heading/IMU/Barometer; only values with explicit Anchor Watch `APP_DERIVED` identity and provenance may add computed true wind. Depth/STW and every direct Boat observation are absent from the scheduler on same-socket, dedicated TCP, TCP server and UDP. Tests were rewritten for this stricter boundary but deliberately NOT RUN. Earlier pass counts above do not verify this superseding change.**
+- Additional isolation: **Starting Phone output no longer changes `VesselDataHub` source arbitration or blocks an Anchor/Trip from selecting NMEA position. TX reads a separately accepted, real non-mock Android GNSS fix; Android mock/proxy locations are rejected before the publisher boundary. Thus NMEA may remain the App's input while Phone GNSS is the independently owned output source.**
 - Real hardware verified: **No — Raymarine MDS, KC-2W firmware conversion and N2K source-address behavior remain EXTERNAL-UNVERIFIED.**
-- Status: **FIXED IN CODE — TARGETED JVM PASSED; ONE CONTROLLED KC-2W/IS42/RAYMARINE QA RUN REQUIRED**
+- Status: **FIXED IN CODE — TESTS NOT RUN; ONE CONTROLLED KC-2W/IS42/RAYMARINE QA RUN REQUIRED**
+
+## Finding P0-024 — MFD-related sensor disturbance could flap the complete Phone NMEA session
+
+- Severity: **P0 / downstream NO HEADING and disappearing phone fields**
+- User story: after a calibrated Phone→Boat session starts, turning on a Raymarine MFD must not make every phone-sourced KC-2W field disappear. A genuinely untrusted handset mount must stop unsafe Heading/Motion immediately while independent Phone GNSS/pressure and the existing TCP session remain alive.
+- Evidence: during controlled hardware QA, Raymarine initially received stable Heading, later reported `NO HEADING`, and KC-2W DataList phone values began appearing and disappearing. Code inspection found that any `MOUNT_SUSPECT` transition called the publisher's whole-session stop path and the coordinator persisted `publicationEnabled=false`. Mount suspicion could also be triggered by a rotation-vector jump alone, although Android's fused vector can jump when nearby powered marine electronics disturb its magnetic component.
+- Reproduction steps: start calibrated same-input Phone output; while it is publishing, inject a large rotation-vector discontinuity with negligible gyro movement or transition the runtime mount to `MOUNT_SUSPECT`; inspect the master output session and the Position/Pressure/Heading stream states.
+- Root cause: the formal Start readiness gate was incorrectly reused as a continuous whole-session kill switch, and the mount detector treated an uncorroborated fused-vector discontinuity as physical handset movement.
+- Failing test: `NmeaStreamReadinessPolicyTest.magneticFusionJumpWithoutPhysicalGyroEvidenceDoesNotInvalidateTheMount`; `activeOutputMountWarningSuppressesOnlyUnsafeVesselFrameStreamsOnEveryTransport`; `runtimeMountWarningCannotTurnOffAnAlreadyStartedPublicationSession`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **Code changed but tests deliberately NOT RUN in this pass. Formal sharing still cannot begin without version-matched zero/mount/alignment. Once running, a mount warning keeps the publication generation and selected transport alive, immediately suppresses Phone Heading/Motion on every route, and leaves Phone Position/Pressure active. Rotation-vector jumps now require corroborating gyro motion unless angular velocity is independently extreme. The NMEA Output diagnostics must be captured during the next single hardware run to distinguish any remaining socket backpressure from sensor gating.**
+- Real hardware verified: **Partially reproduced before the fix; post-fix behavior NOT YET VERIFIED.**
+- Status: **FIXED IN CODE — TESTS NOT RUN; ONE CONTROLLED KC-2W/RAYMARINE QA RUN REQUIRED**
+
+## Finding P0-025 — Per-stream fast writes can overload the KC-2W path after Raymarine joins
+
+- Severity: **P0 / downstream fields expire and return one by one**
+- User story: when Raymarine joins the N2K network, Phone data forwarded through the KC-2W path must remain a quiet, complete 1 Hz heartbeat. Unchanged Heading must never disappear, and one congested interval must not create a backlog or a burst of independent flushes.
+- Evidence: hardware QA showed all Phone fields initially appearing in KC-2W DataList, then disappearing together, returning individually and producing errors after Raymarine powered on. The App scheduled Heading at 5 Hz, Motion/Wind/STW at 2 Hz, and Position/Pressure/Depth at 1 Hz. Each stream occupied a separate queue item and the single writer performed a separate socket write/flush, so one blocked writer allowed later stream values to accumulate independently and emerge one by one.
+- Reproduction steps: start same-input output with every local family ready; hold the writer while multiple scheduler periods elapse; release it and inspect per-stream queue replacement, wire-write count and receiver order.
+- Root cause: product cadence and physical wire cadence were separate. Fast per-stream heartbeats multiplied socket operations on a fragile bidirectional converter, while the latest-per-stream queue made recovery visible as a staggered sequence rather than one fresh snapshot.
+- Failing test: `AnchorWatchNmeaPublisherTest.everyStreamUsesOneHertzAndConstantHeadingNeverBecomesBlank`; `slowGatewayGetsNoCatchUpBurstAfterAWriteReturns`; `NmeaConnectionManagerTest.oneHertzSchedulerTickIsOneContiguousCrlfWirePayload`; `writeBackpressureHasAWarningWindowBeforeTheHardStallBoundary`; `sharedWriteStallAbortTargetsOnlyTheExpectedTransportGenerationAndRunsOnce`; updated opt-in `NmeaPublisherRealtimeSoakTest.fakeTcpReceiver_tenMinuteHeadingSoak_thenSixtySecondStoppedZeroBytes`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **All normal stream periods are now 1,000 ms. The publisher prepares every due stream, retains only its newest blocked value, and wakes the writer once after the complete tick is ready. The writer drains those values into one contiguous payload and invokes one Socket write/flush; stale publication/input generations are dropped and never replayed. A slow write cannot trigger a catch-up burst: after crossing 500 ms it receives a full one-second recovery window and the pending slots continue replacing in place. At 500 ms the live UI reports congestion; at three seconds the exact same-input transport generation is aborted once and only the existing bounded RX reconnect policy may recover it. Unchanged complete Heading remains a mandatory 1 Hz heartbeat. Tests and manuals were updated but deliberately NOT RUN.**
+- Real hardware verified: **No — post-fix KC-2W/Raymarine run pending.**
+- Status: **FIXED IN CODE — TESTS NOT RUN; BUILD AND CONTROLLED HARDWARE QA PENDING**

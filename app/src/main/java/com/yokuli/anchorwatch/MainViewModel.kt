@@ -110,14 +110,6 @@ import com.yokuli.anchorwatch.data.vessel.VesselDataSettings
 import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
-import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
-import com.yokuli.anchorwatch.data.vessel.effectiveHeadingPolicy
-import com.yokuli.anchorwatch.data.vessel.effectiveMotionPolicy
-import com.yokuli.anchorwatch.data.vessel.effectivePositionPolicy
-import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
-import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
-import com.yokuli.anchorwatch.data.vessel.withPolicy
-import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
@@ -126,8 +118,6 @@ import com.yokuli.anchorwatch.data.trip.TripReplayData
 import com.yokuli.anchorwatch.data.trip.TripDashboardRepository
 import com.yokuli.anchorwatch.data.trip.TripDashboard
 import com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot
-import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictPolicy
-import com.yokuli.anchorwatch.domain.vessel.PositionSourceConflictState
 import com.yokuli.anchorwatch.runtime.output.PhonePositionNmeaOutputRuntime
 import com.yokuli.anchorwatch.runtime.output.PhonePositionOutputStatus
 import com.yokuli.anchorwatch.runtime.condition.ConditionRuntime
@@ -597,7 +587,7 @@ class MainViewModel @Inject constructor(
             }?:return@launch
             val current=prefs.settings.first()
             val session=_ui.value.active
-            if(current.profile==profile&&current.gpsDataSource==sourceAtConnect&&!current.demoMode&&session==null&&!_ui.value.outputSettings.phonePositionPublishing){
+            if(current.profile==profile&&current.gpsDataSource==sourceAtConnect&&!current.demoMode&&session==null){
                 prefs.save(current.copy(gpsDataSource=GpsDataSource.NMEA))
                 incidentLogger.record("nmea","POSITION_SOURCE_AUTO_SELECTED",details=mapOf("host" to profile.host,"port" to profile.port,"connectionStartedElapsed" to usable.third))
             }
@@ -742,8 +732,6 @@ class MainViewModel @Inject constructor(
         }
         if(activeSession!=null&&lockedSource!=source){
             if(source==GpsDataSource.NMEA){
-                val conflict=PositionSourceConflictState(_ui.value.outputSettings.phonePositionPublishing,current.gpsDataSource,lockedSource)
-                if(!PositionSourceConflictPolicy.canSelectNmeaPosition(conflict)){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Turn off Phone GPS output before selecting NMEA Position."))};return@launch}
                 val availability=NmeaSourceSelectionPolicy.availability(_ui.value.connection,_ui.value.nmeaFix,_ui.value.nmeaConnectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),current.gpsLossSeconds*1000L)
                 if(availability!=NmeaSourceAvailability.AVAILABLE){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Connect the NMEA source and wait for a fresh valid position before selecting NMEA GPS."))};return@launch}
                 if(!NmeaSourceSelectionPolicy.isUsablePosition(_ui.value.connection,_ui.value.nmeaFix,_ui.value.nmeaConnectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),current.gpsLossSeconds*1000L)){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Wait for NMEA fix quality or HDOP to recover before selecting NMEA GPS."))};return@launch}
@@ -757,8 +745,6 @@ class MainViewModel @Inject constructor(
         }
         if(source==current.gpsDataSource)return@launch
         if(source==GpsDataSource.NMEA){
-            val conflict=PositionSourceConflictState(_ui.value.outputSettings.phonePositionPublishing,current.gpsDataSource,lockedSource)
-            if(!PositionSourceConflictPolicy.canSelectNmeaPosition(conflict)){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Turn off Phone GPS output before selecting NMEA Position."))};return@launch}
             val availability=NmeaSourceSelectionPolicy.availability(_ui.value.connection,_ui.value.nmeaFix,_ui.value.nmeaConnectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),current.gpsLossSeconds*1000L)
             if(availability!=NmeaSourceAvailability.AVAILABLE){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Connect the NMEA source and wait for a fresh valid position before selecting NMEA GPS."))};return@launch}
             if(!NmeaSourceSelectionPolicy.isUsablePosition(_ui.value.connection,_ui.value.nmeaFix,_ui.value.nmeaConnectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),current.gpsLossSeconds*1000L)){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Wait for NMEA fix quality or HDOP to recover before selecting NMEA GPS."))};return@launch}
@@ -844,10 +830,10 @@ class MainViewModel @Inject constructor(
     }
     fun startNmeaOutput()=viewModelScope.launch{
         val state=_ui.value
-        // SAME_AS_INPUT injects only local phone/App evidence. Independent
-        // transports remain the unified VesselDataHub fan-out.
+        // Destination changes only transport ownership. Every route publishes
+        // the same Phone/App-owned feed and can never republish Boat input.
         val value=state.outputSettings.copy(
-            purpose=if(state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)NmeaOutputPurpose.BOAT_BUS_INJECTION else NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
+            purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
             autoStartOutput=false,
         )
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}

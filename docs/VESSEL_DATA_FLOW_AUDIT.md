@@ -22,7 +22,7 @@ NMEA sentences          Android GNSS / sensors          derived values
                     (stricter safety gate)
 ```
 
-Data, Sail, the boat marker, Trip recording/reporting, true-wind inputs and the canonical NMEA output consume the selected Hub observation. They do not implement local Boat → Phone → COG fallback trees.
+Data, Sail, the boat marker and Trip recording/reporting consume the selected Hub observation. NMEA Output is intentionally different: it may inspect the Hub only for provenance-proven Phone candidates and explicit App-derived results. It never republishes the selected Boat observation and does not implement a Boat → Phone → output path.
 
 Anchor uses the same heading preference and selected observation, then applies stricter evidence rules. COG remains a course/motion observation and never becomes vessel heading.
 
@@ -88,7 +88,7 @@ When accepted evidence changes source, Anchor starts a new heading-evidence epoc
 - Dedicated TX owns a separate write-only socket/port. TX failure never closes or reconnects RX.
 - Same-socket TX exists only for gateways that explicitly support bidirectional TCP.
 - Output never auto-starts. It requires saved route, completed vessel-frame calibration/mount confirmation and an explicit Start in the current app run.
-- The product feed publishes the canonical selected values at a stable heartbeat. `FRESH` and bounded `HELD` measurements are emitted; `STALE`, losing-source and null values are not.
+- The product feed publishes only Phone-owned measurements and explicit App-derived results at a stable heartbeat. Direct Boat Position, Heading, Motion, Pressure, Wind, Depth and STW remain input-only. `FRESH` and bounded `HELD` eligible local measurements are emitted; `STALE`, losing-source and null values are not.
 - Recently transmitted sentences echoed by a gateway are quarantined and cannot re-enter the Hub as independent boat evidence.
 
 ## Saved anchorage data convergence
