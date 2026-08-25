@@ -375,8 +375,8 @@
 - Reproduction steps: approach a saved anchorage with Watch inactive and inspect both the map and setup sheet; then select a saved marker and try to find its notes, edit/delete action and navigation without understanding Place/Spot/Visit.
 - Root cause: the canonical GIS persistence model leaked into presentation, while an experimental GIS nearby projection was added alongside the established Watch-sheet projection instead of replacing it.
 - Failing test: updated `NearbyAnchorageCardTest`; new protected-delete regression `AnchorageGisRepositoryTest.savedAnchorageUsedByActiveWatchCannotBeDeletedBelowTheUi`; full-screen detail test tags are available for the pending Compose story suite.
-- Fix commit: **`c45111f`**
-- Verification result: **The duplicate GIS nearby composable and its independent ViewModel were removed. The Watch sheet is the single nearby owner. Saved anchorages now use a sailor-facing map/list/filter surface and one full-screen detail with primary position actions, optional expandable evidence, editing, confirmed deletion and repository-level active-watch protection. `:app:compileDebugKotlin` passed in 2m49s; tests were written/updated but deliberately NOT RUN.**
+- Fix commit: **`c45111f`, `ce54be1`**
+- Verification result: **The duplicate GIS nearby composable and its independent ViewModel were removed. The Watch sheet is the single nearby owner. Saved anchorages now use a sailor-facing map/list/filter surface and one full-screen detail with primary position actions, optional expandable evidence, confirmed deletion and repository-level active-watch protection. The self-audit follow-up added an explicit editor to every saved anchoring position instead of silently editing only the first. Final `:app:compileDebugKotlin` passed in 34s; tests were written/updated but deliberately NOT RUN.**
 - Real hardware verified: **No — verify nearby transitions, small-screen detail scrolling, Google Maps hand-off and destructive confirmation in manual QA.**
 - Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; MANUAL UX QA REQUIRED**
 
@@ -384,11 +384,24 @@
 
 - Severity: **P1 / offline hand-off and product clarity**
 - User story: a friend should be able to scan a shared anchorage card with any phone to see its location, while a Boat Watch user can separately import the richer local record.
-- Evidence: the V2 share image contained one large proprietary `anchorwatch://` QR and the instruction “Scan with Anchor Watch”. Generic camera apps could not open the location, despite the image already printing coordinates.
+- Evidence: the V2 share image contained one large proprietary `anchorwatch://` QR and the instruction “Scan with Anchor Watch”. Generic camera apps could not open the location, despite the image already printing coordinates. The legacy/nearby-card V1 generator was a second independent single-QR path.
 - Reproduction steps: share a V2 anchorage image to a phone without Anchor Watch and scan it with the system camera.
 - Root cause: navigation and structured import were treated as one QR destination even though they have different compatibility and privacy contracts.
 - Failing test: `AnchorageShareContentTest.shareCardKeepsPublicNavigationAndPrivateAppImportAsTwoExplicitDestinations`; existing payload codec and bitmap decoder suites cover the individual encodings.
-- Fix commit: **`c45111f`**
-- Verification result: **The local share generator now renders a branded two-QR card: a public Google Maps HTTPS location and a separately labelled versioned Boat Watch import payload. The card includes saved parameters, approach note, safety disclaimer, logo and `Developed aboard SV Yokuli`; visits/photos/device data remain excluded. Tests were written but deliberately NOT RUN.**
+- Fix commit: **`c45111f`, `94fe279`**
+- Verification result: **Both canonical V2 library shares and legacy/nearby-card V1 shares now render a branded two-QR card: a public Google Maps HTTPS location and a separately labelled versioned Boat Watch import payload. The card includes saved parameters, approach note, safety disclaimer, logo and `Developed aboard SV Yokuli`; visits/photos/device data remain excluded. Tests were written but deliberately NOT RUN.**
 - Real hardware verified: **No — scan both regions from a shared/compressed image on iOS and Android during QA.**
 - Status: **FIXED IN CODE — MANUAL CROSS-DEVICE QR QA REQUIRED**
+
+## Finding P1-013 — The public name described one feature after the App became a boat companion
+
+- Severity: **P1 / product identity, release metadata and upgrade safety**
+- User story: the installed App, About page, documentation, share/export images and downloadable builds should be recognisable as Boat Watch, while the Anchor Watch feature and every installed-data identifier remain compatible.
+- Evidence: launcher labels in all six locales, `ProductBrand`, onboarding/About/feedback, README/store copy, branded GPX/snapshot/diagnostic output, GitHub workflow titles and artifacts still said Anchor Watch. At the same time the App already contained Trip Watch, NMEA products, sonar, maps and saved anchorages. The existing identity document also declared the old value canonical.
+- Reproduction steps: install the current development APK in each locale, open onboarding/About/Feedback, export a trip/backup/share card and inspect Actions artifact labels and the store-copy document.
+- Root cause: the App expanded feature by feature without a distinct public-product identity contract; visible branding and compatibility identifiers were treated as the same kind of string.
+- Failing test: updated `ProductBrandTest.productIdentityAndConfiguredChannelsAreExact`, `FeedbackEmailComposerTest`, and the About/Feedback Compose stories; `.github/scripts/product_policy_guard.sh` now requires Boat Watch in both resources and `ProductBrand` and rejects the old launcher label.
+- Fix commit: **`94fe279`**
+- Verification result: **Public identity is Boat Watch across every locale, About/onboarding/feedback, README/store copy, QR and trip exports, release scripts/workflows and new artifact labels. `docs/PRODUCT_IDENTITY.md` now states that Anchor Watch is the anchor-alarm feature. Package/application ID, Room/backup identity, `anchorwatch://` V1/V2 imports, provider/channel/DataStore identifiers and release signing remain unchanged for upgrades. Product policy guard passed; final `:app:compileDebugKotlin` passed in 31s before the 34s anchorage follow-up. Tests were updated but deliberately NOT RUN.**
+- Real hardware verified: **No — verify launcher name after in-place upgrade, old backup restore, old V1/V2 QR import and Android mock-location picker identity.**
+- Status: **FIXED IN CODE — COMPILE/POLICY CHECK PASSED; UPGRADE AND STORE QA REQUIRED**
