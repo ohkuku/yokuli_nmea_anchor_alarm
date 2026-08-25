@@ -2,6 +2,9 @@ package com.yokuli.anchorwatch.data.anchorage
 
 import com.google.gson.Gson
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageCompassSector
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageProtectionMedium
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageProtectionRating
 import java.net.URI
 import java.net.URLDecoder
 import java.util.Base64
@@ -28,12 +31,13 @@ data class EncodedAnchorageShareV1(
     val textWasTruncated:Boolean,
 )
 
+data class AnchorageShareProtectionSector(val medium:String,val sector:String,val rating:String,val confidence:Double?=null)
 data class AnchorageSharePayloadV2(
     val version:Int=2,val placeName:String,val placeType:String,val regionDisplayPath:List<String>,val spotName:String,
     val latitude:Double,val longitude:Double,val preferredAlarmRadiusMeters:Double?=null,val typicalWaterDepthMeters:Double?=null,
     val typicalRodeLengthMeters:Double?=null,val seabedType:String=SeabedType.UNKNOWN.name,val customSeabedText:String?=null,
     val coordinateSource:String=AnchorageCoordinateSource.CONFIRMED_ANCHOR.name,val coordinateUncertaintyMeters:Double?=null,
-    val approachNotes:String="",val notes:String="",
+    val approachNotes:String="",val notes:String="",val protection:List<AnchorageShareProtectionSector> = emptyList(),
 )
 data class EncodedAnchorageShareV2(val uri:String,val payload:AnchorageSharePayloadV2)
 
@@ -188,6 +192,8 @@ object AnchorageSharePayloadCodec {
         value.coordinateSource !in AnchorageCoordinateSource.entries.map{it.name}->"The coordinate quality is not recognized."
         !validOptional(value.coordinateUncertaintyMeters,0.0,100_000.0,true)->"The coordinate uncertainty is invalid."
         value.approachNotes.length>MAX_NOTES_CHARS||value.notes.length>MAX_NOTES_CHARS->"The notes are too long."
+        value.protection.size>16||value.protection.distinctBy{it.medium to it.sector}.size!=value.protection.size->"The protection-sector summary is invalid."
+        value.protection.any{it.medium !in AnchorageProtectionMedium.entries.map{value->value.name}||it.sector !in AnchorageCompassSector.entries.map{value->value.name}||it.rating !in AnchorageProtectionRating.entries.map{value->value.name}||it.confidence?.let{confidence->!confidence.isFinite()||confidence !in 0.0..1.0}==true}->"A protection-sector value is invalid."
         else->null
     }
 

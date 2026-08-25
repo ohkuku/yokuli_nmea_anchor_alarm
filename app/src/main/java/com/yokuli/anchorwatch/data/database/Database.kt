@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 20
+const val DATABASE_SCHEMA_VERSION = 21
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(

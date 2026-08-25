@@ -47,5 +47,24 @@ class AnchorageSaveFlowRepositoryTest{
         assertEquals(first.placeId,another.placeId);assertEquals(2,db.anchorageSpotDao().forPlaceNow(first.placeId).size)
     }
 
+    @Test fun existingPlaceAndSpotOnlyGainAnImmutableVisit()=runBlocking{
+        val firstSessionId=db.anchorDao().insertSession(session())
+        val first=save.save(AnchorageSaveRequest(AnchorageSaveDraftFactory.fromSession(db.anchorDao().session(firstSessionId)!!),AnchorageSavePlaceInput(displayName="Known Bay"),AnchorageSaveSpotInput(name="Inner mud")))
+        val secondSessionId=db.anchorDao().insertSession(session().copy(startedAt=10_000,endedAt=15_000))
+        val second=save.save(AnchorageSaveRequest(AnchorageSaveDraftFactory.fromSession(db.anchorDao().session(secondSessionId)!!),AnchorageSavePlaceInput(existingPlaceId=first.placeId,displayName="Known Bay"),AnchorageSaveSpotInput(existingSpotId=first.spotId,name="Inner mud")))
+        assertEquals(first.placeId,second.placeId);assertEquals(first.spotId,second.spotId)
+        assertFalse(second.placeCreated);assertFalse(second.spotCreated);assertTrue(second.visitCreated)
+        assertEquals(1L,db.anchoragePlaceDao().count());assertEquals(1,db.anchorageSpotDao().forPlaceNow(first.placeId).size);assertEquals(2,db.anchorageVisitDao().forPlaceNow(first.placeId).size)
+    }
+
+    @Test fun completedSaveCanUndoOnlyItsNewPlaceSpotAndVisit()=runBlocking{
+        val sessionId=db.anchorDao().insertSession(session())
+        val result=save.save(AnchorageSaveRequest(AnchorageSaveDraftFactory.fromSession(db.anchorDao().session(sessionId)!!),AnchorageSavePlaceInput(displayName="Undo Bay"),AnchorageSaveSpotInput()))
+        assertTrue(result.placeCreated&&result.spotCreated&&result.visitCreated)
+        assertTrue(save.undo(result,sessionId))
+        assertNull(db.anchoragePlaceDao().get(result.placeId));assertNull(db.anchorageSpotDao().get(result.spotId));assertNull(result.visitId?.let{db.anchorageVisitDao().get(it)})
+        assertNull(db.anchorDao().session(sessionId)?.anchorageVisitId)
+    }
+
     private fun session()=AnchorSessionEntity(startedAt=1_000,endedAt=5_000,anchorLatitude=-36.8,anchorLongitude=175.1,rodeLengthMeters=40.0,waterDepthMeters=7.0,bowRollerHeightMeters=1.2,gpsAntennaOffsetMeters=0.0,expectedSwingRadiusMeters=40.0,warningRadiusMeters=45.0,alarmRadiusMeters=50.0,active=false,maxDistanceMeters=28.0,alarmCount=1,minObservedDepthMeters=6.8,maxObservedDepthMeters=7.3)
 }

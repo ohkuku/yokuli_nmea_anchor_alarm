@@ -62,6 +62,7 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM anchorage_visits WHERE anchorSessionId=:sessionId LIMIT 1") suspend fun bySession(sessionId:Long):AnchorageVisitEntity?
     @Insert suspend fun insert(value:AnchorageVisitEntity):Long
     @Update suspend fun update(value:AnchorageVisitEntity)
+    @Query("DELETE FROM anchorage_visits WHERE id=:id") suspend fun delete(id:Long):Int
     @Query("SELECT COUNT(*) FROM anchorage_visits") suspend fun count():Long
     @Query("SELECT * FROM anchorage_visits ORDER BY id") suspend fun allNow():List<AnchorageVisitEntity>
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAll(values:List<AnchorageVisitEntity>)
@@ -88,8 +89,8 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM anchorage_place_regions WHERE placeId=:placeId ORDER BY sortOrder") suspend fun regionsForPlace(placeId:Long):List<AnchoragePlaceRegionCrossRef>
     @Upsert suspend fun upsertPlaceRegions(values:List<AnchoragePlaceRegionCrossRef>)
     @Query("DELETE FROM anchorage_place_regions WHERE placeId=:placeId") suspend fun clearPlaceRegions(placeId:Long)
-    @Query("SELECT * FROM anchorage_personal_ratings WHERE placeId=:placeId") suspend fun rating(placeId:Long):AnchoragePersonalRatingEntity?
-    @Query("SELECT * FROM anchorage_personal_ratings ORDER BY placeId") fun observeRatings():Flow<List<AnchoragePersonalRatingEntity>>
+    @Query("SELECT * FROM anchorage_personal_assessments WHERE placeId=:placeId") suspend fun rating(placeId:Long):AnchoragePersonalRatingEntity?
+    @Query("SELECT * FROM anchorage_personal_assessments ORDER BY placeId") fun observeRatings():Flow<List<AnchoragePersonalRatingEntity>>
     @Upsert suspend fun upsertRating(value:AnchoragePersonalRatingEntity)
     @Query("SELECT * FROM anchorage_protection_sectors WHERE placeId=:placeId ORDER BY medium,sector") suspend fun protection(placeId:Long):List<AnchorageProtectionSectorEntity>
     @Upsert suspend fun upsertProtection(values:List<AnchorageProtectionSectorEntity>)
@@ -103,7 +104,7 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM anchorage_place_regions ORDER BY placeId,sortOrder") suspend fun allPlaceRegions():List<AnchoragePlaceRegionCrossRef>
     @Query("SELECT * FROM anchorage_protection_sectors ORDER BY placeId,medium,sector") suspend fun allProtection():List<AnchorageProtectionSectorEntity>
     @Query("SELECT * FROM anchorage_facilities ORDER BY placeId,type") suspend fun allFacilities():List<AnchorageFacilityEntity>
-    @Query("SELECT * FROM anchorage_personal_ratings ORDER BY placeId") suspend fun allRatings():List<AnchoragePersonalRatingEntity>
+    @Query("SELECT * FROM anchorage_personal_assessments ORDER BY placeId") suspend fun allRatings():List<AnchoragePersonalRatingEntity>
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importPlaceRegions(values:List<AnchoragePlaceRegionCrossRef>)
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importProtection(values:List<AnchorageProtectionSectorEntity>)
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importFacilities(values:List<AnchorageFacilityEntity>)
@@ -111,7 +112,7 @@ import kotlinx.coroutines.flow.Flow
     @Query("DELETE FROM anchorage_place_regions") suspend fun clearPlaceRegionsAll()
     @Query("DELETE FROM anchorage_protection_sectors") suspend fun clearProtection()
     @Query("DELETE FROM anchorage_facilities") suspend fun clearFacilities()
-    @Query("DELETE FROM anchorage_personal_ratings") suspend fun clearRatings()
+    @Query("DELETE FROM anchorage_personal_assessments") suspend fun clearRatings()
     @Query("DELETE FROM anchorage_place_summaries") suspend fun clearSummaries()
 }
 

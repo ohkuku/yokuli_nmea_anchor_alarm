@@ -6,9 +6,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 data class AnchorageSaveFlowState(
+    val step: Int = 0,
     val sessionId: Long? = null,
     val draft: AnchorageSaveDraft? = null,
     val regionCandidates: List<AnchorageRegionCandidate> = emptyList(),
@@ -35,6 +39,7 @@ data class AnchorageSaveFlowState(
     val selectedPlaceId: Long? = null,
     val spotMatches: List<Pair<AnchorageSpotEntity, AnchorageSpotMatchResult>> = emptyList(),
     val selectedSpotId: Long? = null,
+    val spotDecisionMade:Boolean = true,
     val placeName: String = "",
     val spotName: String = "Main spot",
     val placeNotes: String = "",
@@ -43,6 +48,8 @@ data class AnchorageSaveFlowState(
     val resolving: Boolean = false,
     val saving: Boolean = false,
     val complete: Boolean = false,
+    val result: AnchorageSaveResult? = null,
+    val undone: Boolean = false,
     val error: String? = null,
 )
 
@@ -84,13 +91,23 @@ class AnchorageSaveFlowViewModel @Inject constructor(
     fun visitNotes(value: String) { mutable.value = mutable.value.copy(visitNotes = value) }
     fun favorite(value: Boolean) { mutable.value = mutable.value.copy(favorite = value) }
     fun selectRegion(index: Int?) { mutable.value = mutable.value.copy(selectedRegionIndex = index) }
-    fun selectNewPlace() { mutable.value = mutable.value.copy(selectedPlaceId = null, selectedSpotId = null, spotMatches = emptyList()) }
+    fun selectNewPlace() { mutable.value = mutable.value.copy(selectedPlaceId = null, selectedSpotId = null, spotMatches = emptyList(),spotDecisionMade=true) }
     fun selectPlace(id: Long) {
         val draft = mutable.value.draft ?: return
-        mutable.value = mutable.value.copy(selectedPlaceId = id, selectedSpotId = null)
-        viewModelScope.launch { mutable.value = mutable.value.copy(spotMatches = saver.nearbySpotMatches(draft, id)) }
+        mutable.value = mutable.value.copy(selectedPlaceId = id, selectedSpotId = null,spotDecisionMade=false,placeName="")
+        viewModelScope.launch { val matches=saver.nearbySpotMatches(draft, id);mutable.value = mutable.value.copy(spotMatches = matches,spotDecisionMade=matches.isEmpty()) }
     }
-    fun selectSpot(id: Long?) { mutable.value = mutable.value.copy(selectedSpotId = id) }
+    fun selectSpot(id: Long?) { mutable.value = mutable.value.copy(selectedSpotId = id,spotDecisionMade=true) }
+    fun back(){mutable.value=mutable.value.copy(step=(mutable.value.step-1).coerceAtLeast(0),error=null)}
+    fun next(){
+        val current=mutable.value
+        val matched=current.selectedPlaceId?.let{id->current.placeMatches.firstOrNull{it.place.id==id}}
+        if(current.step==0&&current.placeName.trim().ifBlank{matched?.place?.name.orEmpty()}.isBlank()){
+            mutable.value=current.copy(error="Place name is required.");return
+        }
+        if(current.step==1&&!current.spotDecisionMade){mutable.value=current.copy(error="Choose an existing Spot or explicitly create a distinct Spot.");return}
+        mutable.value=current.copy(step=(current.step+1).coerceAtMost(2),error=null)
+    }
 
     fun save() {
         val current = mutable.value
@@ -120,11 +137,17 @@ class AnchorageSaveFlowViewModel @Inject constructor(
                         current.visitNotes,
                     ),
                 )
-            }.onSuccess {
+            }.onSuccess { result ->
                 savedState.remove<String>("placeName"); savedState.remove<String>("spotName")
-                mutable.value = mutable.value.copy(saving = false, complete = true)
+                mutable.value = mutable.value.copy(saving = false, result = result)
             }.onFailure { error -> mutable.value = mutable.value.copy(saving = false, error = error.message ?: "Save failed") }
         }
+    }
+    fun undo()=viewModelScope.launch{
+        val current=mutable.value;val result=current.result?:return@launch
+        runCatching{saver.undo(result,current.sessionId)}
+            .onSuccess{mutable.value=current.copy(result=null,undone=true,error=null)}
+            .onFailure{mutable.value=current.copy(error=it.message?:"Undo failed")}
     }
 }
 
@@ -137,22 +160,25 @@ internal fun AnchorageSaveFlow(
     vm: AnchorageSaveFlowViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
+    val savedResult=state.result
     LaunchedEffect(session.id) { vm.begin(session) }
-    LaunchedEffect(state.complete) { if (state.complete) complete() }
-    AlertDialog(
+    Dialog(
         onDismissRequest = dismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier.fillMaxWidth(.95f),
-        title = { Text(tr("Save to anchorage library", "保存到锚地库")) },
-        confirmButton = {
-            Button(vm::save, enabled = !state.saving && state.draft != null, modifier = Modifier.testTag("confirm_gis_anchorage_save")) {
-                Text(if (state.saving) tr("Saving…", "保存中…") else tr("Save Place, Spot & Visit", "保存地点、锚点和访问"))
-            }
-        },
-        dismissButton = { TextButton(dismiss) { Text(tr("Cancel", "取消")) } },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(Modifier.fillMaxSize().testTag("anchorage_save_page"),color=MaterialTheme.colorScheme.surface) {
+          Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Column{Text(tr("Save to anchorage library","保存到锚地库"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);if(state.result==null)Text(tr("Step ${state.step+1} of 3","第 ${state.step+1} 步，共 3 步"),color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton(dismiss){Text(tr("Close","关闭"))}}
+            if(savedResult!=null){
+                Column(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(14.dp,Alignment.CenterVertically),horizontalAlignment=androidx.compose.ui.Alignment.CenterHorizontally){
+                    Text(tr("Anchorage saved","锚地已保存"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)
+                    Text(tr("Saved as Place #${savedResult.placeId} · Spot #${savedResult.spotId}. An immutable Visit was added from this Anchor session.","已保存为地点 #${savedResult.placeId} · 锚点 #${savedResult.spotId}，并从本次锚泊会话自动创建不可变访问记录。"),style=MaterialTheme.typography.bodyLarge)
+                    Button(complete,Modifier.fillMaxWidth().testTag("view_saved_anchorage")){Text(tr("Done · view in Anchorage Library","完成 · 前往锚地库查看"))}
+                    OutlinedButton(vm::undo,Modifier.fillMaxWidth().testTag("undo_anchorage_save")){Text(tr("Undo this save","撤销本次保存"))}
+                }
+            }else{
             LazyColumn(
-                Modifier.fillMaxWidth().heightIn(max = 650.dp),
+                Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
@@ -164,49 +190,35 @@ internal fun AnchorageSaveFlow(
                     )
                 }
                 state.draft?.let { draft -> item { Text("%.5f, %.5f".format(draft.proposedLatitude, draft.proposedLongitude), fontWeight = FontWeight.Medium) } }
-                item { Text(tr("1. Confirm region", "1. 确认所在区域"), fontWeight = FontWeight.Bold) }
-                if (state.resolving) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                items(state.regionCandidates.indices.toList()) { index ->
-                    val candidate = state.regionCandidates[index]
-                    FilterChip(
-                        selected = state.selectedRegionIndex == index,
-                        onClick = { vm.selectRegion(index) },
-                        label = { Text("${candidate.displayName} · ${candidate.featureType.name.lowercase()}") },
-                    )
+                if(state.step==0){
+                    item { Text(tr("Choose or create the Place", "选择或创建地点"), fontWeight = FontWeight.Bold) }
+                    if (state.resolving) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                    items(state.regionCandidates.indices.toList()) { index -> val candidate=state.regionCandidates[index];FilterChip(state.selectedRegionIndex==index,{vm.selectRegion(index)},label={Text("${candidate.displayName} · ${candidate.featureType.name.lowercase()}")}) }
+                    item { FilterChip(state.selectedRegionIndex == null, { vm.selectRegion(null) }, label = { Text(tr("Leave region unclassified", "暂不归类区域")) }) }
+                    items(state.placeMatches){match->FilterChip(state.selectedPlaceId==match.place.id,{vm.selectPlace(match.place.id)},label={Text("${match.place.name} · ${match.distanceMeters.toInt()} m")})}
+                    item { FilterChip(state.selectedPlaceId==null,vm::selectNewPlace,label={Text(tr("Create a new Place","创建新地点"))}) }
+                    item { OutlinedTextField(state.placeName,vm::name,Modifier.fillMaxWidth().testTag("gis_place_name"),label={Text(tr("Place name *","地点名称 *"))},supportingText={if(state.selectedPlaceId!=null)Text(tr("Leave blank to keep the selected Place name.","留空保留所选地点名称。"))}) }
+                }else if(state.step==1){
+                    item { Text(tr("Match or create the exact Spot", "匹配或创建具体锚点"), fontWeight = FontWeight.Bold) }
+                    items(state.spotMatches){(spot,match)->FilterChip(state.selectedSpotId==spot.id,{vm.selectSpot(spot.id)},label={Text("${spot.name} · ${match.distanceMeters.toInt()} m · ${match.match.name.lowercase().replace('_',' ')}")})}
+                    item { FilterChip(state.selectedSpotId==null,{vm.selectSpot(null)},label={Text(tr("Create a distinct Spot in this Place","在该地点创建独立锚点"))}) }
+                    item { OutlinedTextField(state.spotName,vm::spotName,Modifier.fillMaxWidth(),label={Text(tr("Spot name","锚点名称"))}) }
+                    item { Text(tr("Distance is evidence, not an automatic duplicate rule. You decide whether uncertainty overlaps an existing Spot.","距离只是判断证据，不会自动判重；是否与已有锚点的误差范围重叠由你决定。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary) }
+                }else{
+                    item { Text(tr("Review automatic Visit snapshot", "确认自动生成的访问快照"), fontWeight = FontWeight.Bold) }
+                    state.draft?.let{draft->item{Text(listOfNotNull(draft.depthMeters?.let{"%.1f m depth".format(it)},draft.rodeMeters?.let{"${it.toInt()} m rode"},draft.alarmRadiusMeters?.let{"${it.toInt()} m alarm radius"}).joinToString(" · ").ifBlank{"—"});Text(tr("These values come from the completed Anchor session and are not re-entered here.","这些值来自已完成的锚泊会话，无需再次填写。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
+                    item { OutlinedTextField(state.placeNotes,vm::notes,Modifier.fillMaxWidth(),label={Text(tr("Place notes","地点备注"))}) }
+                    item { OutlinedTextField(state.visitNotes,vm::visitNotes,Modifier.fillMaxWidth(),label={Text(tr("This visit notes","本次访问备注"))}) }
+                    item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(tr("Favorite","收藏"));Switch(state.favorite,vm::favorite)} }
                 }
-                item { FilterChip(state.selectedRegionIndex == null, { vm.selectRegion(null) }, label = { Text(tr("Leave unclassified", "暂不归类")) }) }
-                item { Text(tr("2. Choose a nearby Place or create one", "2. 选择附近地点或新建地点"), fontWeight = FontWeight.Bold) }
-                items(state.placeMatches) { match ->
-                    FilterChip(
-                        selected = state.selectedPlaceId == match.place.id,
-                        onClick = { vm.selectPlace(match.place.id) },
-                        label = { Text("${match.place.name} · ${match.distanceMeters.toInt()} m") },
-                    )
-                }
-                item { FilterChip(state.selectedPlaceId == null, vm::selectNewPlace, label = { Text(tr("Create a new Place", "创建新的锚地地点")) }) }
-                item {
-                    OutlinedTextField(
-                        state.placeName, vm::name, Modifier.fillMaxWidth().testTag("gis_place_name"),
-                        label = { Text(tr("Place name *", "地点名称 *")) },
-                        supportingText = { if (state.selectedPlaceId != null) Text(tr("Leave blank to keep the selected Place name.", "留空以保留所选地点名称。")) },
-                    )
-                }
-                if (state.selectedPlaceId != null) {
-                    item { Text(tr("3. Match the exact Spot", "3. 匹配具体锚点"), fontWeight = FontWeight.Bold) }
-                    items(state.spotMatches) { (spot, match) ->
-                        FilterChip(
-                            state.selectedSpotId == spot.id, { vm.selectSpot(spot.id) },
-                            label = { Text("${spot.name} · ${match.distanceMeters.toInt()} m · ${match.match.name.lowercase().replace('_', ' ')}") },
-                        )
-                    }
-                    item { FilterChip(state.selectedSpotId == null, { vm.selectSpot(null) }, label = { Text(tr("Create a new Spot in this Place", "在该地点中新建锚点")) }) }
-                }
-                item { OutlinedTextField(state.spotName, vm::spotName, Modifier.fillMaxWidth(), label = { Text(tr("Spot name", "锚点名称")) }) }
-                item { OutlinedTextField(state.placeNotes, vm::notes, Modifier.fillMaxWidth(), label = { Text(tr("Place notes", "地点备注")) }) }
-                item { OutlinedTextField(state.visitNotes, vm::visitNotes, Modifier.fillMaxWidth(), label = { Text(tr("This visit notes", "本次访问备注")) }) }
-                item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(tr("Favorite", "收藏")); Switch(state.favorite, vm::favorite) } }
                 state.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
             }
-        },
-    )
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                if(state.step>0)OutlinedButton(vm::back,Modifier.weight(1f)){Text(tr("Back","上一步"))}else Spacer(Modifier.weight(1f))
+                if(state.step<2)Button(vm::next,Modifier.weight(1f)){Text(tr("Next","下一步"))}else Button(vm::save,enabled=!state.saving&&state.draft!=null,modifier=Modifier.weight(1f).testTag("confirm_gis_anchorage_save")){Text(if(state.saving)tr("Saving…","保存中…")else tr("Save","保存"))}
+            }
+            }
+          }
+        }
+    }
 }

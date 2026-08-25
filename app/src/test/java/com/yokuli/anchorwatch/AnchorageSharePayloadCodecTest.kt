@@ -54,7 +54,7 @@ class AnchorageSharePayloadCodecTest {
     }
 
     @Test fun v2KeepsPlaceSpotAndRegionContextWithoutVisitHistory(){
-        val payload=AnchorageSharePayloadV2(placeName="Smokehouse Bay",placeType="BAY",regionDisplayPath=listOf("Port FitzRoy","Aotea / Great Barrier Island"),spotName="Inner mud",latitude=-36.18,longitude=175.34,preferredAlarmRadiusMeters=55.0,typicalWaterDepthMeters=7.2,typicalRodeLengthMeters=45.0,seabedType=SeabedType.MUD.name,coordinateSource=AnchorageCoordinateSource.CONFIRMED_ANCHOR.name,approachNotes="Keep north of the reef",notes="Personal observation")
+        val payload=AnchorageSharePayloadV2(placeName="Smokehouse Bay",placeType="BAY",regionDisplayPath=listOf("Port FitzRoy","Aotea / Great Barrier Island"),spotName="Inner mud",latitude=-36.18,longitude=175.34,preferredAlarmRadiusMeters=55.0,typicalWaterDepthMeters=7.2,typicalRodeLengthMeters=45.0,seabedType=SeabedType.MUD.name,coordinateSource=AnchorageCoordinateSource.CONFIRMED_ANCHOR.name,approachNotes="Keep north of the reef",notes="Personal observation",protection=listOf(AnchorageShareProtectionSector("WIND","N","GOOD",.8),AnchorageShareProtectionSector("SWELL","N","PARTIAL",.6)))
         val encoded=AnchorageSharePayloadCodec.encodeV2(payload)
         val decoded=(AnchorageSharePayloadCodec.decode(encoded.uri) as AnchorageQrDecodeResult.FullV2).payload
         assertEquals(payload,decoded);assertFalse(encoded.uri.contains("visit",ignoreCase=true));assertTrue(encoded.uri.toByteArray().size<=AnchorageSharePayloadCodec.MAX_QR_URI_BYTES)

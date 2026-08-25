@@ -32,6 +32,7 @@ import com.yokuli.anchorwatch.domain.anchorage.AnchorageViewport
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageProtectionMedium
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageCompassSector
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageProtectionRating
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageInformationSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -49,7 +50,7 @@ internal const val UNASSIGNED_REGION_ID=-1L
 internal object AnchorageRegionFilterPolicy{
     fun matches(primaryRegionId:Long?,selectedRegionId:Long?)=when(selectedRegionId){null->true;UNASSIGNED_REGION_ID->primaryRegionId==null;else->primaryRegionId==selectedRegionId}
 }
-data class AnchorageFilterState(val favoriteOnly:Boolean=false,val planningStatus:AnchoragePlanningStatus?=null,val visitedOnly:Boolean=false)
+data class AnchorageFilterState(val favoriteOnly:Boolean=false,val planningStatus:AnchoragePlanningStatus?=null,val visitedOnly:Boolean=false,val frequentOnly:Boolean=false)
 data class AnchorageLibraryUiState(
     val allPlaces:List<AnchoragePlaceEntity> = emptyList(),
     val regions:List<AnchorageRegionEntity> = emptyList(),
@@ -64,14 +65,15 @@ data class AnchorageLibraryUiState(
 )
 
 @HiltViewModel class AnchorageLibraryViewModel @Inject constructor(private val app:Application,private val database:AppDatabase,private val library:AnchorageLibraryRepository,private val places:AnchoragePlaceRepository,private val search:AnchorageSearchRepository,private val saver:AnchorageSaveRepository,private val photos:AnchoragePhotoRepository,private val qr:AnchorageV2QrImageGenerator):ViewModel(){
-    private val visible=MutableStateFlow<List<AnchoragePlaceEntity>>(emptyList());private val selected=MutableStateFlow<AnchoragePlaceBundle?>(null);private val controls=MutableStateFlow(Controls());private var viewportJob:Job?=null;private var queryJob:Job?=null
+    private val visible=MutableStateFlow<List<AnchoragePlaceEntity>?>(null);private val selected=MutableStateFlow<AnchoragePlaceBundle?>(null);private val controls=MutableStateFlow(Controls());private var viewportJob:Job?=null;private var queryJob:Job?=null
     private val planning=MutableStateFlow<Pair<Double,Double>?>(null);val planningPoint=planning.asStateFlow()
     private data class Controls(val regionId:Long?=null,val filters:AnchorageFilterState=AnchorageFilterState(),val mode:AnchorageDisplayMode=AnchorageDisplayMode.MAP,val query:String="")
     private val libraryIndex=combine(library.places,database.anchorageRegionDao().observeAll()){all,regions->all to regions}
     val state:StateFlow<AnchorageLibraryUiState> = combine(libraryIndex,visible,selected,controls,library.collections){(all,regions),inViewport,selectedPlace,control,collections->
-        val base=(if(control.query.isBlank())inViewport.ifEmpty{all}else inViewport).filter{place->
+        val base=(if(control.query.isBlank())inViewport?:all else inViewport.orEmpty()).filter{place->
             val inRegion=AnchorageRegionFilterPolicy.matches(place.primaryRegionId,control.regionId)
-            inRegion&&(!control.filters.favoriteOnly||place.favorite)&&(!control.filters.visitedOnly||place.visitCountCached+place.legacyVisitCount>0)&&(control.filters.planningStatus==null||place.planningStatus==control.filters.planningStatus.name)
+            val visits=place.visitCountCached+place.legacyVisitCount
+            inRegion&&(!control.filters.favoriteOnly||place.favorite)&&(!control.filters.visitedOnly||visits>0)&&(!control.filters.frequentOnly||visits>=3)&&(control.filters.planningStatus==null||place.planningStatus==control.filters.planningStatus.name)
         }
         AnchorageLibraryUiState(all,regions,base,selectedPlace,control.regionId,control.filters,control.mode,control.query,false,collections)
     }.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5_000),AnchorageLibraryUiState())
@@ -91,16 +93,17 @@ data class AnchorageLibraryUiState(
         val matches=saver.nearbyPlaceMatches(draft,null,value.placeName)
         val likely=matches.firstOrNull{it.contains&&it.score>=80.0}
         val result=saver.save(AnchorageSaveRequest(draft,AnchorageSavePlaceInput(existingPlaceId=likely?.place?.id,displayName=likely?.place?.name?:value.placeName,personalNotes=value.notes),AnchorageSaveSpotInput(name=value.spotName,approachNotes=value.approachNotes,personalNotes=value.notes)))
+        if(value.protection.isNotEmpty())database.anchorageMetadataDao().upsertProtection(value.protection.map{sector->AnchorageProtectionSectorEntity(result.placeId,sector.medium,sector.sector,sector.rating,"IMPORTED",sector.confidence,updatedAt=System.currentTimeMillis())})
         selected.value=library.bundle(result.placeId)
     }
     fun importPhoto(uri:Uri)=viewModelScope.launch{selected.value?.place?.id?.let{id->runCatching{photos.import(id,uri)};selected.value=library.bundle(id)}}
     fun deletePhoto(value:AnchoragePhotoEntity)=viewModelScope.launch{runCatching{photos.delete(value)};selected.value=library.bundle(value.placeId)}
     fun photoPath(value:AnchoragePhotoEntity,thumbnail:Boolean=true)=photos.file(value,thumbnail).absolutePath
-    fun shareSpot(spotId:Long)=viewModelScope.launch{selected.value?.let{bundle->bundle.spots.firstOrNull{it.id==spotId}?.let{spot->runCatching{val file=qr.generate(bundle.place,spot,bundle.regionPath.map{it.displayName});val uri=FileProvider.getUriForFile(app,"${app.packageName}.files",file);app.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/png").putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),"Share anchorage").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}}}}
+    fun shareSpot(spotId:Long)=viewModelScope.launch{selected.value?.let{bundle->bundle.spots.firstOrNull{it.id==spotId}?.let{spot->runCatching{val file=qr.generate(bundle.place,spot,bundle.regionPath.map{it.displayName},bundle.protection);val uri=FileProvider.getUriForFile(app,"${app.packageName}.files",file);app.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/png").putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),"Share anchorage").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}}}}
     fun setFavorite(value:Boolean)=viewModelScope.launch{selected.value?.place?.let{place->places.save(place.copy(favorite=value,updatedAt=System.currentTimeMillis()));selected.value=library.bundle(place.id)}}
     fun setPlanning(value:AnchoragePlanningStatus)=viewModelScope.launch{selected.value?.place?.let{place->places.save(place.copy(planningStatus=value.name,updatedAt=System.currentTimeMillis()));selected.value=library.bundle(place.id)}}
     fun toggleCollection(collectionId:Long)=viewModelScope.launch{selected.value?.let{bundle->if(bundle.collections.any{it.id==collectionId})database.anchorageCollectionDao().removeMembership(collectionId,bundle.place.id)else database.anchorageCollectionDao().setMembership(AnchorageCollectionPlaceCrossRef(collectionId,bundle.place.id,System.currentTimeMillis()));selected.value=library.bundle(bundle.place.id)}}
-    fun cycleProtection(medium:AnchorageProtectionMedium,sector:AnchorageCompassSector)=viewModelScope.launch{selected.value?.let{bundle->val existing=bundle.protection.firstOrNull{it.medium==medium.name&&it.sector==sector.name};val values=AnchorageProtectionRating.entries;val next=values[(values.indexOf(runCatching{AnchorageProtectionRating.valueOf(existing?.rating?:"UNKNOWN")}.getOrDefault(AnchorageProtectionRating.UNKNOWN))+1)%values.size];database.anchorageMetadataDao().upsertProtection(listOf(AnchorageProtectionSectorEntity(bundle.place.id,medium.name,sector.name,next.name,"USER",notes=existing?.notes.orEmpty(),updatedAt=System.currentTimeMillis())));selected.value=library.bundle(bundle.place.id)}}
+    fun setProtection(medium:AnchorageProtectionMedium,sector:AnchorageCompassSector,rating:AnchorageProtectionRating,source:AnchorageInformationSource,notes:String)=viewModelScope.launch{selected.value?.let{bundle->database.anchorageMetadataDao().upsertProtection(listOf(AnchorageProtectionSectorEntity(bundle.place.id,medium.name,sector.name,rating.name,source.name,notes=notes.trim(),updatedAt=System.currentTimeMillis())));selected.value=library.bundle(bundle.place.id)}}
     fun planAt(latitude:Double,longitude:Double){planning.value=latitude to longitude}
     fun cancelPlan(){planning.value=null}
     fun savePlan(name:String,spotName:String,notes:String)=viewModelScope.launch{planning.value?.let{(lat,lon)->runCatching{saver.save(AnchorageSaveRequest(AnchorageSaveDraftFactory.fromMap(lat,lon),AnchorageSavePlaceInput(displayName=name.trim(),planningStatus=AnchoragePlanningStatus.WANT_TO_VISIT,personalNotes=notes,favorite=true),AnchorageSaveSpotInput(name=spotName.trim().ifBlank{"Chart reference"}))).also{result->planning.value=null;selected.value=library.bundle(result.placeId)}}}}

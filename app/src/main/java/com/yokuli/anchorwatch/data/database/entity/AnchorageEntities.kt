@@ -180,7 +180,7 @@ data class AnchorageProtectionSectorEntity(val placeId:Long,val medium:String,va
 data class AnchorageFacilityEntity(val placeId:Long,val type:String,val availability:String,val source:String,val notes:String="",val updatedAt:Long)
 
 @Entity(
-    tableName="anchorage_personal_ratings",
+    tableName="anchorage_personal_assessments",
     foreignKeys=[ForeignKey(entity=AnchoragePlaceEntity::class,parentColumns=["id"],childColumns=["placeId"],onDelete=ForeignKey.CASCADE)],
 )
 data class AnchoragePersonalRatingEntity(

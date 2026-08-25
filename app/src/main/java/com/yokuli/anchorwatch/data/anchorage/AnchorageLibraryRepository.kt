@@ -46,14 +46,22 @@ data class AnchoragePlaceBundle(
 @Singleton class AnchorageVisitRepository @Inject constructor(private val database:AppDatabase,private val intelligence:AnchorageIntelligenceRepository=AnchorageIntelligenceRepository(database)){
     suspend fun save(value:AnchorageVisitEntity):Long=database.withTransaction{
         require(database.anchoragePlaceDao().get(value.placeId)!=null);require(value.spotId==null||database.anchorageSpotDao().get(value.spotId)!=null)
-        val id=if(value.id==0L)database.anchorageVisitDao().insert(value)else{database.anchorageVisitDao().update(value);value.id}
+        require(value.id==0L){"Anchorage Visits are immutable snapshots; create a new Visit instead of editing one"}
+        val id=database.anchorageVisitDao().insert(value)
         value.anchorSessionId?.let{sessionId->database.anchorDao().session(sessionId)?.let{session->database.anchorDao().updateSession(session.copy(anchoragePlaceId=value.placeId,anchorageSpotId=value.spotId,anchorageVisitId=id))}}
         refreshCounts(value.placeId,value.spotId);intelligence.rebuild(value.placeId);id
     }
     suspend fun forPlace(placeId:Long)=database.anchorageVisitDao().forPlaceNow(placeId)
     private suspend fun refreshCounts(placeId:Long,spotId:Long?){
-        val visits=database.anchorageVisitDao().forPlaceNow(placeId);database.anchoragePlaceDao().get(placeId)?.let{database.anchoragePlaceDao().update(it.copy(visitCountCached=visits.size,lastVisitedAt=visits.maxOfOrNull(AnchorageVisitEntity::startedAt),updatedAt=System.currentTimeMillis()))}
-        spotId?.let{id->database.anchorageSpotDao().get(id)?.let{spot->val spotVisits=visits.filter{it.spotId==id};database.anchorageSpotDao().update(spot.copy(visitCountCached=spotVisits.size,lastVisitedAt=spotVisits.maxOfOrNull(AnchorageVisitEntity::startedAt),updatedAt=System.currentTimeMillis()))}}
+        val visits=database.anchorageVisitDao().forPlaceNow(placeId)
+        database.anchoragePlaceDao().get(placeId)?.let{place->
+            val importedBaseline=if(place.legacySavedAnchorageId!=null&&visits.any{it.anchorSessionId!=null})1 else 0
+            database.anchoragePlaceDao().update(place.copy(visitCountCached=(visits.size-importedBaseline).coerceAtLeast(0),lastVisitedAt=visits.maxOfOrNull(AnchorageVisitEntity::startedAt)?:place.lastVisitedAt,updatedAt=System.currentTimeMillis()))
+        }
+        spotId?.let{id->database.anchorageSpotDao().get(id)?.let{spot->
+            val spotVisits=visits.filter{it.spotId==id};val importedBaseline=if(spot.legacySavedAnchorageId!=null&&spotVisits.any{it.anchorSessionId!=null})1 else 0
+            database.anchorageSpotDao().update(spot.copy(visitCountCached=(spotVisits.size-importedBaseline).coerceAtLeast(0),lastVisitedAt=spotVisits.maxOfOrNull(AnchorageVisitEntity::startedAt)?:spot.lastVisitedAt,updatedAt=System.currentTimeMillis()))
+        }}
     }
 }
 

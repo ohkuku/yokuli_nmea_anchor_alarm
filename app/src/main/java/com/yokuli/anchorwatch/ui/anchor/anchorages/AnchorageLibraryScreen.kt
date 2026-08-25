@@ -32,9 +32,11 @@ import com.yokuli.anchorwatch.tr
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.pow
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnchorageLibraryScreen(
     openGoogleMaps: (Double, Double) -> Unit,
@@ -46,6 +48,7 @@ fun AnchorageLibraryScreen(
     var showFilters by remember { mutableStateOf(false) }
     var showRegions by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showFullDetail by remember { mutableStateOf(false) }
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->uri?.let(vm::importPhoto)}
 
     Column(
@@ -118,15 +121,21 @@ fun AnchorageLibraryScreen(
         }
     }
 
-    state.selectedPlace?.let { bundle ->
-        // One selection opens one complete surface. The former preview ->
-        // details double-hop duplicated the same Place and made Approach look
-        // as though it started in a hidden second page.
+    LaunchedEffect(state.selectedPlace?.place?.id){showFullDetail=false}
+    state.selectedPlace?.takeIf{!showFullDetail}?.let{bundle->
+        AnchoragePlaceCompactSheet(
+            bundle=bundle,
+            dismiss={vm.selectPlace(null)},
+            viewDetails={showFullDetail=true},
+            approachSpot={spotId->vm.selectPlace(null);approachSpot(spotId)},
+        )
+    }
+    state.selectedPlace?.takeIf{showFullDetail}?.let { bundle ->
         AnchoragePlaceDetailDialog(
-            bundle,state.collections,{vm.selectPlace(null)},
+            bundle,state.collections,{showFullDetail=false;vm.selectPlace(null)},
             {spotId->vm.selectPlace(null);approachSpot(spotId)},
             openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,
-            vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection,
+            vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::setProtection,
         )
     }
     if (showFilters) AnchorageFiltersSheet(state.filters, { showFilters = false }) {
@@ -149,9 +158,32 @@ fun AnchorageLibraryScreen(
     planningPoint?.let{point->PlannedAnchorageDialog(point,{vm.cancelPlan()},vm::savePlan)}
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnchoragePlaceCompactSheet(
+    bundle:AnchoragePlaceBundle,
+    dismiss:()->Unit,
+    viewDetails:()->Unit,
+    approachSpot:(Long)->Unit,
+){
+    ModalBottomSheet(onDismissRequest=dismiss,modifier=Modifier.testTag("anchorage_place_compact_sheet")){
+        Column(Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text(bundle.place.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+            Text(bundle.regionPath.joinToString(" · "){it.displayName}.ifBlank{tr("Unclassified region","未归类区域")},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("${bundle.spots.size} Spots · ${bundle.place.visitCountCached+bundle.place.legacyVisitCount} visits","${bundle.spots.size} 个锚点 · ${bundle.place.visitCountCached+bundle.place.legacyVisitCount} 次访问"),style=MaterialTheme.typography.bodyMedium)
+            if(bundle.place.description.isNotBlank())Text(bundle.place.description,maxLines=2,style=MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                Button(viewDetails,Modifier.weight(1f).testTag("view_anchorage_place_details")){Text(tr("View details","查看详情"))}
+                bundle.spots.singleOrNull()?.let{spot->OutlinedButton({approachSpot(spot.id)},Modifier.weight(1f)){Text(tr("Approach Spot","接近锚点"))}}
+            }
+        }
+    }
+}
+
 @OptIn(FlowPreview::class)
 @Composable
 private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryViewModel, modifier: Modifier) {
+    val scope=rememberCoroutineScope()
     val first = state.visiblePlaces.firstOrNull() ?: state.allPlaces.firstOrNull()
     val camera = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(
@@ -180,7 +212,14 @@ private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryVie
             place.visitCountCached + place.legacyVisitCount, 0,
         )
     }
-    val aggregates = AnchorageVisualClusterer.aggregate(models, camera.position.zoom)
+    val aggregates = if(camera.position.zoom<7f){
+        val regions=state.regions.associateBy{it.id}
+        state.visiblePlaces.groupBy{it.primaryRegionId}.flatMap{(regionId,places)->
+            val region=regionId?.let(regions::get)
+            if(region!=null)listOf(AnchorageRegionAggregate("region:${region.id}",region.centerLatitude,region.centerLongitude,places.size,places.map{it.id}))
+            else AnchorageVisualClusterer.aggregate(models.filter{model->places.any{it.id==model.id}},camera.position.zoom)
+        }
+    }else AnchorageVisualClusterer.aggregate(models, camera.position.zoom)
     GoogleMap(
         modifier.fillMaxWidth().testTag("anchorage_library_map"),
         cameraPositionState = camera,
@@ -193,6 +232,7 @@ private fun AnchorageMap(state: AnchorageLibraryUiState, vm: AnchorageLibraryVie
                     remember(aggregate.latitude, aggregate.longitude) { MarkerState(LatLng(aggregate.latitude, aggregate.longitude)) },
                     title = tr("${aggregate.count} saved places", "${aggregate.count} 个收藏地点"),
                     snippet = tr("Zoom in to separate places", "放大以查看各地点"),
+                    onClick={scope.launch{camera.animate(com.google.android.gms.maps.CameraUpdateFactory.newLatLngZoom(LatLng(aggregate.latitude,aggregate.longitude),(camera.position.zoom+2f).coerceAtMost(11f)))};true},
                 )
             } else {
                 state.visiblePlaces.firstOrNull { it.id == aggregate.placeIds.single() }?.let { place ->
@@ -256,6 +296,7 @@ private fun AnchorageFiltersSheet(value: AnchorageFilterState, dismiss: () -> Un
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilterChip(draft.favoriteOnly, { draft = draft.copy(favoriteOnly = !draft.favoriteOnly) }, label = { Text(tr("Favorites", "收藏")) })
                 FilterChip(draft.visitedOnly, { draft = draft.copy(visitedOnly = !draft.visitedOnly) }, label = { Text(tr("Visited", "去过")) })
+                FilterChip(draft.frequentOnly, { draft = draft.copy(frequentOnly = !draft.frequentOnly) }, label = { Text(tr("Frequent (3+)", "常用（3 次以上）")) })
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(AnchoragePlanningStatus.WANT_TO_VISIT, AnchoragePlanningStatus.BACKUP, AnchoragePlanningStatus.AVOID).forEach { status ->
                         FilterChip(

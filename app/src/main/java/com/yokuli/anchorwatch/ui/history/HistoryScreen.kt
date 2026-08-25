@@ -154,7 +154,7 @@ internal fun HistoryPage(state:MainUiState,vm:MainViewModel,fixedTab:Int?=null){
     replayTrip?.let{trip->TripReplayDialog(trip,vm){replayTrip=null}}
     pendingAiTrip?.let{trip->AiExportPrivacyDialog({pendingAiTrip=null}){pendingAiTrip=null;vm.exportTripAiSource(trip)}}
     pendingAiAnchor?.let{session->AiExportPrivacyDialog({pendingAiAnchor=null}){pendingAiAnchor=null;vm.exportAnchorAiSource(session)}}
-    saveSession?.let{session->com.yokuli.anchorwatch.ui.anchor.anchorages.AnchorageSaveFlow(session=session,dismiss={saveSession=null},complete={saveSession=null})}
+    saveSession?.let{session->com.yokuli.anchorwatch.ui.anchor.anchorages.AnchorageSaveFlow(session=session,dismiss={saveSession=null},complete={saveSession=null;vm.rememberAnchorSection(2)})}
     editingAnchorage?.let{value->AnchorageEditor(value,{editingAnchorage=null}){vm.saveAnchorage(it);editingAnchorage=null}}
     detailAnchorage?.let{saved->AnchorageDetailDialog(saved,{detailAnchorage=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{detailAnchorage=null;vm.approachSavedAnchorage(saved.id)},approachEnabled=state.active==null)}
     pendingAnchorageDelete?.let{value->AlertDialog(onDismissRequest={pendingAnchorageDelete=null},title={Text(tr("Delete saved anchorage?","删除收藏锚地？"))},text={Text(tr("This removes only the saved place. Anchor session history is unchanged.","只会删除收藏地点，不影响锚泊会话历史。"))},confirmButton={Button({vm.deleteAnchorage(value.id);pendingAnchorageDelete=null},colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text(tr("Delete","删除"))}},dismissButton={TextButton({pendingAnchorageDelete=null}){Text(tr("Cancel","取消"))}})}

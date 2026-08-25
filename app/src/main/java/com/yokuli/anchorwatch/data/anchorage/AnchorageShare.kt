@@ -20,6 +20,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity
 import com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity
+import com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity
 
 data class AnchorageShareCardRow(val label:String,val value:String)
 data class AnchorageShareCardModel(val coordinateQuality:String,val rows:List<AnchorageShareCardRow>,val notes:String)
@@ -199,8 +200,8 @@ class AnchorageQrImageGenerator @Inject constructor(
 
 @Singleton
 class AnchorageV2QrImageGenerator @Inject constructor(@ApplicationContext private val context:Context){
-    fun generate(place:AnchoragePlaceEntity,spot:AnchorageSpotEntity,regionPath:List<String>):File{
-        val payload=AnchorageSharePayloadV2(placeName=place.displayName,placeType=place.placeType,regionDisplayPath=regionPath,spotName=spot.name,latitude=spot.latitude,longitude=spot.longitude,preferredAlarmRadiusMeters=spot.preferredAlarmRadiusMeters,typicalWaterDepthMeters=spot.typicalWaterDepthMeters,typicalRodeLengthMeters=spot.typicalRodeLengthMeters,seabedType=spot.seabedType,customSeabedText=spot.customSeabedText,coordinateSource=spot.coordinateSource,coordinateUncertaintyMeters=spot.coordinateUncertaintyMeters,approachNotes=spot.approachNotes,notes=spot.personalNotes)
+    fun generate(place:AnchoragePlaceEntity,spot:AnchorageSpotEntity,regionPath:List<String>,protection:List<AnchorageProtectionSectorEntity> = emptyList()):File{
+        val payload=AnchorageSharePayloadV2(placeName=place.displayName,placeType=place.placeType,regionDisplayPath=regionPath,spotName=spot.name,latitude=spot.latitude,longitude=spot.longitude,preferredAlarmRadiusMeters=spot.preferredAlarmRadiusMeters,typicalWaterDepthMeters=spot.typicalWaterDepthMeters,typicalRodeLengthMeters=spot.typicalRodeLengthMeters,seabedType=spot.seabedType,customSeabedText=spot.customSeabedText,coordinateSource=spot.coordinateSource,coordinateUncertaintyMeters=spot.coordinateUncertaintyMeters,approachNotes=spot.approachNotes,notes=spot.personalNotes,protection=protection.take(16).map{AnchorageShareProtectionSector(it.medium,it.sector,it.rating,it.confidence)})
         val encoded=AnchorageSharePayloadCodec.encodeV2(payload)
         val matrix=QRCodeWriter().encode(encoded.uri,BarcodeFormat.QR_CODE,720,720,mapOf(EncodeHintType.MARGIN to 3,EncodeHintType.CHARACTER_SET to "UTF-8",EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))
         val image=Bitmap.createBitmap(1080,1380,Bitmap.Config.ARGB_8888);val canvas=Canvas(image);val paint=Paint(Paint.ANTI_ALIAS_FLAG)
