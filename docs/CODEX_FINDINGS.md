@@ -349,7 +349,7 @@
 - Reproduction steps: configure TCP Server in Data → Output; Start it, then change/stop the common output product or exercise a Boat-output lifecycle refresh. Observe that the phone listener is treated as a Boat destination and shares its Stop/generation/status.
 - Root cause: a common Phone/App sentence feed was mistaken for common destination ownership. Data-plane reuse leaked into control-plane settings and lifecycle.
 - Failing test: updated `NmeaDeviceOutputPolicyTest.tcpServerIsNotABoatNetworkOutputTransport`; `AnchorSafetyFlowTest.legacySharingRequestMigratesToIndependentStoppedPhoneServiceWithoutOpeningASocket`; new direction-selection UI story and product-boundary unit coverage.
-- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Fix commit: **`53bf3c2` — `feat(nmea): separate boat injection from phone server`**
 - Verification result: **Code written; tests deliberately NOT RUN. Boat supplement no longer injects/owns `NmeaSharingServer`. Phone NMEA service has a separate DataStore-backed configuration, process-local lease, runtime, encoder state, resource owner, diagnostics and UI destination. Both may run together. Legacy TCP-server routes migrate stopped and are rejected below UI.**
 - Real hardware verified: **No.**
 - Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL TWO-DEVICE QA REQUIRED**
@@ -362,7 +362,7 @@
 - Reproduction steps: issue many concurrent `start(samePort)` calls while the server is stopped, then connect a client. Before serialization the lifecycle could visibly enter STARTING/STOPPED and require another tap.
 - Root cause: check → stop/join → launch was not one serialized lifecycle transaction; configuration persistence and the live lease were also exposed as one operation in the common Output repository.
 - Failing test: `NmeaSharingServerTest.rapidDuplicateStartIsIdempotentAndCannotCreateAOneMillisecondSession`.
-- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Fix commit: **`53bf3c2` — `feat(nmea): separate boat injection from phone server`**
 - Verification result: **Code written; test deliberately NOT RUN. A fair lifecycle lock now serializes complete Start/Stop transactions. Same-port Start is idempotent inside that lock. Local service configuration saving cannot mutate its live lease.**
 - Real hardware verified: **No.**
 - Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL START/SOAK QA REQUIRED**
