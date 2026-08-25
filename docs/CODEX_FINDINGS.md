@@ -13,6 +13,15 @@
 - Baseline assemble: **NOT RUN — same instruction.**
 - Evidence method for this pass: source trace, deterministic regression tests written but not executed, static diff inspection, and a fillable manual QA plan.
 
+## Anchorage Library FINAL pass lock
+
+- Base commit: `f22c8fe`
+- Working branch: `codex/anchorage-library-final`
+- Room schema: `20 → 21`
+- State-machine commit: `ee00062`
+- Library/schema implementation commit: `e3b02a0`
+- Verification: **532/532 Debug JVM tests passed; `lintDebug` passed; `assembleDebug` passed; unit and instrumentation Kotlin sources compiled. Emulator/device tests were not run.**
+
 ## Finding P0-001 — Anchor primary action can appear to do nothing
 
 - Severity: **P0 / safety-critical operability**
@@ -177,7 +186,7 @@
 - Reproduction steps: enter a closed or refusing TCP endpoint, tap Connect once, then inspect the status/error and server connection attempts; repeat with auto reconnect enabled and with several rapid Reconnect taps.
 - Root cause: transport ownership, presentation state and retry policy were coupled in one loop without a latched failure state, monotonic transport-generation diagnostics or a bounded retry circuit.
 - Failing test: `NmeaConnectionManagerTest.refusedConnectionKeepsOneVisibleErrorAndDoesNotOpenAnotherSocket`; `automaticOpenFailuresBackOffAndStopAfterTheBoundedCircuitLimit`; `explicitReconnectReplacesSameProfileOnceAndRapidTapsAreDebounced`; `P0NmeaEndpointStoryTest.formalInputOwnsOneSocketWhileQuietThenReceivesLater`.
-- Fix commit: **PENDING**
+- Fix commit: **`f22c8fe`**
 - Verification result: **Passed `NmeaConnectionManagerTest` (9/9) and `P0NmeaEndpointStoryTest` (2/2) using loopback fake endpoints. Final `assembleDebug` passed in 30s. No real endpoint was contacted.**
 - Real hardware verified: **No — fragile NMEA gateway remains UNVERIFIED_HARDWARE.**
 - Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY QA**
@@ -190,7 +199,7 @@
 - Reproduction steps: configure independent TX with the exact RX host+port before connecting RX and try endpoint test/start; repeat while RX is open. Separately recalibrate vessel zero after enabling formal output and attempt to restart without reconfirming mount/alignment.
 - Root cause: calibration facts had timestamps but no version binding, and endpoint collision was a warning rather than a mandatory policy enforced at UI, ViewModel, runtime, connection and writer boundaries.
 - Failing test: `NmeaDeviceOutputPolicyTest.duplicateIndependentTxIsBlockedByConfigurationEvenBeforeRxEverOpened`; `protectedWriterNeverCreatesDuplicateSocketWhenRxIsAlreadyOpen`; `protectedWriterNeverCreatesDuplicateSocketBeforeRxHasEverOpened`; `NmeaStreamReadinessPolicyTest.formalOutputRequiresVersionMatchedZeroMountAndHeadingAlignment`; `suspectMountImmediatelyBlocksFormalOutput`.
-- Fix commit: **PENDING**
+- Fix commit: **`f22c8fe`**
 - Verification result: **Passed `NmeaDeviceOutputPolicyTest` (18/18) and `NmeaStreamReadinessPolicyTest` (6/6), including the open-RX and never-opened-RX zero-new-socket cases. Final `assembleDebug` passed in 30s. Tests used loopback sockets only.**
 - Real hardware verified: **No — vessel mounting and the actual TX/RX gateway ports remain UNVERIFIED_HARDWARE.**
 - Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY/SENSOR QA**
@@ -203,7 +212,46 @@
 - Reproduction steps: start normal phone output, feed a Boat HDT/VHW candidate, hold phone heading constant, then Stop during a blocked dedicated connect or while heading batches are queued. Separately start the old Sharing server and observe raw Boat sentences using a different feed.
 - Root cause: output source policy, feed generation, transport ownership and lifecycle were split across two engines; Stop did not own a monotonic session lease or the in-flight connect candidate.
 - Failing test: `AnchorWatchNmeaPublisherTest.constantHeadingHasFiveHertzHeartbeatForTenMinutesWithoutBlankSentence`; `boatCandidatesNeverSuppressOrRewriteTheSelectedAnchorWatchHeading`; `stopInvalidatesEveryOldPublicationGeneration`; `NmeaDeviceOutputPolicyTest.stopClosesAnInFlightConnectCandidateInsteadOfWaitingForTimeout`; `NmeaSharingServerTest.listeningWithoutAClientNeverClaimsASentenceWasSent`.
-- Fix commit: **PENDING**
+- Fix commit: **`f22c8fe`**
 - Verification result: **One `AnchorWatchNmeaPublisher` now generates Phone GNSS, calibrated phone vessel heading/motion, phone pressure and App-derived wind. TCP client/server, UDP and advanced same-socket consume that same bounded latest-value feed. Legacy Sharing migrates stopped; raw Boat forwarding and the second runtime were deleted. Stop invalidates generation, closes connect candidates/transports, waits for the writer lease, clears Live TX and retains a separately labelled last session. `testDebugUnitTest` passed 523/523, `lintDebug` passed, and `assembleDebug` produced the APK. Tests used only deterministic clocks, loopback/fake TCP endpoints and local Android build tools; no real NMEA endpoint was contacted.**
 - Real hardware verified: **No — do not connect repeatedly to the user's fragile gateway. Run the manual receiver matrix once with packet capture.**
 - Status: **FIXED — UNIT/LINT/DEBUG BUILD PASSED; AWAITING ONE CONTROLLED HARDWARE QA RUN**
+
+## Finding P0-016 — Saved anchorage discovery and approach had two competing identities
+
+- Severity: **P0 / navigation-state integrity**
+- User story: a saved Place/Spot may be Nearby, Approaching, Arrived, linked to an active anchor, or in departure cooldown—but never several at once. Editing or map clustering must not change the selected target.
+- Evidence: `MainViewModel` persisted `selectedApproachClusterId` while the map rebuilt `saved:*` clusters; `GisNearbyAnchorageCard` separately queried Place/Spot rows and the Watch bottom sheet rendered a second legacy nearby prompt.
+- Reproduction steps: save several close Spots, enter the one-nautical-mile trigger, start Approach, edit/delete a nearby record, then background/restore the App. Observe duplicate prompts and target identity derived from a visual cluster.
+- Root cause: normalized Place/Spot storage had been projected back through the legacy SavedAnchorage cluster state instead of owning one explicit product state.
+- Failing test: `AnchorageExperienceStateTest`; rewritten `AnchorageApproachStoryTest`.
+- Fix commit: **`ee00062`**
+- Verification result: **A persisted, mutually exclusive Place/Spot state machine now owns Browsing, Nearby, Approaching, Arrived, Anchored and DepartureCooldown. Guidance and map selection use stable Room IDs; the duplicate Watch-sheet prompt and live cluster projection were removed. `AnchorageExperienceStateTest` passed as part of the 532/532 JVM gate; all instrumentation sources compile.**
+- Real hardware verified: **No — execute Anchorage QA section on a real moving phone/boat source.**
+- Status: **FIXED — JVM/LINT/DEBUG BUILD PASSED; AWAITING MANUAL GPS QA**
+
+## Finding P1-017 — Anchorage save and detail flows hid decisions in long AlertDialogs
+
+- Severity: **P1 / destructive choice clarity and accessibility**
+- User story: saving a completed session is a stepped Place → Spot → Visit decision; an 80 m Spot is allowed; save success identifies exactly what was created and can be undone. Details must be a complete scrollable surface.
+- Evidence: the old save dialog mixed region, Place, Spot, notes and review in one list; compatibility code rejected a fixed 75 m duplicate; detail used an oversized `AlertDialog` and protection used eight abbreviated chips on one row.
+- Reproduction steps: save a session near an existing Spot with large or small coordinate uncertainty; on a narrow/high-font-scale phone attempt to review every field and protection sector.
+- Root cause: a legacy card editor remained in the write path after the normalized repository and uncertainty matcher were introduced.
+- Failing test: `AnchorageMatchEnginesTest.anEightyMetreSpotIsAllowedWhenUncertaintyDoesNotOverlap`; `AnchorageSaveFlowRepositoryTest.completedSaveCanUndoOnlyItsNewPlaceSpotAndVisit`.
+- Fix commit: **`ee00062`, `e3b02a0`**
+- Verification result: **Save is now a full-screen three-step flow, requires an explicit Spot decision when matches exist, creates immutable Visit snapshots transactionally, reports Place/Spot IDs and supports scoped Undo. Detail is full-screen; map selection is compact; wind/swell protection uses separate 3×3 compass editors. Fixed-distance rejection was removed. JVM/lint/build gates passed and all device tests compile.**
+- Real hardware verified: **No — high font scale, TalkBack and rotation remain manual QA items.**
+- Status: **FIXED — JVM/LINT/DEBUG BUILD PASSED; AWAITING UI QA**
+
+## Finding P1-018 — Legacy visit counts were presented twice after GIS migration
+
+- Severity: **P1 / data correctness**
+- User story: a legacy summary count remains a summary; the one linked migrated Visit must not be added to that same count again.
+- Evidence: migration 19→20 copied `saved_anchorages.visitCount` into both `legacyVisitCount` and `visitCountCached`, while UI totals add those columns.
+- Reproduction steps: migrate a legacy row with `visitCount=3` and a valid source session; open the Place list and compare the displayed count with the source row.
+- Root cause: cached normalized Visits and imported aggregate history were not separated during migration.
+- Failing test: `Migration5To6Test.migration19To20KeepsEveryLegacyRowAndCreatesPlaceSpotVisitLinks` schema-21 assertions.
+- Fix commit: **`e3b02a0`**
+- Verification result: **Schema 21 renames the assessment table to `anchorage_personal_assessments`, resets cached counts only for legacy rows, and Visit refresh subtracts the imported linked-session baseline. New installations receive the corrected 19→20 values directly. Migration and repository instrumentation sources compile; the exported schema is committed.**
+- Real hardware verified: **Not applicable; Room migration test is the authority. Device migration test is written but not executed in this turn.**
+- Status: **FIXED IN CODE — MIGRATION SOURCE COMPILES; AWAITING DEVICE MIGRATION GATE**
