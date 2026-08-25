@@ -120,7 +120,11 @@ private fun AnchorageOverview(bundle: AnchoragePlaceBundle,collections:List<Anch
         }}
         item{Text(protectionSummary(bundle.protection,selectedMedium),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         item{AnchorageProtectionCompass(selectedMedium,bundle.protection){editingSector=it}}
-        bundle.rating?.let { rating -> item { DetailLine(tr("Preference", "个人偏好"), rating.overallPreference) } }
+        bundle.assessment?.let { assessment ->
+            item { DetailLine(tr("Would return", "是否还会再来"), wouldReturnLabel(assessment.wouldReturn)) }
+            item { DetailLine(tr("Holding / Comfort / Shore access", "抓底 / 舒适 / 上岸"), "${assessmentLabel(assessment.holding)} · ${assessmentLabel(assessment.comfort)} · ${assessmentLabel(assessment.shoreAccess)}") }
+            if(assessment.notes.isNotBlank())item{Text(assessment.notes,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        }
         if (bundle.facilities.isNotEmpty()) item { Text(bundle.facilities.joinToString { it.type }, style = MaterialTheme.typography.bodySmall) }
     }
     editingSector?.let{sector->
@@ -184,6 +188,8 @@ private fun ProtectionSectorEditor(medium:AnchorageProtectionMedium,sector:Ancho
     val parts=listOfNotNull(directions("GOOD").takeIf{it.isNotBlank()}?.let{tr("$it good","$it 良好")},directions("PARTIAL").takeIf{it.isNotBlank()}?.let{tr("$it partial","$it 部分")},directions("EXPOSED").takeIf{it.isNotBlank()}?.let{tr("$it exposed","$it 暴露")})
     return parts.joinToString(" · ").ifBlank{tr("No personal protection observations yet.","尚无个人遮蔽观测。")}
 }
+@Composable private fun wouldReturnLabel(value:String)=when(value){"YES"->tr("Yes","会");"MAYBE"->tr("Maybe","也许");"NO"->tr("No","不会");else->tr("Unknown","未知")}
+@Composable private fun assessmentLabel(value:String)=when(value){"GOOD"->tr("Good","好");"AVERAGE"->tr("Average","一般");"POOR"->tr("Poor","差");else->tr("Unknown","未知")}
 
 @Composable
 private fun AnchorageSpots(bundle: AnchoragePlaceBundle, approach: (Long) -> Unit, openMap: (Double, Double) -> Unit,share:(Long)->Unit) {

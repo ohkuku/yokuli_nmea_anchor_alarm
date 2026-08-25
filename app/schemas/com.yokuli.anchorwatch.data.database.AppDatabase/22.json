@@ -1,0 +1,4579 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 22,
+    "identityHash": "4e864e64b5a8ccaac34ea944fff1ea70",
+    "entities": [
+      {
+        "tableName": "anchor_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `anchorLatitude` REAL NOT NULL, `anchorLongitude` REAL NOT NULL, `rodeLengthMeters` REAL NOT NULL, `waterDepthMeters` REAL, `bowRollerHeightMeters` REAL NOT NULL, `gpsAntennaOffsetMeters` REAL NOT NULL, `expectedSwingRadiusMeters` REAL NOT NULL, `warningRadiusMeters` REAL NOT NULL, `alarmRadiusMeters` REAL NOT NULL, `active` INTEGER NOT NULL, `paused` INTEGER NOT NULL DEFAULT 0, `placementMode` TEXT NOT NULL DEFAULT 'CENTER_DROP', `centerStatus` TEXT NOT NULL DEFAULT 'RESOLVED', `centerResolvedAt` INTEGER, `centerConfidence` TEXT NOT NULL DEFAULT 'HIGH', `centerSampleCount` INTEGER NOT NULL DEFAULT 0, `boatLengthMeters` REAL, `rangeMode` TEXT NOT NULL DEFAULT 'BASIC', `safetyPreset` TEXT NOT NULL DEFAULT 'BALANCED', `alarmSnoozedUntil` INTEGER, `learningReferenceLatitude` REAL, `learningReferenceLongitude` REAL, `provisionalAnchorLatitude` REAL, `provisionalAnchorLongitude` REAL, `provisionalRadiusMeters` REAL, `positionSource` TEXT NOT NULL DEFAULT 'UNKNOWN', `anchorPositionMode` TEXT NOT NULL DEFAULT 'KNOWN', `centerSource` TEXT NOT NULL DEFAULT 'UNKNOWN', `usePhoneHeading` INTEGER NOT NULL DEFAULT 0, `candidateId` INTEGER, `candidateCreatedAt` INTEGER, `candidateDecision` TEXT NOT NULL DEFAULT 'NONE', `candidateNotificationShown` INTEGER NOT NULL DEFAULT 0, `candidateRmsErrorMeters` REAL, `candidateAngularCoverageDegrees` REAL, `candidateAngularSectorCount` INTEGER NOT NULL DEFAULT 0, `candidateSwingReversalCount` INTEGER NOT NULL DEFAULT 0, `candidateTemporalFitConsistent` INTEGER NOT NULL DEFAULT 0, `candidateEffectiveDurationMillis` INTEGER NOT NULL DEFAULT 0, `candidateDirectionEvidenceConsistent` INTEGER NOT NULL DEFAULT 0, `maxDistanceMeters` REAL NOT NULL DEFAULT 0, `alarmCount` INTEGER NOT NULL DEFAULT 0, `estimationEpoch` INTEGER NOT NULL DEFAULT 0, `estimationEpochStartedAt` INTEGER, `adoptedCenterEpoch` INTEGER NOT NULL DEFAULT 0, `latestEstimateEpoch` INTEGER NOT NULL DEFAULT 0, `savedAnchorageId` INTEGER, `depthGuardEnabled` INTEGER NOT NULL DEFAULT 0, `shallowDepthAlarmMeters` REAL, `deepDepthAlarmMeters` REAL, `windGuardEnabled` INTEGER NOT NULL DEFAULT 0, `windWarningKnots` REAL, `windAlarmKnots` REAL, `windShiftEnabled` INTEGER NOT NULL DEFAULT 0, `windShiftThresholdDegrees` REAL, `windAllowApparentFallback` INTEGER NOT NULL DEFAULT 1, `windBaselineDirectionDegrees` REAL, `windBaselineEstablishedAt` INTEGER, `windBaselineSource` TEXT, `depthAlarmSnoozedUntil` INTEGER, `windAlarmSnoozedUntil` INTEGER, `windShiftAlarmSnoozedUntil` INTEGER, `minObservedDepthMeters` REAL, `maxObservedDepthMeters` REAL, `maxObservedWindKnots` REAL, `maxObservedWindSource` TEXT, `depthAlarmCount` INTEGER NOT NULL DEFAULT 0, `windAlarmCount` INTEGER NOT NULL DEFAULT 0, `candidateTrackDiameterMeters` REAL NOT NULL DEFAULT 0, `candidateFittedRadiusMeters` REAL, `candidateMaximumRodeMeters` REAL NOT NULL DEFAULT 0, `candidateGpsMarginMeters` REAL NOT NULL DEFAULT 0, `candidateRadialObservable` INTEGER NOT NULL DEFAULT 0, `candidateObservabilityReason` TEXT NOT NULL DEFAULT 'NO_USABLE_CIRCLE_FIT', `headingEvidenceEnabled` INTEGER NOT NULL DEFAULT 0, `headingEvidenceEpoch` INTEGER NOT NULL DEFAULT 0, `headingEvidenceEnabledAt` INTEGER, `headingEvidenceSourceId` TEXT, `anchoragePlaceId` INTEGER, `anchorageSpotId` INTEGER, `anchorageVisitId` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAt",
+            "columnName": "endedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "anchorLatitude",
+            "columnName": "anchorLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorLongitude",
+            "columnName": "anchorLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rodeLengthMeters",
+            "columnName": "rodeLengthMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "waterDepthMeters",
+            "columnName": "waterDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bowRollerHeightMeters",
+            "columnName": "bowRollerHeightMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gpsAntennaOffsetMeters",
+            "columnName": "gpsAntennaOffsetMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expectedSwingRadiusMeters",
+            "columnName": "expectedSwingRadiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "warningRadiusMeters",
+            "columnName": "warningRadiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "alarmRadiusMeters",
+            "columnName": "alarmRadiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "active",
+            "columnName": "active",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paused",
+            "columnName": "paused",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "placementMode",
+            "columnName": "placementMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'CENTER_DROP'"
+          },
+          {
+            "fieldPath": "centerStatus",
+            "columnName": "centerStatus",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'RESOLVED'"
+          },
+          {
+            "fieldPath": "centerResolvedAt",
+            "columnName": "centerResolvedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "centerConfidence",
+            "columnName": "centerConfidence",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'HIGH'"
+          },
+          {
+            "fieldPath": "centerSampleCount",
+            "columnName": "centerSampleCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "boatLengthMeters",
+            "columnName": "boatLengthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rangeMode",
+            "columnName": "rangeMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'BASIC'"
+          },
+          {
+            "fieldPath": "safetyPreset",
+            "columnName": "safetyPreset",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'BALANCED'"
+          },
+          {
+            "fieldPath": "alarmSnoozedUntil",
+            "columnName": "alarmSnoozedUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "learningReferenceLatitude",
+            "columnName": "learningReferenceLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "learningReferenceLongitude",
+            "columnName": "learningReferenceLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "provisionalAnchorLatitude",
+            "columnName": "provisionalAnchorLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "provisionalAnchorLongitude",
+            "columnName": "provisionalAnchorLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "provisionalRadiusMeters",
+            "columnName": "provisionalRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "positionSource",
+            "columnName": "positionSource",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "anchorPositionMode",
+            "columnName": "anchorPositionMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'KNOWN'"
+          },
+          {
+            "fieldPath": "centerSource",
+            "columnName": "centerSource",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "usePhoneHeading",
+            "columnName": "usePhoneHeading",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateId",
+            "columnName": "candidateId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "candidateCreatedAt",
+            "columnName": "candidateCreatedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "candidateDecision",
+            "columnName": "candidateDecision",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'NONE'"
+          },
+          {
+            "fieldPath": "candidateNotificationShown",
+            "columnName": "candidateNotificationShown",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateRmsErrorMeters",
+            "columnName": "candidateRmsErrorMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "candidateAngularCoverageDegrees",
+            "columnName": "candidateAngularCoverageDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "candidateAngularSectorCount",
+            "columnName": "candidateAngularSectorCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateSwingReversalCount",
+            "columnName": "candidateSwingReversalCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateTemporalFitConsistent",
+            "columnName": "candidateTemporalFitConsistent",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateEffectiveDurationMillis",
+            "columnName": "candidateEffectiveDurationMillis",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateDirectionEvidenceConsistent",
+            "columnName": "candidateDirectionEvidenceConsistent",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "maxDistanceMeters",
+            "columnName": "maxDistanceMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "alarmCount",
+            "columnName": "alarmCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "estimationEpoch",
+            "columnName": "estimationEpoch",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "estimationEpochStartedAt",
+            "columnName": "estimationEpochStartedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "adoptedCenterEpoch",
+            "columnName": "adoptedCenterEpoch",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "latestEstimateEpoch",
+            "columnName": "latestEstimateEpoch",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "savedAnchorageId",
+            "columnName": "savedAnchorageId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "depthGuardEnabled",
+            "columnName": "depthGuardEnabled",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "shallowDepthAlarmMeters",
+            "columnName": "shallowDepthAlarmMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "deepDepthAlarmMeters",
+            "columnName": "deepDepthAlarmMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windGuardEnabled",
+            "columnName": "windGuardEnabled",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "windWarningKnots",
+            "columnName": "windWarningKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windAlarmKnots",
+            "columnName": "windAlarmKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windShiftEnabled",
+            "columnName": "windShiftEnabled",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "windShiftThresholdDegrees",
+            "columnName": "windShiftThresholdDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windAllowApparentFallback",
+            "columnName": "windAllowApparentFallback",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "windBaselineDirectionDegrees",
+            "columnName": "windBaselineDirectionDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windBaselineEstablishedAt",
+            "columnName": "windBaselineEstablishedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windBaselineSource",
+            "columnName": "windBaselineSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "depthAlarmSnoozedUntil",
+            "columnName": "depthAlarmSnoozedUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windAlarmSnoozedUntil",
+            "columnName": "windAlarmSnoozedUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windShiftAlarmSnoozedUntil",
+            "columnName": "windShiftAlarmSnoozedUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "minObservedDepthMeters",
+            "columnName": "minObservedDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxObservedDepthMeters",
+            "columnName": "maxObservedDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxObservedWindKnots",
+            "columnName": "maxObservedWindKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxObservedWindSource",
+            "columnName": "maxObservedWindSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "depthAlarmCount",
+            "columnName": "depthAlarmCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "windAlarmCount",
+            "columnName": "windAlarmCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateTrackDiameterMeters",
+            "columnName": "candidateTrackDiameterMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateFittedRadiusMeters",
+            "columnName": "candidateFittedRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "candidateMaximumRodeMeters",
+            "columnName": "candidateMaximumRodeMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateGpsMarginMeters",
+            "columnName": "candidateGpsMarginMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateRadialObservable",
+            "columnName": "candidateRadialObservable",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "candidateObservabilityReason",
+            "columnName": "candidateObservabilityReason",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'NO_USABLE_CIRCLE_FIT'"
+          },
+          {
+            "fieldPath": "headingEvidenceEnabled",
+            "columnName": "headingEvidenceEnabled",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "headingEvidenceEpoch",
+            "columnName": "headingEvidenceEpoch",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "headingEvidenceEnabledAt",
+            "columnName": "headingEvidenceEnabledAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "headingEvidenceSourceId",
+            "columnName": "headingEvidenceSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "anchoragePlaceId",
+            "columnName": "anchoragePlaceId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "anchorageSpotId",
+            "columnName": "anchorageSpotId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "anchorageVisitId",
+            "columnName": "anchorageVisitId",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "saved_anchorages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `lastVisitedAt` INTEGER, `visitCount` INTEGER NOT NULL DEFAULT 0, `preferredAlarmRadiusMeters` REAL, `typicalWaterDepthMeters` REAL, `typicalRodeLengthMeters` REAL, `seabedType` TEXT NOT NULL DEFAULT 'UNKNOWN', `customSeabedText` TEXT, `rating` INTEGER, `notes` TEXT NOT NULL, `sourceSessionId` INTEGER, `coordinateSource` TEXT NOT NULL DEFAULT 'CONFIRMED_ANCHOR', `coordinateUncertaintyMeters` REAL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastVisitedAt",
+            "columnName": "lastVisitedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "visitCount",
+            "columnName": "visitCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "preferredAlarmRadiusMeters",
+            "columnName": "preferredAlarmRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "typicalWaterDepthMeters",
+            "columnName": "typicalWaterDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "typicalRodeLengthMeters",
+            "columnName": "typicalRodeLengthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "seabedType",
+            "columnName": "seabedType",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "customSeabedText",
+            "columnName": "customSeabedText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rating",
+            "columnName": "rating",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceSessionId",
+            "columnName": "sourceSessionId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "coordinateSource",
+            "columnName": "coordinateSource",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'CONFIRMED_ANCHOR'"
+          },
+          {
+            "fieldPath": "coordinateUncertaintyMeters",
+            "columnName": "coordinateUncertaintyMeters",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_saved_anchorages_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_anchorages_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          },
+          {
+            "name": "index_saved_anchorages_lastVisitedAt",
+            "unique": false,
+            "columnNames": [
+              "lastVisitedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_anchorages_lastVisitedAt` ON `${TABLE_NAME}` (`lastVisitedAt`)"
+          }
+        ]
+      },
+      {
+        "tableName": "track_points",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `distanceFromAnchor` REAL NOT NULL, `sog` REAL, `cog` REAL, `heading` REAL, `hdop` REAL, `windDirectionTrue` REAL, `windSpeedKnots` REAL, `apparentWindAngle` REAL, `trueWindAngle` REAL, `trueWindSpeedKnots` REAL, `apparentWindSpeedKnots` REAL, `headingMeasured` INTEGER NOT NULL DEFAULT 0, `headingSampleSequence` INTEGER, `windSampleSequence` INTEGER, `positionSource` TEXT NOT NULL DEFAULT 'UNKNOWN', `positionProvider` TEXT NOT NULL DEFAULT 'UNKNOWN', `horizontalAccuracyMeters` REAL, `fixTrust` TEXT NOT NULL DEFAULT 'TRUSTED', `wasQuarantined` INTEGER NOT NULL DEFAULT 0, `quarantineReason` TEXT, `headingSource` TEXT NOT NULL DEFAULT 'NONE', `headingQuality` TEXT NOT NULL DEFAULT 'UNAVAILABLE', `headingEpoch` INTEGER, FOREIGN KEY(`sessionId`) REFERENCES `anchor_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceFromAnchor",
+            "columnName": "distanceFromAnchor",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sog",
+            "columnName": "sog",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cog",
+            "columnName": "cog",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "heading",
+            "columnName": "heading",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "hdop",
+            "columnName": "hdop",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windDirectionTrue",
+            "columnName": "windDirectionTrue",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windSpeedKnots",
+            "columnName": "windSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindAngle",
+            "columnName": "apparentWindAngle",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindAngle",
+            "columnName": "trueWindAngle",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindSpeedKnots",
+            "columnName": "trueWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindSpeedKnots",
+            "columnName": "apparentWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingMeasured",
+            "columnName": "headingMeasured",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "headingSampleSequence",
+            "columnName": "headingSampleSequence",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windSampleSequence",
+            "columnName": "windSampleSequence",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "positionSource",
+            "columnName": "positionSource",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "positionProvider",
+            "columnName": "positionProvider",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "horizontalAccuracyMeters",
+            "columnName": "horizontalAccuracyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "fixTrust",
+            "columnName": "fixTrust",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'TRUSTED'"
+          },
+          {
+            "fieldPath": "wasQuarantined",
+            "columnName": "wasQuarantined",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "quarantineReason",
+            "columnName": "quarantineReason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingSource",
+            "columnName": "headingSource",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'NONE'"
+          },
+          {
+            "fieldPath": "headingQuality",
+            "columnName": "headingQuality",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNAVAILABLE'"
+          },
+          {
+            "fieldPath": "headingEpoch",
+            "columnName": "headingEpoch",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_track_points_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_track_points_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchor_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "alarm_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `type` TEXT NOT NULL, `detail` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_alarm_events_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_alarm_events_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "sonar_surveys",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `active` INTEGER NOT NULL, `tideMode` TEXT NOT NULL DEFAULT 'OFF', `manualTideOffsetMeters` REAL NOT NULL DEFAULT 0, `transducerDraftMeters` REAL NOT NULL DEFAULT 0, `keelOffsetMeters` REAL NOT NULL DEFAULT 0, `gpsToTransducerMeters` REAL NOT NULL DEFAULT 0, `configuredDepthReference` TEXT NOT NULL DEFAULT 'UNKNOWN', `sounderOffsetMeters` REAL NOT NULL DEFAULT 0, `tideStationId` TEXT, `tideStationName` TEXT, `tideStationDistanceMeters` REAL, `sampleCount` INTEGER NOT NULL DEFAULT 0)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAt",
+            "columnName": "endedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "active",
+            "columnName": "active",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tideMode",
+            "columnName": "tideMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'OFF'"
+          },
+          {
+            "fieldPath": "manualTideOffsetMeters",
+            "columnName": "manualTideOffsetMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "transducerDraftMeters",
+            "columnName": "transducerDraftMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "keelOffsetMeters",
+            "columnName": "keelOffsetMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "gpsToTransducerMeters",
+            "columnName": "gpsToTransducerMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "configuredDepthReference",
+            "columnName": "configuredDepthReference",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "sounderOffsetMeters",
+            "columnName": "sounderOffsetMeters",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "tideStationId",
+            "columnName": "tideStationId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tideStationName",
+            "columnName": "tideStationName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tideStationDistanceMeters",
+            "columnName": "tideStationDistanceMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "depth_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `surveyId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `baseGridX` INTEGER NOT NULL, `baseGridY` INTEGER NOT NULL, `sourceElapsedRealtime` INTEGER NOT NULL, `rawDepthMeters` REAL NOT NULL, `measuredDepthMeters` REAL NOT NULL, `normalizedDepthMeters` REAL, `depthReference` TEXT NOT NULL, `sentenceType` TEXT NOT NULL, `nmeaOffsetMeters` REAL, `horizontalAccuracyMeters` REAL, `gpsSource` TEXT NOT NULL, `positionProvider` TEXT NOT NULL, `hdop` REAL, `sogKnots` REAL, `fixTrust` TEXT NOT NULL DEFAULT 'DEGRADED', `positionAgeMillis` INTEGER NOT NULL, `disposition` TEXT NOT NULL DEFAULT 'ACCEPTED', `usable` INTEGER NOT NULL DEFAULT 1, `integrityReason` TEXT, `positionCorrectionApplied` INTEGER NOT NULL DEFAULT 0, `positionCorrectionMethod` TEXT NOT NULL DEFAULT 'NONE', `tideHeightMetersApplied` REAL, `tideCorrectionMode` TEXT NOT NULL DEFAULT 'OFF', `tideStationId` TEXT, `tideStationName` TEXT, `tideStationDistanceMeters` REAL, `tidePredictionYear` INTEGER, `tideCorrectionMethod` TEXT, `tideSource` TEXT, `tideSourceUpdatedAt` INTEGER, `tideCorrectionStatus` TEXT NOT NULL DEFAULT 'NOT_REQUESTED', `depthHeld` INTEGER NOT NULL DEFAULT 0, `depthAgeMillis` INTEGER NOT NULL DEFAULT 0, `depthSourceElapsedRealtime` INTEGER, `depthSourceId` TEXT, `positionSourceId` TEXT, `connectionGeneration` INTEGER, FOREIGN KEY(`surveyId`) REFERENCES `sonar_surveys`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "surveyId",
+            "columnName": "surveyId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseGridX",
+            "columnName": "baseGridX",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseGridY",
+            "columnName": "baseGridY",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceElapsedRealtime",
+            "columnName": "sourceElapsedRealtime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawDepthMeters",
+            "columnName": "rawDepthMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "measuredDepthMeters",
+            "columnName": "measuredDepthMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedDepthMeters",
+            "columnName": "normalizedDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "depthReference",
+            "columnName": "depthReference",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentenceType",
+            "columnName": "sentenceType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nmeaOffsetMeters",
+            "columnName": "nmeaOffsetMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "horizontalAccuracyMeters",
+            "columnName": "horizontalAccuracyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "gpsSource",
+            "columnName": "gpsSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionProvider",
+            "columnName": "positionProvider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hdop",
+            "columnName": "hdop",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "sogKnots",
+            "columnName": "sogKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "fixTrust",
+            "columnName": "fixTrust",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'DEGRADED'"
+          },
+          {
+            "fieldPath": "positionAgeMillis",
+            "columnName": "positionAgeMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "disposition",
+            "columnName": "disposition",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'ACCEPTED'"
+          },
+          {
+            "fieldPath": "usable",
+            "columnName": "usable",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "integrityReason",
+            "columnName": "integrityReason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "positionCorrectionApplied",
+            "columnName": "positionCorrectionApplied",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "positionCorrectionMethod",
+            "columnName": "positionCorrectionMethod",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'NONE'"
+          },
+          {
+            "fieldPath": "tideHeightMetersApplied",
+            "columnName": "tideHeightMetersApplied",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "tideCorrectionMode",
+            "columnName": "tideCorrectionMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'OFF'"
+          },
+          {
+            "fieldPath": "tideStationId",
+            "columnName": "tideStationId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tideStationName",
+            "columnName": "tideStationName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tideStationDistanceMeters",
+            "columnName": "tideStationDistanceMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "tidePredictionYear",
+            "columnName": "tidePredictionYear",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "tideCorrectionMethod",
+            "columnName": "tideCorrectionMethod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tideSource",
+            "columnName": "tideSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tideSourceUpdatedAt",
+            "columnName": "tideSourceUpdatedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "tideCorrectionStatus",
+            "columnName": "tideCorrectionStatus",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'NOT_REQUESTED'"
+          },
+          {
+            "fieldPath": "depthHeld",
+            "columnName": "depthHeld",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "depthAgeMillis",
+            "columnName": "depthAgeMillis",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "depthSourceElapsedRealtime",
+            "columnName": "depthSourceElapsedRealtime",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "depthSourceId",
+            "columnName": "depthSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "positionSourceId",
+            "columnName": "positionSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "connectionGeneration",
+            "columnName": "connectionGeneration",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_depth_samples_surveyId",
+            "unique": false,
+            "columnNames": [
+              "surveyId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId` ON `${TABLE_NAME}` (`surveyId`)"
+          },
+          {
+            "name": "index_depth_samples_surveyId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "surveyId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId_timestamp` ON `${TABLE_NAME}` (`surveyId`, `timestamp`)"
+          },
+          {
+            "name": "index_depth_samples_baseGridX_baseGridY",
+            "unique": false,
+            "columnNames": [
+              "baseGridX",
+              "baseGridY"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_depth_samples_baseGridX_baseGridY` ON `${TABLE_NAME}` (`baseGridX`, `baseGridY`)"
+          },
+          {
+            "name": "index_depth_samples_surveyId_baseGridX_baseGridY",
+            "unique": false,
+            "columnNames": [
+              "surveyId",
+              "baseGridX",
+              "baseGridY"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId_baseGridX_baseGridY` ON `${TABLE_NAME}` (`surveyId`, `baseGridX`, `baseGridY`)"
+          },
+          {
+            "name": "index_depth_samples_surveyId_sourceElapsedRealtime",
+            "unique": false,
+            "columnNames": [
+              "surveyId",
+              "sourceElapsedRealtime"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_depth_samples_surveyId_sourceElapsedRealtime` ON `${TABLE_NAME}` (`surveyId`, `sourceElapsedRealtime`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sonar_surveys",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "surveyId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "sonar_grid_cells",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`scopeType` TEXT NOT NULL, `scopeId` INTEGER NOT NULL, `gridX` INTEGER NOT NULL, `gridY` INTEGER NOT NULL, `cellSizeMeters` REAL NOT NULL, `depthMeters` REAL NOT NULL, `uncertaintyMeters` REAL NOT NULL, `sampleCount` INTEGER NOT NULL, `lastUpdatedAt` INTEGER NOT NULL, PRIMARY KEY(`scopeType`, `scopeId`, `gridX`, `gridY`))",
+        "fields": [
+          {
+            "fieldPath": "scopeType",
+            "columnName": "scopeType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scopeId",
+            "columnName": "scopeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gridX",
+            "columnName": "gridX",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gridY",
+            "columnName": "gridY",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cellSizeMeters",
+            "columnName": "cellSizeMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "depthMeters",
+            "columnName": "depthMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uncertaintyMeters",
+            "columnName": "uncertaintyMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastUpdatedAt",
+            "columnName": "lastUpdatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "scopeType",
+            "scopeId",
+            "gridX",
+            "gridY"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sonar_grid_cells_scopeType_scopeId",
+            "unique": false,
+            "columnNames": [
+              "scopeType",
+              "scopeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sonar_grid_cells_scopeType_scopeId` ON `${TABLE_NAME}` (`scopeType`, `scopeId`)"
+          },
+          {
+            "name": "index_sonar_grid_cells_gridX_gridY",
+            "unique": false,
+            "columnNames": [
+              "gridX",
+              "gridY"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sonar_grid_cells_gridX_gridY` ON `${TABLE_NAME}` (`gridX`, `gridY`)"
+          }
+        ]
+      },
+      {
+        "tableName": "linz_depth_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`cellKey` TEXT NOT NULL, `queriedLatitude` REAL NOT NULL, `queriedLongitude` REAL NOT NULL, `queriedAt` INTEGER NOT NULL, `depthAreaMinMeters` REAL, `depthAreaMaxMeters` REAL, `nearestSoundingDepthMeters` REAL, `nearestSoundingDistanceMeters` REAL, `nearestSoundingLatitude` REAL, `nearestSoundingLongitude` REAL, `nearestContourDepthMeters` REAL, `nearestContourDistanceMeters` REAL, `sourceLayers` TEXT NOT NULL, `status` TEXT NOT NULL, PRIMARY KEY(`cellKey`))",
+        "fields": [
+          {
+            "fieldPath": "cellKey",
+            "columnName": "cellKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queriedLatitude",
+            "columnName": "queriedLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queriedLongitude",
+            "columnName": "queriedLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queriedAt",
+            "columnName": "queriedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "depthAreaMinMeters",
+            "columnName": "depthAreaMinMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "depthAreaMaxMeters",
+            "columnName": "depthAreaMaxMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nearestSoundingDepthMeters",
+            "columnName": "nearestSoundingDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nearestSoundingDistanceMeters",
+            "columnName": "nearestSoundingDistanceMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nearestSoundingLatitude",
+            "columnName": "nearestSoundingLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nearestSoundingLongitude",
+            "columnName": "nearestSoundingLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nearestContourDepthMeters",
+            "columnName": "nearestContourDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nearestContourDistanceMeters",
+            "columnName": "nearestContourDistanceMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "sourceLayers",
+            "columnName": "sourceLayers",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "cellKey"
+          ]
+        }
+      },
+      {
+        "tableName": "tide_prediction_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`stationId` TEXT NOT NULL, `year` INTEGER NOT NULL, `downloadedAt` INTEGER NOT NULL, `sourceUrl` TEXT NOT NULL, `csv` TEXT NOT NULL, PRIMARY KEY(`stationId`, `year`))",
+        "fields": [
+          {
+            "fieldPath": "stationId",
+            "columnName": "stationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "year",
+            "columnName": "year",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "downloadedAt",
+            "columnName": "downloadedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUrl",
+            "columnName": "sourceUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "csv",
+            "columnName": "csv",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "stationId",
+            "year"
+          ]
+        }
+      },
+      {
+        "tableName": "incident_log",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `elapsedRealtime` INTEGER NOT NULL, `severity` TEXT NOT NULL, `category` TEXT NOT NULL, `event` TEXT NOT NULL, `sessionId` INTEGER, `details` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedRealtime",
+            "columnName": "elapsedRealtime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "severity",
+            "columnName": "severity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "event",
+            "columnName": "event",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "details",
+            "columnName": "details",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_incident_log_timestamp",
+            "unique": false,
+            "columnNames": [
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_incident_log_timestamp` ON `${TABLE_NAME}` (`timestamp`)"
+          },
+          {
+            "name": "index_incident_log_category",
+            "unique": false,
+            "columnNames": [
+              "category"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_incident_log_category` ON `${TABLE_NAME}` (`category`)"
+          },
+          {
+            "name": "index_incident_log_severity",
+            "unique": false,
+            "columnNames": [
+              "severity"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_incident_log_severity` ON `${TABLE_NAME}` (`severity`)"
+          }
+        ]
+      },
+      {
+        "tableName": "pressure_history",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sourceStableKey` TEXT NOT NULL, `bucketUtcMinute` INTEGER NOT NULL, `sampledAtUtcMillis` INTEGER NOT NULL, `pressureHpa` REAL NOT NULL, `sourceDisplayName` TEXT NOT NULL, PRIMARY KEY(`sourceStableKey`, `bucketUtcMinute`))",
+        "fields": [
+          {
+            "fieldPath": "sourceStableKey",
+            "columnName": "sourceStableKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bucketUtcMinute",
+            "columnName": "bucketUtcMinute",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampledAtUtcMillis",
+            "columnName": "sampledAtUtcMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pressureHpa",
+            "columnName": "pressureHpa",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceDisplayName",
+            "columnName": "sourceDisplayName",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sourceStableKey",
+            "bucketUtcMinute"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_pressure_history_sampledAtUtcMillis",
+            "unique": false,
+            "columnNames": [
+              "sampledAtUtcMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_pressure_history_sampledAtUtcMillis` ON `${TABLE_NAME}` (`sampledAtUtcMillis`)"
+          },
+          {
+            "name": "index_pressure_history_sourceStableKey_sampledAtUtcMillis",
+            "unique": false,
+            "columnNames": [
+              "sourceStableKey",
+              "sampledAtUtcMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_pressure_history_sourceStableKey_sampledAtUtcMillis` ON `${TABLE_NAME}` (`sourceStableKey`, `sampledAtUtcMillis`)"
+          }
+        ]
+      },
+      {
+        "tableName": "trip_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `active` INTEGER NOT NULL, `paused` INTEGER NOT NULL, `accumulatedPausedMillis` INTEGER NOT NULL, `pausedAt` INTEGER, `boatLengthMeters` REAL, `draftMeters` REAL, `positionPreference` TEXT NOT NULL, `headingPreference` TEXT NOT NULL, `phoneMotionEnabled` INTEGER NOT NULL, `mountCalibrationVersion` INTEGER, `motionAlgorithmVersion` TEXT NOT NULL, `sampleCount` INTEGER NOT NULL, `eventCount` INTEGER NOT NULL, `waypointCount` INTEGER NOT NULL, `droppedSampleCount` INTEGER NOT NULL, `distanceMeters` REAL NOT NULL, `movingDurationMillis` INTEGER NOT NULL, `maxSogKnots` REAL, `maxAbsHeelDegrees` REAL, `minDepthMeters` REAL, `minUkcMeters` REAL, `nmeaWasActiveAtStart` INTEGER NOT NULL, `restoredAfterProcessDeath` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAt",
+            "columnName": "endedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "active",
+            "columnName": "active",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paused",
+            "columnName": "paused",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accumulatedPausedMillis",
+            "columnName": "accumulatedPausedMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pausedAt",
+            "columnName": "pausedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "boatLengthMeters",
+            "columnName": "boatLengthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "draftMeters",
+            "columnName": "draftMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "positionPreference",
+            "columnName": "positionPreference",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "headingPreference",
+            "columnName": "headingPreference",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phoneMotionEnabled",
+            "columnName": "phoneMotionEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mountCalibrationVersion",
+            "columnName": "mountCalibrationVersion",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "motionAlgorithmVersion",
+            "columnName": "motionAlgorithmVersion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventCount",
+            "columnName": "eventCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "waypointCount",
+            "columnName": "waypointCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "droppedSampleCount",
+            "columnName": "droppedSampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMeters",
+            "columnName": "distanceMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "movingDurationMillis",
+            "columnName": "movingDurationMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxSogKnots",
+            "columnName": "maxSogKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxAbsHeelDegrees",
+            "columnName": "maxAbsHeelDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "minDepthMeters",
+            "columnName": "minDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "minUkcMeters",
+            "columnName": "minUkcMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nmeaWasActiveAtStart",
+            "columnName": "nmeaWasActiveAtStart",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "restoredAfterProcessDeath",
+            "columnName": "restoredAfterProcessDeath",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_sessions_startedAt",
+            "unique": false,
+            "columnNames": [
+              "startedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_sessions_startedAt` ON `${TABLE_NAME}` (`startedAt`)"
+          },
+          {
+            "name": "index_trip_sessions_endedAt",
+            "unique": false,
+            "columnNames": [
+              "endedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_sessions_endedAt` ON `${TABLE_NAME}` (`endedAt`)"
+          }
+        ]
+      },
+      {
+        "tableName": "trip_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL, `longitude` REAL, `positionSource` TEXT NOT NULL, `positionQuality` TEXT NOT NULL, `positionAgeMillis` INTEGER, `sogKnots` REAL, `cogTrueDegrees` REAL, `headingTrueDegrees` REAL, `headingSource` TEXT NOT NULL, `headingAgeMillis` INTEGER, `depthMeters` REAL, `depthSource` TEXT NOT NULL, `depthAgeMillis` INTEGER, `speedThroughWaterKnots` REAL, `stwSource` TEXT, `stwAgeMillis` INTEGER, `trueWindSpeedKnots` REAL, `trueWindDirectionDegrees` REAL, `trueWindAngleDegrees` REAL, `apparentWindSpeedKnots` REAL, `apparentWindAngleDegrees` REAL, `windSource` TEXT, `windAgeMillis` INTEGER, `heelDegrees` REAL, `pitchDegrees` REAL, `rollRateDegPerSec` REAL, `pitchRateDegPerSec` REAL, `yawRateDegPerSec` REAL, `motionScore` REAL, `rollPeriodSeconds` REAL, `rollPeriodConfidence` TEXT, `attitudeAgeMillis` INTEGER, `pressureHpa` REAL, `pressureAgeMillis` INTEGER, `ukcMeters` REAL, `sourceFlags` INTEGER NOT NULL, `sogAgeMillis` INTEGER, `cogAgeMillis` INTEGER, `trueWindSpeedAgeMillis` INTEGER, `trueWindDirectionAgeMillis` INTEGER, `trueWindAngleAgeMillis` INTEGER, `apparentWindSpeedAgeMillis` INTEGER, `apparentWindAngleAgeMillis` INTEGER, `attitudeQuality` TEXT NOT NULL DEFAULT 'UNKNOWN', `attitudeMountSuspect` INTEGER NOT NULL DEFAULT 0, `positionSourceId` TEXT, `headingSourceId` TEXT, `headingReference` TEXT, `stwSourceId` TEXT, `apparentWindAngleSourceId` TEXT, `apparentWindSpeedSourceId` TEXT, `trueWindAngleSourceId` TEXT, `trueWindSpeedSourceId` TEXT, `trueWindDirectionSourceId` TEXT, `trueWindProvenance` TEXT, `trueWindReference` TEXT, `depthSourceId` TEXT, `publicationOwnershipState` TEXT, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tripId",
+            "columnName": "tripId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "positionSource",
+            "columnName": "positionSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionQuality",
+            "columnName": "positionQuality",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionAgeMillis",
+            "columnName": "positionAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sogKnots",
+            "columnName": "sogKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cogTrueDegrees",
+            "columnName": "cogTrueDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingTrueDegrees",
+            "columnName": "headingTrueDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingSource",
+            "columnName": "headingSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "headingAgeMillis",
+            "columnName": "headingAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "depthMeters",
+            "columnName": "depthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "depthSource",
+            "columnName": "depthSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "depthAgeMillis",
+            "columnName": "depthAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "speedThroughWaterKnots",
+            "columnName": "speedThroughWaterKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "stwSource",
+            "columnName": "stwSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "stwAgeMillis",
+            "columnName": "stwAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindSpeedKnots",
+            "columnName": "trueWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindDirectionDegrees",
+            "columnName": "trueWindDirectionDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindAngleDegrees",
+            "columnName": "trueWindAngleDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindSpeedKnots",
+            "columnName": "apparentWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindAngleDegrees",
+            "columnName": "apparentWindAngleDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windSource",
+            "columnName": "windSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "windAgeMillis",
+            "columnName": "windAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "heelDegrees",
+            "columnName": "heelDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pitchDegrees",
+            "columnName": "pitchDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rollRateDegPerSec",
+            "columnName": "rollRateDegPerSec",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pitchRateDegPerSec",
+            "columnName": "pitchRateDegPerSec",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "yawRateDegPerSec",
+            "columnName": "yawRateDegPerSec",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "motionScore",
+            "columnName": "motionScore",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rollPeriodSeconds",
+            "columnName": "rollPeriodSeconds",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rollPeriodConfidence",
+            "columnName": "rollPeriodConfidence",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attitudeAgeMillis",
+            "columnName": "attitudeAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "pressureHpa",
+            "columnName": "pressureHpa",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pressureAgeMillis",
+            "columnName": "pressureAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "ukcMeters",
+            "columnName": "ukcMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "sourceFlags",
+            "columnName": "sourceFlags",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sogAgeMillis",
+            "columnName": "sogAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "cogAgeMillis",
+            "columnName": "cogAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindSpeedAgeMillis",
+            "columnName": "trueWindSpeedAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindDirectionAgeMillis",
+            "columnName": "trueWindDirectionAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindAngleAgeMillis",
+            "columnName": "trueWindAngleAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "apparentWindSpeedAgeMillis",
+            "columnName": "apparentWindSpeedAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "apparentWindAngleAgeMillis",
+            "columnName": "apparentWindAngleAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attitudeQuality",
+            "columnName": "attitudeQuality",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "attitudeMountSuspect",
+            "columnName": "attitudeMountSuspect",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "positionSourceId",
+            "columnName": "positionSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingSourceId",
+            "columnName": "headingSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingReference",
+            "columnName": "headingReference",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "stwSourceId",
+            "columnName": "stwSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "apparentWindAngleSourceId",
+            "columnName": "apparentWindAngleSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "apparentWindSpeedSourceId",
+            "columnName": "apparentWindSpeedSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindAngleSourceId",
+            "columnName": "trueWindAngleSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindSpeedSourceId",
+            "columnName": "trueWindSpeedSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindDirectionSourceId",
+            "columnName": "trueWindDirectionSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindProvenance",
+            "columnName": "trueWindProvenance",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindReference",
+            "columnName": "trueWindReference",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "depthSourceId",
+            "columnName": "depthSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "publicationOwnershipState",
+            "columnName": "publicationOwnershipState",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_samples_tripId",
+            "unique": false,
+            "columnNames": [
+              "tripId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_samples_tripId` ON `${TABLE_NAME}` (`tripId`)"
+          },
+          {
+            "name": "index_trip_samples_tripId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "tripId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_samples_tripId_timestamp` ON `${TABLE_NAME}` (`tripId`, `timestamp`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "trip_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "tripId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "trip_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `type` TEXT NOT NULL, `severity` TEXT NOT NULL, `latitude` REAL, `longitude` REAL, `detailJson` TEXT NOT NULL, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tripId",
+            "columnName": "tripId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "severity",
+            "columnName": "severity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "detailJson",
+            "columnName": "detailJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_events_tripId",
+            "unique": false,
+            "columnNames": [
+              "tripId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_events_tripId` ON `${TABLE_NAME}` (`tripId`)"
+          },
+          {
+            "name": "index_trip_events_tripId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "tripId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_events_tripId_timestamp` ON `${TABLE_NAME}` (`tripId`, `timestamp`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "trip_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "tripId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "trip_waypoints",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `name` TEXT NOT NULL, `note` TEXT NOT NULL, `type` TEXT NOT NULL, `positionSource` TEXT, `sogKnots` REAL, `cogTrueDegrees` REAL, `headingTrueDegrees` REAL, `speedThroughWaterKnots` REAL, `depthMeters` REAL, `trueWindSpeedKnots` REAL, `trueWindAngleDegrees` REAL, `apparentWindSpeedKnots` REAL, `apparentWindAngleDegrees` REAL, `heelDegrees` REAL, `pitchDegrees` REAL, `pressureHpa` REAL, `positionSourceId` TEXT, `headingSourceId` TEXT, `headingReference` TEXT, `stwSourceId` TEXT, `apparentWindAngleSourceId` TEXT, `apparentWindSpeedSourceId` TEXT, `trueWindAngleSourceId` TEXT, `trueWindSpeedSourceId` TEXT, `trueWindDirectionSourceId` TEXT, `trueWindProvenance` TEXT, `trueWindReference` TEXT, `depthSourceId` TEXT, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tripId",
+            "columnName": "tripId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionSource",
+            "columnName": "positionSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sogKnots",
+            "columnName": "sogKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cogTrueDegrees",
+            "columnName": "cogTrueDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingTrueDegrees",
+            "columnName": "headingTrueDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedThroughWaterKnots",
+            "columnName": "speedThroughWaterKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "depthMeters",
+            "columnName": "depthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindSpeedKnots",
+            "columnName": "trueWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindAngleDegrees",
+            "columnName": "trueWindAngleDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindSpeedKnots",
+            "columnName": "apparentWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindAngleDegrees",
+            "columnName": "apparentWindAngleDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "heelDegrees",
+            "columnName": "heelDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pitchDegrees",
+            "columnName": "pitchDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pressureHpa",
+            "columnName": "pressureHpa",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "positionSourceId",
+            "columnName": "positionSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingSourceId",
+            "columnName": "headingSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingReference",
+            "columnName": "headingReference",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "stwSourceId",
+            "columnName": "stwSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "apparentWindAngleSourceId",
+            "columnName": "apparentWindAngleSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "apparentWindSpeedSourceId",
+            "columnName": "apparentWindSpeedSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindAngleSourceId",
+            "columnName": "trueWindAngleSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindSpeedSourceId",
+            "columnName": "trueWindSpeedSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindDirectionSourceId",
+            "columnName": "trueWindDirectionSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindProvenance",
+            "columnName": "trueWindProvenance",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindReference",
+            "columnName": "trueWindReference",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "depthSourceId",
+            "columnName": "depthSourceId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_waypoints_tripId",
+            "unique": false,
+            "columnNames": [
+              "tripId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_waypoints_tripId` ON `${TABLE_NAME}` (`tripId`)"
+          },
+          {
+            "name": "index_trip_waypoints_tripId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "tripId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_waypoints_tripId_timestamp` ON `${TABLE_NAME}` (`tripId`, `timestamp`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "trip_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "tripId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "trip_custom_metric_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `fieldId` TEXT NOT NULL, `displayName` TEXT NOT NULL, `numericValue` REAL, `textValue` TEXT, `unit` TEXT, `sentenceType` TEXT NOT NULL, `fieldAgeMillis` INTEGER NOT NULL, FOREIGN KEY(`tripId`) REFERENCES `trip_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tripId",
+            "columnName": "tripId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fieldId",
+            "columnName": "fieldId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "numericValue",
+            "columnName": "numericValue",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "textValue",
+            "columnName": "textValue",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sentenceType",
+            "columnName": "sentenceType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fieldAgeMillis",
+            "columnName": "fieldAgeMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_custom_metric_samples_tripId",
+            "unique": false,
+            "columnNames": [
+              "tripId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_custom_metric_samples_tripId` ON `${TABLE_NAME}` (`tripId`)"
+          },
+          {
+            "name": "index_trip_custom_metric_samples_tripId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "tripId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_custom_metric_samples_tripId_timestamp` ON `${TABLE_NAME}` (`tripId`, `timestamp`)"
+          },
+          {
+            "name": "index_trip_custom_metric_samples_tripId_fieldId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "tripId",
+              "fieldId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_custom_metric_samples_tripId_fieldId_timestamp` ON `${TABLE_NAME}` (`tripId`, `fieldId`, `timestamp`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "trip_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "tripId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "trip_dashboards",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `preset` TEXT NOT NULL, `title` TEXT NOT NULL, `layoutJson` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "preset",
+            "columnName": "preset",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "layoutJson",
+            "columnName": "layoutJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_dashboards_preset",
+            "unique": false,
+            "columnNames": [
+              "preset"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_dashboards_preset` ON `${TABLE_NAME}` (`preset`)"
+          }
+        ]
+      },
+      {
+        "tableName": "anchor_telemetry_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `depthMeters` REAL, `depthAgeMillis` INTEGER, `trueWindSpeedKnots` REAL, `trueWindDirectionDegrees` REAL, `windAgeMillis` INTEGER, `heelDegrees` REAL, `pitchDegrees` REAL, `rollRateDegPerSec` REAL, `pitchRateDegPerSec` REAL, `yawRateDegPerSec` REAL, `motionScore` REAL, `rollPeriodSeconds` REAL, `rollPeriodConfidence` TEXT, `pressureHpa` REAL, `apparentWindSpeedKnots` REAL, `apparentWindAngleDegrees` REAL, `apparentWindSpeedAgeMillis` INTEGER, `apparentWindAngleAgeMillis` INTEGER, `trueWindSpeedAgeMillis` INTEGER, `trueWindDirectionAgeMillis` INTEGER, `trueWindAngleDegrees` REAL, `trueWindAngleAgeMillis` INTEGER, `trueWindProvenance` TEXT, `trueWindReference` TEXT, `headingTrueDegrees` REAL, `headingSourceId` TEXT, `headingAgeMillis` INTEGER, `attitudeQuality` TEXT, `attitudeMountSuspect` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`sessionId`) REFERENCES `anchor_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "depthMeters",
+            "columnName": "depthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "depthAgeMillis",
+            "columnName": "depthAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindSpeedKnots",
+            "columnName": "trueWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindDirectionDegrees",
+            "columnName": "trueWindDirectionDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "windAgeMillis",
+            "columnName": "windAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "heelDegrees",
+            "columnName": "heelDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pitchDegrees",
+            "columnName": "pitchDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rollRateDegPerSec",
+            "columnName": "rollRateDegPerSec",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pitchRateDegPerSec",
+            "columnName": "pitchRateDegPerSec",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "yawRateDegPerSec",
+            "columnName": "yawRateDegPerSec",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "motionScore",
+            "columnName": "motionScore",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rollPeriodSeconds",
+            "columnName": "rollPeriodSeconds",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rollPeriodConfidence",
+            "columnName": "rollPeriodConfidence",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "pressureHpa",
+            "columnName": "pressureHpa",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindSpeedKnots",
+            "columnName": "apparentWindSpeedKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindAngleDegrees",
+            "columnName": "apparentWindAngleDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "apparentWindSpeedAgeMillis",
+            "columnName": "apparentWindSpeedAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "apparentWindAngleAgeMillis",
+            "columnName": "apparentWindAngleAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindSpeedAgeMillis",
+            "columnName": "trueWindSpeedAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindDirectionAgeMillis",
+            "columnName": "trueWindDirectionAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindAngleDegrees",
+            "columnName": "trueWindAngleDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "trueWindAngleAgeMillis",
+            "columnName": "trueWindAngleAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "trueWindProvenance",
+            "columnName": "trueWindProvenance",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trueWindReference",
+            "columnName": "trueWindReference",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingTrueDegrees",
+            "columnName": "headingTrueDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingSourceId",
+            "columnName": "headingSourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "headingAgeMillis",
+            "columnName": "headingAgeMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attitudeQuality",
+            "columnName": "attitudeQuality",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attitudeMountSuspect",
+            "columnName": "attitudeMountSuspect",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchor_telemetry_samples_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchor_telemetry_samples_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_anchor_telemetry_samples_sessionId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchor_telemetry_samples_sessionId_timestamp` ON `${TABLE_NAME}` (`sessionId`, `timestamp`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchor_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_regions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `parentRegionId` INTEGER, `displayName` TEXT NOT NULL, `officialName` TEXT, `alternateNamesJson` TEXT NOT NULL, `provider` TEXT NOT NULL, `externalId` TEXT, `featureType` TEXT NOT NULL, `geometryType` TEXT NOT NULL, `geometryGeoJson` TEXT, `centerLatitude` REAL NOT NULL, `centerLongitude` REAL NOT NULL, `bboxMinLatitude` REAL NOT NULL, `bboxMaxLatitude` REAL NOT NULL, `bboxMinLongitude` REAL NOT NULL, `bboxMaxLongitude` REAL NOT NULL, `official` INTEGER NOT NULL, `userConfirmed` INTEGER NOT NULL, `custom` INTEGER NOT NULL, `sourceUpdatedAt` INTEGER, `lastResolvedAt` INTEGER, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, FOREIGN KEY(`parentRegionId`) REFERENCES `anchorage_regions`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentRegionId",
+            "columnName": "parentRegionId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "officialName",
+            "columnName": "officialName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "alternateNamesJson",
+            "columnName": "alternateNamesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "externalId",
+            "columnName": "externalId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "featureType",
+            "columnName": "featureType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "geometryType",
+            "columnName": "geometryType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "geometryGeoJson",
+            "columnName": "geometryGeoJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "centerLatitude",
+            "columnName": "centerLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "centerLongitude",
+            "columnName": "centerLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMinLatitude",
+            "columnName": "bboxMinLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMaxLatitude",
+            "columnName": "bboxMaxLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMinLongitude",
+            "columnName": "bboxMinLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMaxLongitude",
+            "columnName": "bboxMaxLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "official",
+            "columnName": "official",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userConfirmed",
+            "columnName": "userConfirmed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "custom",
+            "columnName": "custom",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUpdatedAt",
+            "columnName": "sourceUpdatedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastResolvedAt",
+            "columnName": "lastResolvedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_regions_parentRegionId",
+            "unique": false,
+            "columnNames": [
+              "parentRegionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_regions_parentRegionId` ON `${TABLE_NAME}` (`parentRegionId`)"
+          },
+          {
+            "name": "index_anchorage_regions_provider_externalId",
+            "unique": true,
+            "columnNames": [
+              "provider",
+              "externalId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_anchorage_regions_provider_externalId` ON `${TABLE_NAME}` (`provider`, `externalId`)"
+          },
+          {
+            "name": "index_anchorage_regions_featureType",
+            "unique": false,
+            "columnNames": [
+              "featureType"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_regions_featureType` ON `${TABLE_NAME}` (`featureType`)"
+          },
+          {
+            "name": "index_anchorage_regions_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_regions_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_regions",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "parentRegionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_places",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `primaryRegionId` INTEGER, `displayName` TEXT NOT NULL, `officialName` TEXT, `aliasesJson` TEXT NOT NULL, `placeType` TEXT NOT NULL, `geometryType` TEXT NOT NULL, `geometryGeoJson` TEXT, `centerLatitude` REAL NOT NULL, `centerLongitude` REAL NOT NULL, `bboxMinLatitude` REAL NOT NULL, `bboxMaxLatitude` REAL NOT NULL, `bboxMinLongitude` REAL NOT NULL, `bboxMaxLongitude` REAL NOT NULL, `description` TEXT NOT NULL, `personalNotes` TEXT NOT NULL, `verificationStatus` TEXT NOT NULL, `planningStatus` TEXT NOT NULL, `favorite` INTEGER NOT NULL, `archived` INTEGER NOT NULL, `visitCountCached` INTEGER NOT NULL, `legacyVisitCount` INTEGER NOT NULL, `lastVisitedAt` INTEGER, `legacySavedAnchorageId` INTEGER, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, FOREIGN KEY(`primaryRegionId`) REFERENCES `anchorage_regions`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "primaryRegionId",
+            "columnName": "primaryRegionId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "officialName",
+            "columnName": "officialName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "aliasesJson",
+            "columnName": "aliasesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeType",
+            "columnName": "placeType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "geometryType",
+            "columnName": "geometryType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "geometryGeoJson",
+            "columnName": "geometryGeoJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "centerLatitude",
+            "columnName": "centerLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "centerLongitude",
+            "columnName": "centerLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMinLatitude",
+            "columnName": "bboxMinLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMaxLatitude",
+            "columnName": "bboxMaxLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMinLongitude",
+            "columnName": "bboxMinLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bboxMaxLongitude",
+            "columnName": "bboxMaxLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "personalNotes",
+            "columnName": "personalNotes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verificationStatus",
+            "columnName": "verificationStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "planningStatus",
+            "columnName": "planningStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "favorite",
+            "columnName": "favorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archived",
+            "columnName": "archived",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visitCountCached",
+            "columnName": "visitCountCached",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyVisitCount",
+            "columnName": "legacyVisitCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastVisitedAt",
+            "columnName": "lastVisitedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "legacySavedAnchorageId",
+            "columnName": "legacySavedAnchorageId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_places_primaryRegionId",
+            "unique": false,
+            "columnNames": [
+              "primaryRegionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_places_primaryRegionId` ON `${TABLE_NAME}` (`primaryRegionId`)"
+          },
+          {
+            "name": "index_anchorage_places_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_places_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          },
+          {
+            "name": "index_anchorage_places_lastVisitedAt",
+            "unique": false,
+            "columnNames": [
+              "lastVisitedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_places_lastVisitedAt` ON `${TABLE_NAME}` (`lastVisitedAt`)"
+          },
+          {
+            "name": "index_anchorage_places_planningStatus",
+            "unique": false,
+            "columnNames": [
+              "planningStatus"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_places_planningStatus` ON `${TABLE_NAME}` (`planningStatus`)"
+          },
+          {
+            "name": "index_anchorage_places_favorite",
+            "unique": false,
+            "columnNames": [
+              "favorite"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_places_favorite` ON `${TABLE_NAME}` (`favorite`)"
+          },
+          {
+            "name": "index_anchorage_places_legacySavedAnchorageId",
+            "unique": true,
+            "columnNames": [
+              "legacySavedAnchorageId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_anchorage_places_legacySavedAnchorageId` ON `${TABLE_NAME}` (`legacySavedAnchorageId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_regions",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "primaryRegionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_place_regions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placeId` INTEGER NOT NULL, `regionId` INTEGER NOT NULL, `relationType` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, PRIMARY KEY(`placeId`, `regionId`), FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`regionId`) REFERENCES `anchorage_regions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "regionId",
+            "columnName": "regionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relationType",
+            "columnName": "relationType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placeId",
+            "regionId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_place_regions_regionId",
+            "unique": false,
+            "columnNames": [
+              "regionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_place_regions_regionId` ON `${TABLE_NAME}` (`regionId`)"
+          },
+          {
+            "name": "index_anchorage_place_regions_placeId_sortOrder",
+            "unique": false,
+            "columnNames": [
+              "placeId",
+              "sortOrder"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_place_regions_placeId_sortOrder` ON `${TABLE_NAME}` (`placeId`, `sortOrder`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "anchorage_regions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "regionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_spots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER NOT NULL, `name` TEXT NOT NULL, `spotType` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `coordinateSource` TEXT NOT NULL, `coordinateUncertaintyMeters` REAL, `preferredAlarmRadiusMeters` REAL, `typicalWaterDepthMeters` REAL, `typicalRodeLengthMeters` REAL, `seabedType` TEXT NOT NULL, `customSeabedText` TEXT, `approachNotes` TEXT NOT NULL, `personalNotes` TEXT NOT NULL, `verificationStatus` TEXT NOT NULL, `visitCountCached` INTEGER NOT NULL, `legacyVisitCount` INTEGER NOT NULL, `lastVisitedAt` INTEGER, `legacySavedAnchorageId` INTEGER, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spotType",
+            "columnName": "spotType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coordinateSource",
+            "columnName": "coordinateSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coordinateUncertaintyMeters",
+            "columnName": "coordinateUncertaintyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "preferredAlarmRadiusMeters",
+            "columnName": "preferredAlarmRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "typicalWaterDepthMeters",
+            "columnName": "typicalWaterDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "typicalRodeLengthMeters",
+            "columnName": "typicalRodeLengthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "seabedType",
+            "columnName": "seabedType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "customSeabedText",
+            "columnName": "customSeabedText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "approachNotes",
+            "columnName": "approachNotes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "personalNotes",
+            "columnName": "personalNotes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verificationStatus",
+            "columnName": "verificationStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visitCountCached",
+            "columnName": "visitCountCached",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyVisitCount",
+            "columnName": "legacyVisitCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastVisitedAt",
+            "columnName": "lastVisitedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "legacySavedAnchorageId",
+            "columnName": "legacySavedAnchorageId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_spots_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_spots_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          },
+          {
+            "name": "index_anchorage_spots_placeId_lastVisitedAt",
+            "unique": false,
+            "columnNames": [
+              "placeId",
+              "lastVisitedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_spots_placeId_lastVisitedAt` ON `${TABLE_NAME}` (`placeId`, `lastVisitedAt`)"
+          },
+          {
+            "name": "index_anchorage_spots_legacySavedAnchorageId",
+            "unique": true,
+            "columnNames": [
+              "legacySavedAnchorageId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_anchorage_spots_legacySavedAnchorageId` ON `${TABLE_NAME}` (`legacySavedAnchorageId`)"
+          },
+          {
+            "name": "index_anchorage_spots_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_spots_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_visits",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER NOT NULL, `spotId` INTEGER, `anchorSessionId` INTEGER, `visitKind` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `actualAnchorLatitude` REAL, `actualAnchorLongitude` REAL, `coordinateSource` TEXT, `coordinateUncertaintyMeters` REAL, `waterDepthMeters` REAL, `rodeLengthMeters` REAL, `alarmRadiusMeters` REAL, `maxExcursionMeters` REAL, `alarmCount` INTEGER NOT NULL, `minDepthMeters` REAL, `maxDepthMeters` REAL, `maxWindKnots` REAL, `maxWindSource` TEXT, `typicalMotionScore` REAL, `p95MotionScore` REAL, `p95AbsoluteHeelDegrees` REAL, `dominantRollPeriodSeconds` REAL, `impactCount` INTEGER, `userNotes` TEXT NOT NULL, `summaryVersion` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`spotId`) REFERENCES `anchorage_spots`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`anchorSessionId`) REFERENCES `anchor_sessions`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spotId",
+            "columnName": "spotId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "anchorSessionId",
+            "columnName": "anchorSessionId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "visitKind",
+            "columnName": "visitKind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAt",
+            "columnName": "endedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "actualAnchorLatitude",
+            "columnName": "actualAnchorLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "actualAnchorLongitude",
+            "columnName": "actualAnchorLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "coordinateSource",
+            "columnName": "coordinateSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "coordinateUncertaintyMeters",
+            "columnName": "coordinateUncertaintyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "waterDepthMeters",
+            "columnName": "waterDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rodeLengthMeters",
+            "columnName": "rodeLengthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "alarmRadiusMeters",
+            "columnName": "alarmRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxExcursionMeters",
+            "columnName": "maxExcursionMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "alarmCount",
+            "columnName": "alarmCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minDepthMeters",
+            "columnName": "minDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxDepthMeters",
+            "columnName": "maxDepthMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxWindKnots",
+            "columnName": "maxWindKnots",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxWindSource",
+            "columnName": "maxWindSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "typicalMotionScore",
+            "columnName": "typicalMotionScore",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "p95MotionScore",
+            "columnName": "p95MotionScore",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "p95AbsoluteHeelDegrees",
+            "columnName": "p95AbsoluteHeelDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "dominantRollPeriodSeconds",
+            "columnName": "dominantRollPeriodSeconds",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "impactCount",
+            "columnName": "impactCount",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "userNotes",
+            "columnName": "userNotes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "summaryVersion",
+            "columnName": "summaryVersion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_visits_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_visits_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          },
+          {
+            "name": "index_anchorage_visits_spotId",
+            "unique": false,
+            "columnNames": [
+              "spotId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_visits_spotId` ON `${TABLE_NAME}` (`spotId`)"
+          },
+          {
+            "name": "index_anchorage_visits_anchorSessionId",
+            "unique": true,
+            "columnNames": [
+              "anchorSessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_anchorage_visits_anchorSessionId` ON `${TABLE_NAME}` (`anchorSessionId`)"
+          },
+          {
+            "name": "index_anchorage_visits_startedAt",
+            "unique": false,
+            "columnNames": [
+              "startedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_visits_startedAt` ON `${TABLE_NAME}` (`startedAt`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "anchorage_spots",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "spotId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "anchor_sessions",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "anchorSessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_collections",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `description` TEXT NOT NULL, `icon` TEXT, `sortOrder` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icon",
+            "columnName": "icon",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_collections_sortOrder",
+            "unique": false,
+            "columnNames": [
+              "sortOrder"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_collections_sortOrder` ON `${TABLE_NAME}` (`sortOrder`)"
+          },
+          {
+            "name": "index_anchorage_collections_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_collections_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_collection_places",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`collectionId` INTEGER NOT NULL, `placeId` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, PRIMARY KEY(`collectionId`, `placeId`), FOREIGN KEY(`collectionId`) REFERENCES `anchorage_collections`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "collectionId",
+            "columnName": "collectionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "addedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "collectionId",
+            "placeId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_collection_places_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_collection_places_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_collections",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "collectionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_protection_sectors",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placeId` INTEGER NOT NULL, `medium` TEXT NOT NULL, `sector` TEXT NOT NULL, `rating` TEXT NOT NULL, `source` TEXT NOT NULL, `confidence` REAL, `notes` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`placeId`, `medium`, `sector`), FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "medium",
+            "columnName": "medium",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sector",
+            "columnName": "sector",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rating",
+            "columnName": "rating",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placeId",
+            "medium",
+            "sector"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_facilities",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placeId` INTEGER NOT NULL, `type` TEXT NOT NULL, `availability` TEXT NOT NULL, `source` TEXT NOT NULL, `notes` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`placeId`, `type`), FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "availability",
+            "columnName": "availability",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placeId",
+            "type"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_personal_assessments",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placeId` INTEGER NOT NULL, `wouldReturn` TEXT NOT NULL, `holding` TEXT NOT NULL, `comfort` TEXT NOT NULL, `shoreAccess` TEXT NOT NULL, `crowding` TEXT NOT NULL, `quietness` TEXT NOT NULL, `notes` TEXT NOT NULL, `legacyOverallRating` INTEGER, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`placeId`), FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wouldReturn",
+            "columnName": "wouldReturn",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "holding",
+            "columnName": "holding",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "comfort",
+            "columnName": "comfort",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "shoreAccess",
+            "columnName": "shoreAccess",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "crowding",
+            "columnName": "crowding",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quietness",
+            "columnName": "quietness",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyOverallRating",
+            "columnName": "legacyOverallRating",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placeId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_photos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER NOT NULL, `spotId` INTEGER, `visitId` INTEGER, `relativeFileName` TEXT NOT NULL, `thumbnailRelativeFileName` TEXT, `mimeType` TEXT NOT NULL, `sha256` TEXT NOT NULL, `width` INTEGER, `height` INTEGER, `caption` TEXT NOT NULL, `capturedAt` INTEGER, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`spotId`) REFERENCES `anchorage_spots`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`visitId`) REFERENCES `anchorage_visits`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spotId",
+            "columnName": "spotId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "visitId",
+            "columnName": "visitId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "relativeFileName",
+            "columnName": "relativeFileName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thumbnailRelativeFileName",
+            "columnName": "thumbnailRelativeFileName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mimeType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sha256",
+            "columnName": "sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "caption",
+            "columnName": "caption",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "capturedAt",
+            "columnName": "capturedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchorage_photos_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_photos_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          },
+          {
+            "name": "index_anchorage_photos_spotId",
+            "unique": false,
+            "columnNames": [
+              "spotId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_photos_spotId` ON `${TABLE_NAME}` (`spotId`)"
+          },
+          {
+            "name": "index_anchorage_photos_visitId",
+            "unique": false,
+            "columnNames": [
+              "visitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchorage_photos_visitId` ON `${TABLE_NAME}` (`visitId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "anchorage_spots",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "spotId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "anchorage_visits",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "visitId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_place_summaries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placeId` INTEGER NOT NULL, `generatedAt` INTEGER NOT NULL, `engineVersion` TEXT NOT NULL, `json` TEXT NOT NULL, PRIMARY KEY(`placeId`), FOREIGN KEY(`placeId`) REFERENCES `anchorage_places`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generatedAt",
+            "columnName": "generatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "engineVersion",
+            "columnName": "engineVersion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "json",
+            "columnName": "json",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placeId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "anchorage_places",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "placeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "anchorage_search_fts",
+        "createSql": "CREATE VIRTUAL TABLE IF NOT EXISTS `${TABLE_NAME}` USING FTS4(`placeId` INTEGER NOT NULL, `placeName` TEXT NOT NULL, `aliases` TEXT NOT NULL, `regionPath` TEXT NOT NULL, `spotNames` TEXT NOT NULL, `notes` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeName",
+            "columnName": "placeName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "aliases",
+            "columnName": "aliases",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "regionPath",
+            "columnName": "regionPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spotNames",
+            "columnName": "spotNames",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "rowid"
+          ]
+        },
+        "ftsVersion": "FTS4",
+        "ftsOptions": {
+          "tokenizer": "simple",
+          "tokenizerArgs": [],
+          "contentTable": "",
+          "languageIdColumnName": "",
+          "matchInfo": "FTS4",
+          "notIndexedColumns": [],
+          "prefixSizes": [],
+          "preferredOrder": "ASC"
+        },
+        "contentSyncTriggers": []
+      },
+      {
+        "tableName": "anchorage_gis_meta",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `longValue` INTEGER, `textValue` TEXT, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longValue",
+            "columnName": "longValue",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "textValue",
+            "columnName": "textValue",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        }
+      },
+      {
+        "tableName": "anchorage_region_packs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`regionId` INTEGER NOT NULL, `downloadedAt` INTEGER NOT NULL, `providerRevision` TEXT, `featureCount` INTEGER NOT NULL, PRIMARY KEY(`regionId`), FOREIGN KEY(`regionId`) REFERENCES `anchorage_regions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "regionId",
+            "columnName": "regionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "downloadedAt",
+            "columnName": "downloadedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerRevision",
+            "columnName": "providerRevision",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "featureCount",
+            "columnName": "featureCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "regionId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "anchorage_regions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "regionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4e864e64b5a8ccaac34ea944fff1ea70')"
+    ]
+  }
+}

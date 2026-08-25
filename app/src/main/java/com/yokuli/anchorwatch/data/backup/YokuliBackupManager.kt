@@ -125,7 +125,7 @@ private data class BackupSnapshot(
     val anchorageCollectionPlaces:List<com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef>,
     val anchorageProtection:List<com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity>,
     val anchorageFacilities:List<com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity>,
-    val anchorageRatings:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity>,
+    val anchorageAssessments:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalAssessmentEntity>,
     val anchoragePhotos:List<com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity>,
 )
 
@@ -268,7 +268,7 @@ class YokuliBackupManager @Inject constructor(
             anchorageCollectionPlaces=database.anchorageCollectionDao().membershipsNow(),
             anchorageProtection=database.anchorageMetadataDao().allProtection(),
             anchorageFacilities=database.anchorageMetadataDao().allFacilities(),
-            anchorageRatings=database.anchorageMetadataDao().allRatings(),
+            anchorageAssessments=database.anchorageMetadataDao().allAssessments(),
             anchoragePhotos=database.anchoragePhotoDao().allNow(),
         )}
         var completedManifest:BackupManifestV1?=null
@@ -305,7 +305,9 @@ class YokuliBackupManager @Inject constructor(
             written[YokuliBackupArchive.GIS_COLLECTION_PLACES]=writeRecords(zip,YokuliBackupArchive.GIS_COLLECTION_PLACES,snapshot.anchorageCollectionPlaces.asSequence())
             written[YokuliBackupArchive.GIS_PROTECTION]=writeRecords(zip,YokuliBackupArchive.GIS_PROTECTION,snapshot.anchorageProtection.asSequence())
             written[YokuliBackupArchive.GIS_FACILITIES]=writeRecords(zip,YokuliBackupArchive.GIS_FACILITIES,snapshot.anchorageFacilities.asSequence())
-            written[YokuliBackupArchive.GIS_RATINGS]=writeRecords(zip,YokuliBackupArchive.GIS_RATINGS,snapshot.anchorageRatings.asSequence())
+            // Archive entry name stays stable for v5 compatibility; records now
+            // contain categorical personal assessments rather than stars.
+            written[YokuliBackupArchive.GIS_RATINGS]=writeRecords(zip,YokuliBackupArchive.GIS_RATINGS,snapshot.anchorageAssessments.asSequence())
             val backupPhotos=snapshot.anchoragePhotos.filter{photo->File(context.filesDir,"anchorage_media/${File(photo.relativeFileName).name}").let{it.isFile&&it.length()<=25L*1024*1024}}
             written[YokuliBackupArchive.GIS_PHOTOS]=writeRecords(zip,YokuliBackupArchive.GIS_PHOTOS,backupPhotos.asSequence())
             written.forEach{(name,entry)->checksums[name]=entry.checksum}
@@ -353,7 +355,7 @@ class YokuliBackupManager @Inject constructor(
                 sonarDao.clearGridCells();linzCache.clear();tideCache.clear()
                 sonarDao.clearSamples();sonarDao.clearSurveys()
                 tripDao.clearSamples();tripDao.clearEvents();tripDao.clearWaypoints();tripDao.clearCustomMetrics();tripDao.clearDashboards();tripDao.clearAnchorTelemetry();tripDao.clearSessions()
-                database.anchoragePhotoDao().clear();database.anchorageVisitDao().clear();database.anchorageCollectionDao().clearMemberships();database.anchorageCollectionDao().clear();database.anchorageMetadataDao().clearPlaceRegionsAll();database.anchorageMetadataDao().clearProtection();database.anchorageMetadataDao().clearFacilities();database.anchorageMetadataDao().clearRatings();database.anchorageMetadataDao().clearSummaries();database.anchorageSpotDao().clear();database.anchoragePlaceDao().clear();database.anchorageRegionDao().clear()
+                database.anchoragePhotoDao().clear();database.anchorageVisitDao().clear();database.anchorageCollectionDao().clearMemberships();database.anchorageCollectionDao().clear();database.anchorageMetadataDao().clearPlaceRegionsAll();database.anchorageMetadataDao().clearProtection();database.anchorageMetadataDao().clearFacilities();database.anchorageMetadataDao().clearAssessments();database.anchorageMetadataDao().clearSummaries();database.anchorageSpotDao().clear();database.anchoragePlaceDao().clear();database.anchorageRegionDao().clear()
                 anchorDao.clearEvents();anchorDao.clearPoints();anchorDao.clearSessions();anchorageDao.clear()
                 if(validation.manifest.formatVersion==YokuliBackupArchive.LEGACY_VERSION)importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV1::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null)else it})}
                 else importFile(validation.files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV2::class.java,YokuliBackupArchive.PAGE){rows->anchorDao.importSessions(rows.map(BackupAnchorSessionV2::toEntity).map{if(it.active)it.copy(paused=true,alarmSnoozedUntil=null,depthAlarmSnoozedUntil=null,windAlarmSnoozedUntil=null,windShiftAlarmSnoozedUntil=null)else it})}
@@ -379,7 +381,7 @@ class YokuliBackupManager @Inject constructor(
                     importFile(validation.files.getValue(YokuliBackupArchive.GIS_COLLECTION_PLACES),com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class.java,YokuliBackupArchive.PAGE,database.anchorageCollectionDao()::importMemberships)
                     importFile(validation.files.getValue(YokuliBackupArchive.GIS_PROTECTION),com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importProtection)
                     importFile(validation.files.getValue(YokuliBackupArchive.GIS_FACILITIES),com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importFacilities)
-                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_RATINGS),com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importRatings)
+                    importFile(validation.files.getValue(YokuliBackupArchive.GIS_RATINGS),com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalAssessmentEntity::class.java,YokuliBackupArchive.PAGE,database.anchorageMetadataDao()::importAssessments)
                     importFile(validation.files.getValue(YokuliBackupArchive.GIS_PHOTOS),com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class.java,YokuliBackupArchive.PAGE,database.anchoragePhotoDao()::importAll)
                 }else importLegacyAnchoragesIntoGis()
             }
@@ -480,7 +482,7 @@ class YokuliBackupManager @Inject constructor(
             YokuliBackupArchive.GIS_COLLECTION_PLACES to com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class.java,
             YokuliBackupArchive.GIS_PROTECTION to com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class.java,
             YokuliBackupArchive.GIS_FACILITIES to com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class.java,
-            YokuliBackupArchive.GIS_RATINGS to com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity::class.java,
+            YokuliBackupArchive.GIS_RATINGS to com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalAssessmentEntity::class.java,
             YokuliBackupArchive.GIS_PHOTOS to com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class.java,
         ).forEach{(name,type)->var records=0L;forEach(files.getValue(name),type){records++};requireCount(manifest,name,records)}
     }
@@ -523,7 +525,7 @@ class YokuliBackupManager @Inject constructor(
                 seabedType=legacy.seabedType,customSeabedText=legacy.customSeabedText,verificationStatus=verified,legacyVisitCount=legacy.visitCount,lastVisitedAt=legacy.lastVisitedAt,
                 legacySavedAnchorageId=legacy.id,createdAt=legacy.createdAt,updatedAt=legacy.updatedAt,
             ))
-            legacy.rating?.let{metadata.upsertRating(com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity(placeId=placeId,legacyOverallRating=it,updatedAt=legacy.updatedAt))}
+            legacy.rating?.let{metadata.upsertAssessment(com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalAssessmentEntity(placeId=placeId,legacyOverallRating=it,updatedAt=legacy.updatedAt))}
             legacy.sourceSessionId?.let{sessionId->anchorDao.session(sessionId)?.let{session->
                 val visitId=visitDao.insert(com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity(
                     placeId=placeId,spotId=spotId,anchorSessionId=sessionId,visitKind="SESSION",startedAt=session.startedAt,endedAt=session.endedAt,

@@ -7,6 +7,7 @@ import androidx.room.Fts4
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
+import com.google.gson.annotations.SerializedName
 
 @Entity(
     tableName="anchorage_regions",
@@ -183,11 +184,27 @@ data class AnchorageFacilityEntity(val placeId:Long,val type:String,val availabi
     tableName="anchorage_personal_assessments",
     foreignKeys=[ForeignKey(entity=AnchoragePlaceEntity::class,parentColumns=["id"],childColumns=["placeId"],onDelete=ForeignKey.CASCADE)],
 )
-data class AnchoragePersonalRatingEntity(
+data class AnchoragePersonalAssessmentEntity(
     @PrimaryKey val placeId:Long,
-    val holding:Int?=null,val shelter:Int?=null,val comfort:Int?=null,val quietness:Int?=null,val shoreAccess:Int?=null,val crowding:Int?=null,
-    val overallPreference:String="UNKNOWN",val legacyOverallRating:Int?=null,val notes:String="",val updatedAt:Long,
-)
+    @SerializedName(value="wouldReturn",alternate=["overallPreference"]) val wouldReturn:String="UNKNOWN",
+    val holding:String="UNKNOWN",
+    val comfort:String="UNKNOWN",
+    val shoreAccess:String="UNKNOWN",
+    val crowding:String="UNKNOWN",
+    val quietness:String="UNKNOWN",
+    val notes:String="",
+    val legacyOverallRating:Int?=null,
+    val updatedAt:Long,
+){
+    /** Accepts v5 backup values where assessment fields were integer stars. */
+    fun normalized()=copy(
+        wouldReturn=wouldReturn.normalizeWouldReturn(),
+        holding=holding.normalizeAssessment(),comfort=comfort.normalizeAssessment(),shoreAccess=shoreAccess.normalizeAssessment(),crowding=crowding.normalizeAssessment(),quietness=quietness.normalizeAssessment(),
+        notes=notes.take(20_000),
+    )
+    private fun String?.normalizeWouldReturn()=when(this?.uppercase()){"YES","MAYBE","NO"->uppercase();else->"UNKNOWN"}
+    private fun String?.normalizeAssessment()=when(this?.uppercase()){"GOOD","AVERAGE","POOR"->uppercase();"4","5"->"GOOD";"3"->"AVERAGE";"1","2"->"POOR";else->"UNKNOWN"}
+}
 
 @Entity(
     tableName="anchorage_photos",

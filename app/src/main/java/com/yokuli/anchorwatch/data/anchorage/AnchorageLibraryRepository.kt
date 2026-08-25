@@ -13,7 +13,7 @@ data class AnchoragePlaceBundle(
     val primaryRegion:AnchorageRegionEntity?,
     val regionPath:List<AnchorageRegionEntity>,
     val spots:List<AnchorageSpotEntity>,
-    val rating:AnchoragePersonalRatingEntity?,
+    val assessment:AnchoragePersonalAssessmentEntity?,
     val protection:List<AnchorageProtectionSectorEntity>,
     val facilities:List<AnchorageFacilityEntity>,
     val summary:AnchoragePlaceSummaryEntity?,
@@ -71,7 +71,7 @@ data class AnchoragePlaceBundle(
     suspend fun bundle(placeId:Long):AnchoragePlaceBundle?=database.withTransaction{
         val place=database.anchoragePlaceDao().get(placeId)?:return@withTransaction null;val path=regionPath(place.primaryRegionId)
         val photos=database.anchoragePhotoDao().forPlaceNow(placeId)
-        AnchoragePlaceBundle(place,path.firstOrNull(),path,database.anchorageSpotDao().forPlaceNow(placeId),database.anchorageMetadataDao().rating(placeId),database.anchorageMetadataDao().protection(placeId),database.anchorageMetadataDao().facilities(placeId),database.anchorageMetadataDao().summary(placeId),photos.firstOrNull(),database.anchorageVisitDao().forPlaceNow(placeId),database.anchorageCollectionDao().forPlace(placeId),photos)
+        AnchoragePlaceBundle(place,path.firstOrNull(),path,database.anchorageSpotDao().forPlaceNow(placeId),database.anchorageMetadataDao().assessment(placeId),database.anchorageMetadataDao().protection(placeId),database.anchorageMetadataDao().facilities(placeId),database.anchorageMetadataDao().summary(placeId),photos.firstOrNull(),database.anchorageVisitDao().forPlaceNow(placeId),database.anchorageCollectionDao().forPlace(placeId),photos)
     }
     suspend fun viewport(value:AnchorageViewport)=spatial.viewport(value)
     suspend fun nearby(latitude:Double,longitude:Double,radiusMeters:Double=AnchorageNearbyPolicy.TRIGGER_DISTANCE_METERS):List<AnchorageNearbyPlace>{

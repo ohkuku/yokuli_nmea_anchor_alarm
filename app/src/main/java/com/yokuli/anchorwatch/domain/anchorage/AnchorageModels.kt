@@ -16,6 +16,8 @@ enum class AnchorageInformationSource { USER, OBSERVED, GIS_ASSISTED, IMPORTED }
 enum class AnchorageFacilityType { DINGHY_LANDING, SHORE_ACCESS, WATER, TOILET, RUBBISH, GROCERIES, FUEL, REPAIR, MOBILE_SIGNAL, INTERNET, DOG_ACCESS, HAZARD, RESTRICTION, OTHER }
 enum class AnchorageFacilityAvailability { UNKNOWN, NO, LIMITED, YES }
 enum class AnchoragePreference { UNKNOWN, FAVORITE, NEUTRAL, AVOID }
+enum class AnchorageWouldReturn { UNKNOWN, YES, MAYBE, NO }
+enum class AnchorageAssessmentRating { UNKNOWN, GOOD, AVERAGE, POOR }
 
 data class AnchorageSaveDraft(
     val sessionId:Long?,

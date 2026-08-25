@@ -26,7 +26,16 @@ data class AnchorageSaveSpotInput(
     val approachNotes:String="",
     val personalNotes:String="",
 )
-data class AnchorageSaveRequest(val draft:AnchorageSaveDraft,val place:AnchorageSavePlaceInput,val spot:AnchorageSaveSpotInput,val visitNotes:String="")
+data class AnchoragePersonalAssessmentInput(
+    val wouldReturn:AnchorageWouldReturn=AnchorageWouldReturn.UNKNOWN,
+    val holding:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val comfort:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val shoreAccess:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val crowding:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val quietness:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val notes:String="",
+)
+data class AnchorageSaveRequest(val draft:AnchorageSaveDraft,val place:AnchorageSavePlaceInput,val spot:AnchorageSaveSpotInput,val visitNotes:String="",val assessment:AnchoragePersonalAssessmentInput?=null)
 data class AnchorageSaveResult(
     val placeId:Long,
     val spotId:Long,
@@ -89,6 +98,7 @@ object AnchorageSaveDraftFactory {
         val visitId=draft.sessionId?.let{sessionId->
             existingVisit?.id?:run{val session=requireNotNull(database.anchorDao().session(sessionId)){"Anchor session no longer exists"};visitRepository.save(session.visitSnapshot(placeId,spotId,request.visitNotes,now))}
         }
+        request.assessment?.let{value->database.anchorageMetadataDao().upsertAssessment(AnchoragePersonalAssessmentEntity(placeId,value.wouldReturn.name,value.holding.name,value.comfort.name,value.shoreAccess.name,value.crowding.name,value.quietness.name,value.notes.trim(),existingPlace?.let{database.anchorageMetadataDao().assessment(placeId)?.legacyOverallRating},now))}
         search.rebuildPlace(placeId)
         AnchorageSaveResult(placeId,spotId,visitId,existingPlace==null,existingSpot==null,visitId!=null&&existingVisit==null)
     }
@@ -105,6 +115,6 @@ object AnchorageSaveDraftFactory {
     }
 
     private fun AnchorSessionEntity.visitSnapshot(placeId:Long,spotId:Long,notes:String,now:Long)=AnchorageVisitEntity(placeId=placeId,spotId=spotId,anchorSessionId=id,visitKind=AnchorageVisitKind.SESSION.name,startedAt=startedAt,endedAt=endedAt,actualAnchorLatitude=anchorLatitude,actualAnchorLongitude=anchorLongitude,coordinateSource=centerSource,coordinateUncertaintyMeters=provisionalRadiusMeters,waterDepthMeters=waterDepthMeters,rodeLengthMeters=rodeLengthMeters,alarmRadiusMeters=alarmRadiusMeters,maxExcursionMeters=maxDistanceMeters,alarmCount=alarmCount,minDepthMeters=minObservedDepthMeters,maxDepthMeters=maxObservedDepthMeters,maxWindKnots=maxObservedWindKnots,maxWindSource=maxObservedWindSource,typicalMotionScore=null,p95MotionScore=null,p95AbsoluteHeelDegrees=null,dominantRollPeriodSeconds=null,impactCount=null,userNotes=notes.trim(),summaryVersion=PersonalAnchorageSummaryEngine.VERSION,createdAt=now)
-    private fun validate(value:AnchorageSaveRequest){require(value.place.displayName.trim().isNotEmpty());require(value.place.displayName.length<=200&&value.place.description.length<=20_000&&value.place.personalNotes.length<=20_000);require(value.spot.name.length<=200&&value.spot.approachNotes.length<=20_000&&value.spot.personalNotes.length<=20_000&&value.visitNotes.length<=20_000)}
+    private fun validate(value:AnchorageSaveRequest){require(value.place.displayName.trim().isNotEmpty());require(value.place.displayName.length<=200&&value.place.description.length<=20_000&&value.place.personalNotes.length<=20_000);require(value.spot.name.length<=200&&value.spot.approachNotes.length<=20_000&&value.spot.personalNotes.length<=20_000&&value.visitNotes.length<=20_000&&(value.assessment?.notes?.length?:0)<=20_000)}
     private fun normalize(value:Double)=((value+540)%360)-180
 }

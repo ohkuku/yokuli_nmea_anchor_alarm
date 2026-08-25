@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.RawQuery
 import androidx.room.Update
 import androidx.room.Upsert
+import androidx.room.Transaction
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.yokuli.anchorwatch.data.database.entity.*
 import kotlinx.coroutines.flow.Flow
@@ -89,9 +90,9 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM anchorage_place_regions WHERE placeId=:placeId ORDER BY sortOrder") suspend fun regionsForPlace(placeId:Long):List<AnchoragePlaceRegionCrossRef>
     @Upsert suspend fun upsertPlaceRegions(values:List<AnchoragePlaceRegionCrossRef>)
     @Query("DELETE FROM anchorage_place_regions WHERE placeId=:placeId") suspend fun clearPlaceRegions(placeId:Long)
-    @Query("SELECT * FROM anchorage_personal_assessments WHERE placeId=:placeId") suspend fun rating(placeId:Long):AnchoragePersonalRatingEntity?
-    @Query("SELECT * FROM anchorage_personal_assessments ORDER BY placeId") fun observeRatings():Flow<List<AnchoragePersonalRatingEntity>>
-    @Upsert suspend fun upsertRating(value:AnchoragePersonalRatingEntity)
+    @Query("SELECT * FROM anchorage_personal_assessments WHERE placeId=:placeId") suspend fun assessment(placeId:Long):AnchoragePersonalAssessmentEntity?
+    @Query("SELECT * FROM anchorage_personal_assessments ORDER BY placeId") fun observeAssessments():Flow<List<AnchoragePersonalAssessmentEntity>>
+    @Upsert suspend fun upsertAssessment(value:AnchoragePersonalAssessmentEntity)
     @Query("SELECT * FROM anchorage_protection_sectors WHERE placeId=:placeId ORDER BY medium,sector") suspend fun protection(placeId:Long):List<AnchorageProtectionSectorEntity>
     @Upsert suspend fun upsertProtection(values:List<AnchorageProtectionSectorEntity>)
     @Query("SELECT * FROM anchorage_facilities WHERE placeId=:placeId ORDER BY type") suspend fun facilities(placeId:Long):List<AnchorageFacilityEntity>
@@ -104,15 +105,16 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM anchorage_place_regions ORDER BY placeId,sortOrder") suspend fun allPlaceRegions():List<AnchoragePlaceRegionCrossRef>
     @Query("SELECT * FROM anchorage_protection_sectors ORDER BY placeId,medium,sector") suspend fun allProtection():List<AnchorageProtectionSectorEntity>
     @Query("SELECT * FROM anchorage_facilities ORDER BY placeId,type") suspend fun allFacilities():List<AnchorageFacilityEntity>
-    @Query("SELECT * FROM anchorage_personal_assessments ORDER BY placeId") suspend fun allRatings():List<AnchoragePersonalRatingEntity>
+    @Query("SELECT * FROM anchorage_personal_assessments ORDER BY placeId") suspend fun allAssessments():List<AnchoragePersonalAssessmentEntity>
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importPlaceRegions(values:List<AnchoragePlaceRegionCrossRef>)
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importProtection(values:List<AnchorageProtectionSectorEntity>)
     @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importFacilities(values:List<AnchorageFacilityEntity>)
-    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importRatings(values:List<AnchoragePersonalRatingEntity>)
+    @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun importAssessmentRows(values:List<AnchoragePersonalAssessmentEntity>)
+    @Transaction suspend fun importAssessments(values:List<AnchoragePersonalAssessmentEntity>)=importAssessmentRows(values.map(AnchoragePersonalAssessmentEntity::normalized))
     @Query("DELETE FROM anchorage_place_regions") suspend fun clearPlaceRegionsAll()
     @Query("DELETE FROM anchorage_protection_sectors") suspend fun clearProtection()
     @Query("DELETE FROM anchorage_facilities") suspend fun clearFacilities()
-    @Query("DELETE FROM anchorage_personal_assessments") suspend fun clearRatings()
+    @Query("DELETE FROM anchorage_personal_assessments") suspend fun clearAssessments()
     @Query("DELETE FROM anchorage_place_summaries") suspend fun clearSummaries()
 }
 

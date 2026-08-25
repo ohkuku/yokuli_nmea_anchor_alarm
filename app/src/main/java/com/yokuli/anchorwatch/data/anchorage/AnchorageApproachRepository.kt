@@ -26,11 +26,11 @@ class AnchorageApproachRepository @Inject constructor(
     private val spots:AnchorageSpotRepository,
     private val saver:AnchorageSaveRepository,
 ) {
-    val anchorages = combine(database.anchoragePlaceDao().observeActive(),database.anchorageSpotDao().observeAll(),database.anchorageVisitDao().observeAll(),database.anchorageMetadataDao().observeRatings()){placeRows,spotRows,visitRows,ratingRows->
+    val anchorages = combine(database.anchoragePlaceDao().observeActive(),database.anchorageSpotDao().observeAll(),database.anchorageVisitDao().observeAll(),database.anchorageMetadataDao().observeAssessments()){placeRows,spotRows,visitRows,assessmentRows->
         val placeById=placeRows.associateBy{it.id}
         val latestSessionBySpot=visitRows.filter{it.spotId!=null&&it.anchorSessionId!=null}.groupBy{it.spotId}.mapValues{(_,visits)->visits.maxBy{it.startedAt}.anchorSessionId}
-        val ratingByPlace=ratingRows.associateBy{it.placeId}
-        spotRows.mapNotNull{spot->placeById[spot.placeId]?.let{place->spot.toPresentation(place,ratingByPlace[place.id]?.legacyOverallRating,latestSessionBySpot[spot.id])}}
+        val assessmentByPlace=assessmentRows.associateBy{it.placeId}
+        spotRows.mapNotNull{spot->placeById[spot.placeId]?.let{place->spot.toPresentation(place,assessmentByPlace[place.id]?.legacyOverallRating,latestSessionBySpot[spot.id])}}
     }.distinctUntilChanged()
 
     /** Canonical live guidance targets. These IDs survive

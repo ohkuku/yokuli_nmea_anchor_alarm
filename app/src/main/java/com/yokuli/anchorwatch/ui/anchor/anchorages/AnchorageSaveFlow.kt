@@ -45,6 +45,14 @@ data class AnchorageSaveFlowState(
     val placeNotes: String = "",
     val visitNotes: String = "",
     val favorite: Boolean = true,
+    val assessmentEnabled:Boolean=false,
+    val wouldReturn:AnchorageWouldReturn=AnchorageWouldReturn.UNKNOWN,
+    val holding:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val comfort:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val shoreAccess:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val crowding:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val quietness:AnchorageAssessmentRating=AnchorageAssessmentRating.UNKNOWN,
+    val assessmentNotes:String="",
     val resolving: Boolean = false,
     val saving: Boolean = false,
     val complete: Boolean = false,
@@ -90,6 +98,14 @@ class AnchorageSaveFlowViewModel @Inject constructor(
     fun notes(value: String) { mutable.value = mutable.value.copy(placeNotes = value) }
     fun visitNotes(value: String) { mutable.value = mutable.value.copy(visitNotes = value) }
     fun favorite(value: Boolean) { mutable.value = mutable.value.copy(favorite = value) }
+    fun assessmentEnabled(value:Boolean){mutable.value=mutable.value.copy(assessmentEnabled=value)}
+    fun wouldReturn(value:AnchorageWouldReturn){mutable.value=mutable.value.copy(wouldReturn=value)}
+    fun holding(value:AnchorageAssessmentRating){mutable.value=mutable.value.copy(holding=value)}
+    fun comfort(value:AnchorageAssessmentRating){mutable.value=mutable.value.copy(comfort=value)}
+    fun shoreAccess(value:AnchorageAssessmentRating){mutable.value=mutable.value.copy(shoreAccess=value)}
+    fun crowding(value:AnchorageAssessmentRating){mutable.value=mutable.value.copy(crowding=value)}
+    fun quietness(value:AnchorageAssessmentRating){mutable.value=mutable.value.copy(quietness=value)}
+    fun assessmentNotes(value:String){mutable.value=mutable.value.copy(assessmentNotes=value.take(20_000))}
     fun selectRegion(index: Int?) { mutable.value = mutable.value.copy(selectedRegionIndex = index) }
     fun selectNewPlace() { mutable.value = mutable.value.copy(selectedPlaceId = null, selectedSpotId = null, spotMatches = emptyList(),spotDecisionMade=true) }
     fun selectPlace(id: Long) {
@@ -135,6 +151,7 @@ class AnchorageSaveFlowViewModel @Inject constructor(
                             name = current.spotName.trim().ifBlank { "Main spot" },
                         ),
                         current.visitNotes,
+                        current.takeIf{it.assessmentEnabled}?.let{AnchoragePersonalAssessmentInput(it.wouldReturn,it.holding,it.comfort,it.shoreAccess,it.crowding,it.quietness,it.assessmentNotes)},
                     ),
                 )
             }.onSuccess { result ->
@@ -210,6 +227,16 @@ internal fun AnchorageSaveFlow(
                     item { OutlinedTextField(state.placeNotes,vm::notes,Modifier.fillMaxWidth(),label={Text(tr("Place notes","地点备注"))}) }
                     item { OutlinedTextField(state.visitNotes,vm::visitNotes,Modifier.fillMaxWidth(),label={Text(tr("This visit notes","本次访问备注"))}) }
                     item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(tr("Favorite","收藏"));Switch(state.favorite,vm::favorite)} }
+                    item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Add a personal assessment","添加个人评价"),fontWeight=FontWeight.SemiBold);Text(tr("Optional and editable later. It does not change safety protection sectors.","可选，之后仍可编辑；不会改变安全遮蔽方向。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Switch(state.assessmentEnabled,vm::assessmentEnabled)} }
+                    if(state.assessmentEnabled){
+                        item{AssessmentChoiceGrid(tr("Would you return?","还会再来吗？"),AnchorageWouldReturn.entries,state.wouldReturn,vm::wouldReturn){value->when(value){AnchorageWouldReturn.YES->tr("Yes","会");AnchorageWouldReturn.MAYBE->tr("Maybe","也许");AnchorageWouldReturn.NO->tr("No","不会");AnchorageWouldReturn.UNKNOWN->tr("Unknown","未评价")}}}
+                        item{AssessmentChoiceGrid(tr("Holding","抓底感受"),AnchorageAssessmentRating.entries,state.holding,vm::holding){assessmentRatingLabel(it)}}
+                        item{AssessmentChoiceGrid(tr("Comfort","舒适度"),AnchorageAssessmentRating.entries,state.comfort,vm::comfort){assessmentRatingLabel(it)}}
+                        item{AssessmentChoiceGrid(tr("Shore access","上岸"),AnchorageAssessmentRating.entries,state.shoreAccess,vm::shoreAccess){assessmentContextLabel(it,tr("Convenient","方便"),tr("Average","一般"),tr("Difficult","困难"))}}
+                        item{AssessmentChoiceGrid(tr("Crowding","拥挤程度"),AnchorageAssessmentRating.entries,state.crowding,vm::crowding){assessmentContextLabel(it,tr("Uncrowded","不拥挤"),tr("Moderate","一般"),tr("Crowded","拥挤"))}}
+                        item{AssessmentChoiceGrid(tr("Quietness","安静程度"),AnchorageAssessmentRating.entries,state.quietness,vm::quietness){assessmentContextLabel(it,tr("Quiet","安静"),tr("Mixed","一般"),tr("Noisy","嘈杂"))}}
+                        item{OutlinedTextField(state.assessmentNotes,vm::assessmentNotes,Modifier.fillMaxWidth(),label={Text(tr("Assessment notes","评价备注"))},minLines=2)}
+                    }
                 }
                 state.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
             }
@@ -222,3 +249,14 @@ internal fun AnchorageSaveFlow(
         }
     }
 }
+
+@Composable
+private fun <T> AssessmentChoiceGrid(title:String,values:List<T>,selected:T,select:(T)->Unit,label:@Composable (T)->String){
+    Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(5.dp)){
+        Text(title,fontWeight=FontWeight.SemiBold)
+        values.chunked(2).forEach{row->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){row.forEach{value->FilterChip(selected==value,{select(value)},label={Text(label(value),maxLines=1)},modifier=Modifier.weight(1f))};if(row.size==1)Spacer(Modifier.weight(1f))}}
+    }
+}
+
+@Composable private fun assessmentRatingLabel(value:AnchorageAssessmentRating)=when(value){AnchorageAssessmentRating.GOOD->tr("Good","好");AnchorageAssessmentRating.AVERAGE->tr("Average","一般");AnchorageAssessmentRating.POOR->tr("Poor","差");AnchorageAssessmentRating.UNKNOWN->tr("Not rated","未评价")}
+@Composable private fun assessmentContextLabel(value:AnchorageAssessmentRating,good:String,average:String,poor:String)=when(value){AnchorageAssessmentRating.GOOD->good;AnchorageAssessmentRating.AVERAGE->average;AnchorageAssessmentRating.POOR->poor;AnchorageAssessmentRating.UNKNOWN->tr("Unknown","未知")}

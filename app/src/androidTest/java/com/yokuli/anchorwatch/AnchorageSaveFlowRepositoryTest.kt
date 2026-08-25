@@ -34,9 +34,10 @@ class AnchorageSaveFlowRepositoryTest{
     @Test fun sessionSaveAtomicallyCreatesPlaceSpotVisitAndSessionLinks()=runBlocking{
         val sessionId=db.anchorDao().insertSession(session())
         val draft=AnchorageSaveDraftFactory.fromSession(db.anchorDao().session(sessionId)!!)
-        val result=save.save(AnchorageSaveRequest(draft,AnchorageSavePlaceInput(displayName="Visited Bay",placeType=AnchoragePlaceType.BAY),AnchorageSaveSpotInput(name="Inner mud"),"Calm night"))
+        val result=save.save(AnchorageSaveRequest(draft,AnchorageSavePlaceInput(displayName="Visited Bay",placeType=AnchoragePlaceType.BAY),AnchorageSaveSpotInput(name="Inner mud"),"Calm night",AnchoragePersonalAssessmentInput(AnchorageWouldReturn.YES,AnchorageAssessmentRating.GOOD,AnchorageAssessmentRating.AVERAGE,AnchorageAssessmentRating.GOOD,notes="Would return")))
         assertNotNull(result.visitId);val linked=db.anchorDao().session(sessionId)!!;assertEquals(result.placeId,linked.anchoragePlaceId);assertEquals(result.spotId,linked.anchorageSpotId);assertEquals(result.visitId,linked.anchorageVisitId)
         assertEquals("Calm night",db.anchorageVisitDao().get(result.visitId!!)?.userNotes)
+        val assessment=db.anchorageMetadataDao().assessment(result.placeId)!!;assertEquals("YES",assessment.wouldReturn);assertEquals("GOOD",assessment.holding);assertEquals("AVERAGE",assessment.comfort);assertEquals("Would return",assessment.notes)
     }
 
     @Test fun closeCoordinatesCanRemainDifferentPlacesAndExistingPlaceCanGainAnotherSpot()=runBlocking{

@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 21
+const val DATABASE_SCHEMA_VERSION = 22
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -577,7 +577,7 @@ interface TripDao{
 
 @Database(
     entities = [AnchorSessionEntity::class,SavedAnchorageEntity::class,TrackPointEntity::class,AlarmEventEntity::class,SonarSurveyEntity::class,DepthSampleEntity::class,SonarGridCellEntity::class,LinzDepthCacheEntity::class,TidePredictionCacheEntity::class,IncidentLogEntity::class,PressureHistoryEntity::class,TripSessionEntity::class,TripSampleEntity::class,TripEventEntity::class,TripWaypointEntity::class,TripCustomMetricSampleEntity::class,TripDashboardEntity::class,AnchorTelemetrySampleEntity::class,
-        com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceRegionCrossRef::class,com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class,com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalRatingEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceSummaryEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageSearchFtsEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageGisMetaEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageRegionPackEntity::class],
+        com.yokuli.anchorwatch.data.database.entity.AnchorageRegionEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceRegionCrossRef::class,com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageVisitEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageCollectionPlaceCrossRef::class,com.yokuli.anchorwatch.data.database.entity.AnchorageProtectionSectorEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageFacilityEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePersonalAssessmentEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePhotoEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceSummaryEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageSearchFtsEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageGisMetaEntity::class,com.yokuli.anchorwatch.data.database.entity.AnchorageRegionPackEntity::class],
     version = DATABASE_SCHEMA_VERSION,
     exportSchema = true,
 )

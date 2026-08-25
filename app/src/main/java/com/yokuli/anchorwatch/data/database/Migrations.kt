@@ -366,3 +366,18 @@ object Migration20To21:Migration(20,21){
   db.execSQL("UPDATE anchorage_spots SET visitCountCached=0 WHERE legacySavedAnchorageId IS NOT NULL")
  }
 }
+
+/** Replaces the old integer/star-shaped row with the FINAL categorical assessment contract. */
+object Migration21To22:Migration(21,22){
+ override fun migrate(db:SupportSQLiteDatabase){
+  db.execSQL("ALTER TABLE anchorage_personal_assessments RENAME TO anchorage_personal_assessments_legacy_21")
+  db.execSQL("CREATE TABLE IF NOT EXISTS anchorage_personal_assessments (placeId INTEGER NOT NULL,wouldReturn TEXT NOT NULL,holding TEXT NOT NULL,comfort TEXT NOT NULL,shoreAccess TEXT NOT NULL,crowding TEXT NOT NULL,quietness TEXT NOT NULL,notes TEXT NOT NULL,legacyOverallRating INTEGER,updatedAt INTEGER NOT NULL,PRIMARY KEY(placeId),FOREIGN KEY(placeId) REFERENCES anchorage_places(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  fun rating(column:String)="CASE WHEN $column IS NULL THEN 'UNKNOWN' WHEN $column>=4 THEN 'GOOD' WHEN $column=3 THEN 'AVERAGE' ELSE 'POOR' END"
+  db.execSQL("""INSERT INTO anchorage_personal_assessments(placeId,wouldReturn,holding,comfort,shoreAccess,crowding,quietness,notes,legacyOverallRating,updatedAt)
+      SELECT placeId,CASE WHEN overallPreference IN ('YES','MAYBE','NO') THEN overallPreference ELSE 'UNKNOWN' END,
+      ${rating("holding")},${rating("comfort")},${rating("shoreAccess")},${rating("crowding")},${rating("quietness")},
+      CASE WHEN shelter IS NULL THEN notes ELSE notes||CASE WHEN length(notes)>0 THEN char(10) ELSE '' END||'Legacy shelter rating: '||shelter END,
+      legacyOverallRating,updatedAt FROM anchorage_personal_assessments_legacy_21""")
+  db.execSQL("DROP TABLE anchorage_personal_assessments_legacy_21")
+ }
+}
