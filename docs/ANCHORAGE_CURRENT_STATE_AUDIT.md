@@ -1,7 +1,8 @@
 # Anchorage Library current-state audit
 
-Audited branch: `codex/anchorage-library-final`  
-Audited baseline: `f22c8fe`  
+Audited branch: `codex/anchorage-library-final`
+
+Audited baseline: `f22c8fe`
 Pre-redesign database schema: Room `20`, exported in `app/schemas/com.yokuli.anchorwatch.data.database.AppDatabase/20.json` (the implementation work following this audit advances it to 21)
 
 This audit records the checked-out implementation before the FINAL anchorage-library convergence work. It is evidence, not a restatement of the target document.
