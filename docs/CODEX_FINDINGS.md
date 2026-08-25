@@ -366,3 +366,29 @@
 - Verification result: **Code written; test deliberately NOT RUN. A fair lifecycle lock now serializes complete Start/Stop transactions. Same-port Start is idempotent inside that lock. Local service configuration saving cannot mutate its live lease.**
 - Real hardware verified: **No.**
 - Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL START/SOAK QA REQUIRED**
+
+## Finding P1-011 — Saved anchorage exposed two nearby surfaces and an internal GIS schema
+
+- Severity: **P1 / saved-anchorage operability**
+- User story: one saved anchorage should open one complete, full-screen card with clear Approach, Maps, Share, Edit and Delete actions; Watch should show exactly one nearby prompt.
+- Evidence: `WatchScreen` rendered `GisNearbyAnchorageCard` above the map while `WatchBottomSheet` independently rendered `NearbyAnchorageCard`. The library called itself a `Place → Spot → Visit` guide, exposed raw planning/verification enums, and opened a five-tab `AlertDialog` whose default tab was Spots.
+- Reproduction steps: approach a saved anchorage with Watch inactive and inspect both the map and setup sheet; then select a saved marker and try to find its notes, edit/delete action and navigation without understanding Place/Spot/Visit.
+- Root cause: the canonical GIS persistence model leaked into presentation, while an experimental GIS nearby projection was added alongside the established Watch-sheet projection instead of replacing it.
+- Failing test: updated `NearbyAnchorageCardTest`; new protected-delete regression `AnchorageGisRepositoryTest.savedAnchorageUsedByActiveWatchCannotBeDeletedBelowTheUi`; full-screen detail test tags are available for the pending Compose story suite.
+- Fix commit: **`c45111f`**
+- Verification result: **The duplicate GIS nearby composable and its independent ViewModel were removed. The Watch sheet is the single nearby owner. Saved anchorages now use a sailor-facing map/list/filter surface and one full-screen detail with primary position actions, optional expandable evidence, editing, confirmed deletion and repository-level active-watch protection. `:app:compileDebugKotlin` passed in 2m49s; tests were written/updated but deliberately NOT RUN.**
+- Real hardware verified: **No — verify nearby transitions, small-screen detail scrolling, Google Maps hand-off and destructive confirmation in manual QA.**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; MANUAL UX QA REQUIRED**
+
+## Finding P1-012 — Anchorage QR was useful only to an existing App user
+
+- Severity: **P1 / offline hand-off and product clarity**
+- User story: a friend should be able to scan a shared anchorage card with any phone to see its location, while a Boat Watch user can separately import the richer local record.
+- Evidence: the V2 share image contained one large proprietary `anchorwatch://` QR and the instruction “Scan with Anchor Watch”. Generic camera apps could not open the location, despite the image already printing coordinates.
+- Reproduction steps: share a V2 anchorage image to a phone without Anchor Watch and scan it with the system camera.
+- Root cause: navigation and structured import were treated as one QR destination even though they have different compatibility and privacy contracts.
+- Failing test: `AnchorageShareContentTest.shareCardKeepsPublicNavigationAndPrivateAppImportAsTwoExplicitDestinations`; existing payload codec and bitmap decoder suites cover the individual encodings.
+- Fix commit: **`c45111f`**
+- Verification result: **The local share generator now renders a branded two-QR card: a public Google Maps HTTPS location and a separately labelled versioned Boat Watch import payload. The card includes saved parameters, approach note, safety disclaimer, logo and `Developed aboard SV Yokuli`; visits/photos/device data remain excluded. Tests were written but deliberately NOT RUN.**
+- Real hardware verified: **No — scan both regions from a shared/compressed image on iOS and Android during QA.**
+- Status: **FIXED IN CODE — MANUAL CROSS-DEVICE QR QA REQUIRED**
