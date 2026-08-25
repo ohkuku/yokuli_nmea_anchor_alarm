@@ -1,8 +1,8 @@
 # Privacy and data flow / 隐私与数据流
 
-Anchor Watch has no user account, advertising, analytics, telemetry or project-operated cloud backend. Android cloud/device-transfer backup is disabled. Operational data remains local until the user explicitly connects, shares, opens or exports something.
+Boat Watch has no user account, advertising, analytics, telemetry or project-operated cloud backend. Android cloud/device-transfer backup is disabled. Operational data remains local until the user explicitly connects, shares, opens or exports something.
 
-Anchor Watch 没有用户账号、广告、分析、遥测或项目自营云后端。Android 云备份/设备迁移备份已关闭。除非用户主动连接、共享、打开或导出，运行数据均保留在本机。
+Boat Watch 没有用户账号、广告、分析、遥测或项目自营云后端。Android 云备份/设备迁移备份已关闭。除非用户主动连接、共享、打开或导出，运行数据均保留在本机。
 
 | Flow / 数据流 | Direction / 方向 | Content / 内容 | User control / 用户控制 |
 |---|---|---|---|
@@ -12,7 +12,7 @@ Anchor Watch 没有用户账号、广告、分析、遥测或项目自营云后�
 | Google Maps SDK | App ↔ Google | Base-map requests and normal SDK metadata | Map use; key restricted at build time |
 | LINZ | App ↔ LINZ services | Optional chart tiles, depth/tide queries | Layer/reference settings; NZ-only optional feature |
 | YouTube / Buy Me a Coffee | App → external browser/app | Destination URL only | Explicit tap; support adds a confirmation |
-| Feedback email | App → user-selected email app | Editable `mailto:` recipient, subject and request body; App/Android version and device model, but no location or NMEA metadata | Explicit tap; Anchor Watch never sends or tracks it |
+| Feedback email | App → user-selected email app | Editable `mailto:` recipient, subject and request body; App/Android version and device model, but no location or NMEA metadata | Explicit tap; Boat Watch never sends or tracks it |
 | `.yokuli-backup`, GPX, sonar, support ZIP | App → user-selected document | User-selected local export | Android document picker |
 | Global GPS proxy | App → Android location stack | Accepted NMEA position as mock location | Developer Options + explicit App switch |
 
@@ -21,7 +21,7 @@ Anchor Watch 没有用户账号、广告、分析、遥测或项目自营云后�
 - Raw NMEA UI history is bounded to the latest 200 sentences and is not placed in Support Bundles.
 - Incident Log is a local 72-hour / 10,000-record ring and sanitizes coordinates, raw sentences and credentials at entry.
 - Anchor and sonar history persist until the user deletes or replaces them.
-- LINZ and derived caches are bounded/rebuildable; Google content is never prefetched or cached by Anchor Watch.
+- LINZ and derived caches are bounded/rebuildable; Google content is never prefetched or cached by Boat Watch.
 
 ## Sensitive exports / 敏感导出
 

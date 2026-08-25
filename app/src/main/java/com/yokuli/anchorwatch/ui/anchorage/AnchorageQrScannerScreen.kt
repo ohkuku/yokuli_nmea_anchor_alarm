@@ -84,7 +84,7 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
                         FilledTonalIconButton({torchEnabled=!torchEnabled},Modifier.align(Alignment.TopEnd).padding(12.dp).testTag("anchorage_qr_torch")){Icon(if(torchEnabled)Icons.Default.FlashOn else Icons.Default.FlashOff,tr("Toggle torch","切换闪光灯"))}
                     }
                     cameraError?.let{Text(it,Modifier.padding(horizontal=20.dp,vertical=6.dp),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
-                    Text(tr("Point the camera at an Anchor Watch anchorage QR.","将相机对准 Anchor Watch 锚地二维码。"),Modifier.padding(18.dp),style=MaterialTheme.typography.bodyMedium)
+                    Text(tr("Point the camera at a Boat Watch anchorage QR.","将相机对准 Boat Watch 锚地二维码。"),Modifier.padding(18.dp),style=MaterialTheme.typography.bodyMedium)
                     OutlinedButton({gallery.launch("image/*")},Modifier.fillMaxWidth().padding(horizontal=18.dp).testTag("anchorage_qr_gallery")){Icon(Icons.Default.PhotoLibrary,null);Spacer(Modifier.width(8.dp));Text(tr("Choose QR image","选择二维码图片"))}
                     Spacer(Modifier.height(12.dp))
                 }
@@ -97,7 +97,7 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
     Column(Modifier.fillMaxSize().padding(28.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
         Icon(Icons.Default.QrCodeScanner,null,Modifier.size(64.dp),tint=MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(16.dp));Text(tr("Camera permission is required","需要相机权限"),style=MaterialTheme.typography.titleLarge)
-        Text(if(requested)tr("Permission was not granted. Camera frames are processed only on this device and are never uploaded.","尚未获得权限。相机画面只在本机处理，不会上传。") else tr("Anchor Watch asks for camera access only when you open the QR scanner.","Anchor Watch 只会在你打开扫码功能时申请相机权限。"),Modifier.padding(vertical=12.dp),style=MaterialTheme.typography.bodyMedium)
+        Text(if(requested)tr("Permission was not granted. Camera frames are processed only on this device and are never uploaded.","尚未获得权限。相机画面只在本机处理，不会上传。") else tr("Boat Watch asks for camera access only when you open the QR scanner.","Boat Watch 只会在你打开扫码功能时申请相机权限。"),Modifier.padding(vertical=12.dp),style=MaterialTheme.typography.bodyMedium)
         Button(retry,Modifier.fillMaxWidth().testTag("anchorage_qr_permission_retry")){Text(tr("Try again","重试"))}
         OutlinedButton(gallery,Modifier.fillMaxWidth().testTag("anchorage_qr_gallery_without_camera")){Text(tr("Choose QR image instead","改为选择二维码图片"))}
         TextButton(close){Text(tr("Cancel","取消"))}
@@ -158,14 +158,14 @@ internal fun AnchorageQrScannerScreen(onClose:()->Unit,onSave:(SavedAnchorageEnt
                 TextButton(close,Modifier.fillMaxWidth()){Text(tr("Cancel","取消"))}
             }
         }
-        is AnchorageQrDecodeResult.UnsupportedVersion->QrFailure(tr("Newer sharing format","较新的分享格式"),tr("This anchorage was shared by a newer Anchor Watch format. Update the app to read version ${result.version?:"?"}.","该锚地使用了更新的 Anchor Watch 格式。请更新应用后读取版本 ${result.version?:"?"}。"),scanAgain,close)
+        is AnchorageQrDecodeResult.UnsupportedVersion->QrFailure(tr("Newer sharing format","较新的分享格式"),tr("This anchorage was shared by a newer Boat Watch format. Update the app to read version ${result.version?:"?"}.","该锚地使用了更新的 Boat Watch 格式。请更新应用后读取版本 ${result.version?:"?"}。"),scanAgain,close)
         is AnchorageQrDecodeResult.Invalid->QrFailure(
             tr("Invalid anchorage QR","锚地二维码无效"),
             tr("Invalid data: ${result.reason}","二维码内容损坏或字段超出允许范围。"),
             scanAgain,
             close,
         )
-        AnchorageQrDecodeResult.Unsupported->QrFailure(tr("Not an Anchor Watch anchorage","不是 Anchor Watch 锚地"),tr("This QR code does not contain a supported Anchor Watch anchorage. No link was opened.","该二维码不包含受支持的 Anchor Watch 锚地；应用没有打开其中的链接。"),scanAgain,close)
+        AnchorageQrDecodeResult.Unsupported->QrFailure(tr("Not a Boat Watch anchorage","不是 Boat Watch 锚地"),tr("This QR code does not contain a supported Boat Watch anchorage. No link was opened.","该二维码不包含受支持的 Boat Watch 锚地；应用没有打开其中的链接。"),scanAgain,close)
     }
 }
 

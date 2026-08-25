@@ -1144,7 +1144,7 @@ class MainViewModel @Inject constructor(
         val points=dao.points(session.id).first();val events=dao.events(session.id).first();val file=java.io.File(app.cacheDir,"anchor-${session.id}.gpx")
         file.writeText(buildString{
             appendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-            appendLine("<gpx version=\"1.1\" creator=\"Anchor Watch\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
+            appendLine("<gpx version=\"1.1\" creator=\"Boat Watch\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
             if(events.isNotEmpty())appendLine("<metadata><desc>${xmlEscape(events.joinToString(" | "){event->"${java.time.Instant.ofEpochMilli(event.timestamp)} ${event.type} ${event.detail}"})}</desc></metadata>")
             appendLine("<wpt lat=\"${session.anchorLatitude}\" lon=\"${session.anchorLongitude}\"><name>Active anchor</name></wpt>")
             appendLine("<trk><name>Anchor session ${session.id}</name><trkseg>")

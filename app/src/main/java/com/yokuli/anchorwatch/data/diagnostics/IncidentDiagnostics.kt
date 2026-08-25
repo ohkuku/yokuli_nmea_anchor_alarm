@@ -248,7 +248,7 @@ class SupportBundleManager @Inject constructor(
             write(zip, "storage.json", gson.toJson(storageState))
             write(zip, "anchorage_gis.json", gson.toJson(gis))
             write(zip, "incidents.ndjson", recent.joinToString("\n") { gson.toJson(it) })
-            write(zip, "README.txt", "This bundle is designed for Anchor Watch diagnostics. It excludes raw NMEA, API keys and exact vessel positions. Review it before sharing.\n")
+            write(zip, "README.txt", "This bundle is designed for Boat Watch diagnostics. It excludes raw NMEA, API keys and exact vessel positions. Review it before sharing.\n")
         } }
         _state.value = SupportBundleState(message = "Diagnostics exported successfully.")
     }.onFailure { _state.value = SupportBundleState(error = it.message ?: "Diagnostics export failed") }.map { Unit } }

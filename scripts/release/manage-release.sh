@@ -96,7 +96,7 @@ publish_tag() {
     [[ "$(git -C "$REPO_ROOT" rev-list -n 1 "$tag")" == "$local_sha" ]] \
       || die "Local tag $tag points at another commit and will not be changed."
   else
-    git -C "$REPO_ROOT" tag -a "$tag" -m "Anchor Watch $tag"
+    git -C "$REPO_ROOT" tag -a "$tag" -m "Boat Watch $tag"
   fi
 
   git -C "$REPO_ROOT" push "$REMOTE" "refs/tags/$tag"
@@ -105,7 +105,7 @@ publish_tag() {
 
 show_help() {
   cat <<'EOF'
-Anchor Watch online-release manager
+Boat Watch online-release manager
 
 Usage:
   scripts/release/manage-release.sh status

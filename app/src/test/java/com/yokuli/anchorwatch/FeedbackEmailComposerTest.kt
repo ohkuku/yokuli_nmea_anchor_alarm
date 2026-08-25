@@ -45,7 +45,7 @@ class FeedbackEmailComposerTest {
         )
 
         assertTrue(body.contains("Please make the alarm card easier to read."))
-        assertTrue(body.contains("Anchor Watch version: 1.0.0"))
+        assertTrue(body.contains("Boat Watch version: 1.0.0"))
         assertTrue(body.contains("Android version: 16"))
         assertTrue(body.contains("Device model: Example Phone"))
         assertTrue(!body.contains("latitude", ignoreCase = true))

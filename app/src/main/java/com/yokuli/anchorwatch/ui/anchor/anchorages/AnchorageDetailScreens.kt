@@ -132,15 +132,13 @@ private fun SavedAnchorageNotes(bundle:AnchoragePlaceBundle){
 private fun PlanningAndCollections(bundle:AnchoragePlaceBundle,collections:List<AnchorageCollectionEntity>,setPlanning:(AnchoragePlanningStatus)->Unit,toggleCollection:(Long)->Unit){
     Column(verticalArrangement=Arrangement.spacedBy(7.dp)){
         SectionTitle(tr("My list","我的分类"),tr("These labels stay on this device.","这些分类只保存在本机。"))
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-            listOf(
+        listOf(
                 AnchoragePlanningStatus.NONE to tr("Saved","已收藏"),
                 AnchoragePlanningStatus.WANT_TO_VISIT to tr("Planned","想去"),
                 AnchoragePlanningStatus.BACKUP to tr("Alternative","备选"),
                 AnchoragePlanningStatus.AVOID to tr("Avoid","避开"),
-            ).forEach{(status,label)->FilterChip(bundle.place.planningStatus==status.name,{setPlanning(status)},label={Text(label)})}
-        }
-        if(collections.isNotEmpty())Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){collections.forEach{collection->FilterChip(bundle.collections.any{it.id==collection.id},{toggleCollection(collection.id)},label={Text(collection.name)})}}
+            ).chunked(2).forEach{pair->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){pair.forEach{(status,label)->FilterChip(bundle.place.planningStatus==status.name,{setPlanning(status)},label={Text(label)},modifier=Modifier.weight(1f))}}}
+        if(collections.isNotEmpty())collections.chunked(2).forEach{pair->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){pair.forEach{collection->FilterChip(bundle.collections.any{it.id==collection.id},{toggleCollection(collection.id)},label={Text(collection.name)},modifier=Modifier.weight(1f))};if(pair.size==1)Spacer(Modifier.weight(1f))}}
     }
 }
 
@@ -223,7 +221,7 @@ internal fun AnchorageEditorDialog(bundle:AnchoragePlaceBundle,dismiss:()->Unit,
 
 @Composable private fun NumberField(value:String,change:(String)->Unit,label:String,modifier:Modifier)=OutlinedTextField(value,change,modifier,label={Text(label)},singleLine=true,isError=value.isNotBlank()&&value.toDoubleOrNull()?.let{it>0.0}!=true)
 @Composable private fun SectionTitle(title:String,supporting:String?){Column{Text(title,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);supporting?.let{Text(it,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
-@Composable private fun StatusChip(text:String)=AssistChip({},label={Text(text)})
+@Composable private fun StatusChip(text:String)=Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.extraLarge){Text(text,Modifier.padding(horizontal=10.dp,vertical=6.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSecondaryContainer)}
 @Composable private fun EmptySection(text:String)=Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.medium){Text(text,Modifier.fillMaxWidth().padding(12.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)}
 
 @Composable private fun planningLabel(raw:String)=when(runCatching{AnchoragePlanningStatus.valueOf(raw)}.getOrDefault(AnchoragePlanningStatus.NONE)){AnchoragePlanningStatus.NONE->tr("Saved","已收藏");AnchoragePlanningStatus.WANT_TO_VISIT,AnchoragePlanningStatus.PLANNED->tr("Planned","想去");AnchoragePlanningStatus.COMMON->tr("Regular","常用");AnchoragePlanningStatus.BACKUP->tr("Alternative","备选");AnchoragePlanningStatus.AVOID->tr("Avoid","避开");AnchoragePlanningStatus.ARCHIVED->tr("Archived","已归档")}

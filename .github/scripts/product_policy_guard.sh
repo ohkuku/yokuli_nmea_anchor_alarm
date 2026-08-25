@@ -43,9 +43,11 @@ fail_if_found 'Anchor by Yokuli' app/src README.md docs
 fail_if_found '(^|[^[:alnum:]_])(isPro|premiumUnlocked|supporterUnlock|subscriptionActive|supportMember)([^[:alnum:]_]|$)' app/src/main
 fail_if_found '(com\.android\.billing|billingclient|play-billing|admob|firebase-analytics)' app gradle build.gradle.kts settings.gradle.kts
 
-require_pattern '<string name="app_name">Anchor Watch</string>' app/src/main/res/values/strings.xml
+require_pattern '<string name="app_name">Boat Watch</string>' app/src/main/res/values/strings.xml
+require_pattern 'PRODUCT_NAME = "Boat Watch"' app/src/main/java/com/yokuli/anchorwatch/brand/ProductBrand.kt
+fail_if_found '<string name="app_name">Anchor Watch</string>' app/src/main/res
 require_pattern 'https://www\.youtube\.com/@yokuli_ocean_diary' app/build.gradle.kts
 require_pattern 'https://buymeacoffee\.com/ukus3yya8a' app/build.gradle.kts
 require_pattern 'kuku\.the\.developer@gmail\.com' app/build.gradle.kts
 
-echo 'Anchor Watch identity and free-feature policy guard passed.'
+echo 'Boat Watch identity and free-feature policy guard passed.'

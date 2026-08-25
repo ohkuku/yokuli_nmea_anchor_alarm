@@ -2,7 +2,7 @@
 
 ## 中文
 
-Release Console 是 Anchor Watch 仓库自带的本地网页工具。它只监听 `127.0.0.1`，不对局域网
+Release Console 是 Boat Watch 仓库自带的本地网页工具。它只监听 `127.0.0.1`，不对局域网
 或互联网开放，也不需要在浏览器中填写 GitHub Token、签名密码或 API Key。
 
 从仓库目录运行：

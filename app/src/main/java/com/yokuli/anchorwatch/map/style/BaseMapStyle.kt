@@ -1,6 +1,6 @@
 package com.yokuli.anchorwatch.map.style
 
-/** The only three mutually-exclusive base-map choices exposed by Anchor Watch. */
+/** The only three mutually-exclusive base-map choices exposed by Boat Watch. */
 enum class BaseMapStyle(val persistedValue: Int) {
     STANDARD(1),
     SATELLITE(2),

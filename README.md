@@ -1,7 +1,7 @@
-# Anchor Watch
+# Boat Watch
 
 <p align="center">
-  <img src="docs/images/anchor-watch-logo.png" width="150" alt="Anchor Watch pixel-art anchor logo">
+  <img src="docs/images/anchor-watch-logo.png" width="150" alt="Boat Watch pixel-art anchor logo">
 </p>
 
 <p align="center">
@@ -11,11 +11,11 @@
   </a>
 </p>
 
-Anchor Watch is an Android app for people who want one clear place to watch the boat after anchoring. Set an alarm area, see where the boat has moved, and receive a loud warning if the boat leaves that area or reliable position data disappears.
+Boat Watch is a local-first Android companion for looking after a real boat: keep an anchor alarm, understand live NMEA instruments, record a passage, build a personal depth map and keep useful anchorages for the next visit.
 
-It works with the phone's GPS on a simple boat, or with live NMEA 0183 data on a more connected one. NMEA can also add heading, wind and depth, feed a personal depth map, and be shared with other equipment aboard.
+The anchor alarm still works with only the phone's GPS. On a connected boat, NMEA 0183 can add position, heading, wind and depth without hiding where each value came from. The App's safety monitors, trip recorder, maps and data-sharing tools remain separate so one feature cannot silently reconfigure another.
 
-> **Safety:** Anchor Watch is an extra aid, not a substitute for watchkeeping, seamanship, official charts, a depth instrument or an independent alarm. GPS, power, Wi-Fi, NMEA equipment and Android background execution can all fail.
+> **Safety:** Boat Watch is an extra aid, not a substitute for watchkeeping, seamanship, official charts, a depth instrument or an independent alarm. GPS, power, Wi-Fi, NMEA equipment and Android background execution can all fail.
 
 ## A quick look
 
@@ -23,7 +23,7 @@ These are existing product captures; the gallery will be refreshed separately.
 
 | Anchor watch | Live boat data |
 |---|---|
-| <img src="docs/images/watch-current-en.png" width="320" alt="Anchor Watch map and boat position"> | <img src="docs/images/data-final-en.png" width="320" alt="NMEA connection and live-data page"> |
+| <img src="docs/images/watch-current-en.png" width="320" alt="Boat Watch map and boat position"> | <img src="docs/images/data-final-en.png" width="320" alt="NMEA connection and live-data page"> |
 
 ## What the app helps you do
 
@@ -43,16 +43,17 @@ These are existing product captures; the gallery will be refreshed separately.
 - Unexpected NMEA loss never silently changes the watch to another GPS source.
 - A bounded Incident Log records recent safety-state changes. A privacy-safe Support Bundle helps investigate a problem without including raw NMEA or exact positions by default.
 
-### Use boat data without hiding it
+### Use and share NMEA without mixing two different jobs
 
 - Connect as a TCP client or UDP listener. **Test, save & connect** succeeds only after usable NMEA traffic is received.
 - Inspect raw sentences, parsed values, checksum failures and connection health.
 - Supported sentences include RMC, GGA, GLL, VTG, ZDA, HDG, HDM, HDT, DPT, DBT, MWD and MWV across common talker IDs.
-- Share accepted positions and boat instruments with trusted LAN/VPN clients through the bounded NMEA Sharing server.
+- **Add missing data to the boat network** publishes only Phone/App-owned measurements such as phone GNSS, calibrated phone heading/motion, pressure and explicitly derived wind. It does not echo instruments already received from the boat. The authoritative route reuses the existing full-duplex input socket; separately configured gateway TCP/UDP routes are explicit advanced options.
+- **Host an NMEA service on this phone** is an independent listener for another phone, tablet or dashboard on the trusted LAN/VPN. It has its own port, Start/Stop lease, client count and raw generated/flushed diagnostics. Starting or stopping it never starts, stops or reconfigures boat-network injection.
 - Optionally proxy accepted NMEA position into Android's global mock-location provider, with developer-setting guidance and loop prevention.
 - Missing fields in an otherwise valid sentence are treated as “not updated”, not as invalid data. The last depth, wind, heading or speed value keeps its original receive time and visibly changes from **live** to **held** to **stale**; safety guards still require their own fresh evidence.
 
-### Record a trip without weakening Anchor Watch
+### Record a trip without weakening Boat Watch
 
 - **Watch → Trip Watch** provides live NAV, sailing, motion and weather instruments through a separate Vessel Data Hub. Its AUTO source fallback never changes the GPS source locked by an active anchor watch.
 - Start, pause, resume and end a local trip session. Readiness shows which instruments are available, while genuine missing data remains a gap rather than a made-up zero.
@@ -67,7 +68,7 @@ These are existing product captures; the gallery will be refreshed separately.
 - Switch on the map between **Map**, **Satellite** and **Nautical**. Following the boat still permits temporary pan/zoom before returning automatically; free-browse mode keeps the chosen view.
 - A scale bar follows the current latitude and zoom. The ruler button creates two draggable pins and shows their straight-line distance in metres or in both nautical miles and kilometres; tapping the ruler again clears the measurement.
 - Add the regional LINZ local-depth layer, recently used legal non-Google tile caches, or a licensed raster MBTiles file. Google tiles are never cached by the app.
-- Save an anchorage for later reference, view its notes and setup, or open it in Google Maps. A branded QR card can carry the coordinate plus the saved radius, depth, rode, seabed, rating and notes; another Anchor Watch user can scan it with the camera or choose a QR image from the gallery, review every field and explicitly confirm the import.
+- Save an anchorage for later reference, view or edit its positions and parameters, start the full-screen approach guide, or open it in Google Maps. Its branded share card has two clear QR codes: any phone can open the public map location, while Boat Watch can separately import the richer local details after review and confirmation.
 - Near a saved anchorage, use the direct distance/bearing guide. Choose vessel direction when usable NMEA HDT/HDG or trusted moving COG exists, otherwise use phone direction. This is not route planning or safe-passage advice.
 - Record a personal depth chart only when depth and position come from the **same connected NMEA server**. The anchor-watch GPS choice does not move real sonar samples.
 - Apply no, manual, or automatic LINZ tide correction to sonar surveys and keep chart-datum-corrected history available offline.
@@ -97,11 +98,11 @@ The app starts in English. The welcome screen and Settings language list support
 
 Sessions and surveys stay on the device. There is no account, analytics, advertising or project-owned cloud backend. The camera is requested only after opening the anchorage QR scanner, and frames are decoded locally. Data leaves only through an export or sharing action started by the user.
 
-The local V3 backup includes Anchor and Trip sessions, raw source observations, waypoints, saved anchorages, vessel-source/layout preferences and vessel-mount calibration. On restore, active watches return in a safe paused state and Phone GPS Output, NMEA Sharing and GPS proxy stay off until the user deliberately enables them again.
+The local V3 backup includes Anchor and Trip sessions, raw source observations, waypoints, saved anchorages, vessel-source/layout preferences and vessel-mount calibration. On restore, active watches return in a safe paused state and every external GPS/NMEA output stays off until the user deliberately enables it again.
 
 The current V4 backup additionally includes custom Trip metric samples and named dashboards. It still excludes imported MBTiles and custom alarm audio, and every external output remains off after restore.
 
-When explicitly enabled, the phone can act as a vessel sensor node and write fresh GNSS, heading, rate, calibrated attitude and pressure sentences back through the **same existing boat TCP connection**. It never opens a second boat socket, never writes to the local sharing-server port, and Phone Position Output is hard-conflicted with using boat NMEA position as the app GPS source.
+The two NMEA products are intentionally independent. Boat-network injection fills selected gaps with Phone/App-owned values and normally writes through the existing full-duplex connection; dedicated gateway TCP/UDP is available only as an explicit advanced route. The phone-hosted NMEA service serves the same kind of Phone/App-owned feed to other devices through its own listener and never forwards the Boat input stream. Phone Position Output remains hard-conflicted with using Boat NMEA position as the App GPS source.
 
 ## Build, CI and downloads
 
@@ -115,11 +116,11 @@ The main Android workflow builds and verifies downloadable Debug artifacts. Long
 
 API values are never committed. See [CI secrets setup](docs/CI_SECRETS.md) for the exact map, LINZ and signing values and the safe clipboard helper. Branch and release conventions are in [Branching and releases](docs/BRANCHING_AND_RELEASES.md).
 
-## Made aboard Yokuli
+## Developed aboard SV Yokuli
 
 Before turning his life towards the sea, **kuku** worked as a programmer. In New Zealand, our crew refitted **Yokuli**, a **Lotus 10.6** designed by New Zealand yacht designer **Alan Wright**. **Yoyo is the captain**; kuku and lili complete the crew.
 
-We hope first to explore New Zealand's islands and bays and, if wind, time and life allow, one day sail farther into the world. Anchor Watch grew from that life aboard. Every anchor-watch, NMEA, sonar and offline-map feature remains free, with no account, ads, paid unlocks or supporter-only functions.
+We hope first to explore New Zealand's islands and bays and, if wind, time and life allow, one day sail farther into the world. Boat Watch grew from that life aboard. Every anchor-watch, NMEA, sonar and offline-map feature remains free, with no account, ads, paid unlocks or supporter-only functions.
 
 - [Watch Yokuli on YouTube](https://www.youtube.com/@yokuli_ocean_diary)
 - [Voluntarily support the crew on Buy Me a Coffee](https://buymeacoffee.com/ukus3yya8a) — support unlocks no features.
@@ -131,6 +132,9 @@ We hope first to explore New Zealand's islands and bays and, if wind, time and l
 - [Offline maps](docs/OFFLINE_MAPS.md)
 - [Regional data providers](docs/REGIONAL_DATA_PROVIDERS.md)
 - [Privacy and data flow](docs/PRIVACY_DATA_FLOW.md)
+- [Product identity and update compatibility](docs/PRODUCT_IDENTITY.md)
+- [NMEA product boundaries](docs/NMEA_PRODUCT_BOUNDARIES.md)
+- [Saved anchorage product contract](docs/ANCHORAGE_LIBRARY_PRODUCT_UPGRADE.md)
 - [Release signing](docs/RELEASE_SIGNING.md)
 - [Physical-device and 72-hour boat soak checklist](docs/PHYSICAL_SOAK_CHECKLIST.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

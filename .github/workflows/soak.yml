@@ -1,4 +1,4 @@
-name: Anchor Watch Nightly Safety Soak
+name: Boat Watch Nightly Safety Soak
 
 on:
   workflow_dispatch:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only browser console for safe Anchor Watch GitHub releases."""
+"""Loopback-only browser console for safe Boat Watch GitHub releases."""
 
 from __future__ import annotations
 
@@ -260,7 +260,7 @@ class ReleaseConsoleHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Open the loopback-only Anchor Watch Release Console.")
+    parser = argparse.ArgumentParser(description="Open the loopback-only Boat Watch Release Console.")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
     parser.add_argument("--no-open", action="store_true", help="Do not open the browser automatically")
     args = parser.parse_args()
@@ -271,7 +271,7 @@ def main() -> int:
     server.csrf_token = secrets.token_urlsafe(32)
     server.publish_lock = threading.Lock()
     url = f"http://127.0.0.1:{args.port}"
-    print(f"Anchor Watch Release Console: {url}")
+    print(f"Boat Watch Release Console: {url}")
     print("This console is available only on this Mac. Press Control-C to stop it.")
     if not args.no_open:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()

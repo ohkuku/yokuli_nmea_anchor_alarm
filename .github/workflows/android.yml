@@ -1,4 +1,4 @@
-name: Anchor Watch Android CI
+name: Boat Watch Android CI
 
 on:
   push:
@@ -58,7 +58,7 @@ jobs:
         if: steps.assemble.outcome == 'success' && steps.unit_tests.outcome == 'success' && steps.lint.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-watch-debug-candidate-${{ github.sha }}
+          name: boat-watch-debug-candidate-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -66,7 +66,7 @@ jobs:
         if: steps.assemble.outcome == 'success' && (steps.unit_tests.outcome != 'success' || steps.lint.outcome != 'success') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v6
         with:
-          name: UNVERIFIED-anchor-watch-debug-${{ github.sha }}
+          name: UNVERIFIED-boat-watch-debug-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
@@ -74,7 +74,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-watch-build-reports-${{ github.sha }}
+          name: boat-watch-build-reports-${{ github.sha }}
           path: |
             app/build/reports/tests/**
             app/build/reports/lint-results-*.html
@@ -112,7 +112,7 @@ jobs:
           ASSEMBLE_RESULT: ${{ steps.assemble.outcome }}
         run: |
           {
-            echo "## Anchor Watch build gate"
+            echo "## Boat Watch build gate"
             echo "| Gate | Result |"
             echo "|---|---|"
             echo "| Unit and accelerated story tests | $UNIT_TEST_RESULT |"
@@ -196,7 +196,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-watch-integration-shard-${{ matrix.shard }}-${{ github.sha }}
+          name: boat-watch-integration-shard-${{ matrix.shard }}-${{ github.sha }}
           path: |
             app/build/reports/androidTests/**
             app/build/outputs/androidTest-results/**
@@ -266,7 +266,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-watch-api36-smoke-${{ github.sha }}
+          name: boat-watch-api36-smoke-${{ github.sha }}
           path: |
             app/build/reports/androidTests/**
             app/build/outputs/androidTest-results/**
@@ -286,12 +286,12 @@ jobs:
       - name: Download candidate built by the quality gate
         uses: actions/download-artifact@v6
         with:
-          name: anchor-watch-debug-candidate-${{ github.sha }}
+          name: boat-watch-debug-candidate-${{ github.sha }}
           path: verified-apk
       - name: Upload fully verified installable Debug APK
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-watch-debug-verified-${{ github.sha }}
+          name: boat-watch-debug-verified-${{ github.sha }}
           path: verified-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -299,7 +299,7 @@ jobs:
         if: github.ref == 'refs/heads/codex/develop'
         uses: actions/upload-artifact@v6
         with:
-          name: anchor-watch-development-debug-${{ github.run_number }}-${{ github.sha }}
+          name: boat-watch-development-debug-${{ github.run_number }}-${{ github.sha }}
           path: verified-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 45
@@ -308,9 +308,9 @@ jobs:
           {
             echo "## Fully verified Debug APK"
             echo "Unit tests, Android Lint, Debug compilation, all three device-integration shards, and the API 36 smoke passed."
-            echo "Download artifact: **anchor-watch-debug-verified-${{ github.sha }}**"
+            echo "Download artifact: **boat-watch-debug-verified-${{ github.sha }}**"
             if [ "${{ github.ref }}" = "refs/heads/codex/develop" ]; then
-              echo "Development channel: **anchor-watch-development-debug-${{ github.run_number }}-${{ github.sha }}**"
+              echo "Development channel: **boat-watch-development-debug-${{ github.run_number }}-${{ github.sha }}**"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Collect verified-Debug publication failure diagnostics

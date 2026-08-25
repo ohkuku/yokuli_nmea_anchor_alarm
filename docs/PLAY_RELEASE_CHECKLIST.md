@@ -6,7 +6,7 @@ Complete this checklist for the exact release commit. A green CI run cannot repl
 
 ## Product and policy / 产品与政策
 
-- [ ] Store name, launcher label and screenshots say **Anchor Watch**; maker identity says **Made aboard Yokuli**.
+- [ ] Store name, launcher label and screenshots say **Boat Watch**; maker identity says **Developed aboard SV Yokuli**.
 - [ ] Maker facts match the verified story: developer/former programmer `kuku`; captain `yoyo`; crew `kuku`, `yoyo`, `lili`; refitted Alan Wright-designed Lotus 10.6 `Yokuli`; no invented claims or portraits.
 - [ ] Full functionality is free; no billing library, ads, analytics, supporter state or digital benefit exists.
 - [ ] Buy Me a Coffee is an optional external link with confirmation and the exact configured URL.

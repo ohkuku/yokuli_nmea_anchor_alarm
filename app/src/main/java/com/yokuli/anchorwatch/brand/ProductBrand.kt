@@ -5,9 +5,9 @@ import com.yokuli.anchorwatch.BuildConfig
 import com.yokuli.anchorwatch.R
 
 object ProductBrand {
-    const val PRODUCT_NAME = "Anchor Watch"
+    const val PRODUCT_NAME = "Boat Watch"
     const val MAKER_NAME = "Yokuli"
-    const val MAKER_LINE = "Made aboard Yokuli"
+    const val MAKER_LINE = "Developed aboard SV Yokuli"
 
     val youtubeChannelUrl: String get() = BuildConfig.YOKULI_YOUTUBE_URL.trim()
     val buyMeACoffeeUrl: String get() = BuildConfig.YOKULI_BUYMEACOFFEE_URL.trim()

@@ -348,7 +348,7 @@ class YokuliBackupManager @Inject constructor(
         val staging=File(context.cacheDir,"restore-staging-${System.nanoTime()}").apply{mkdirs()}
         try{
             val validation=stageAndValidate(uri,staging)
-            _state.value=_state.value.copy(progress="Replacing local Anchor Watch data…")
+            _state.value=_state.value.copy(progress="Replacing local Boat Watch data…")
             database.withTransaction{
                 sonarDao.clearGridCells();linzCache.clear();tideCache.clear()
                 sonarDao.clearSamples();sonarDao.clearSurveys()
@@ -403,8 +403,8 @@ class YokuliBackupManager @Inject constructor(
                 if(settingsError!=null)append(" Some preferences could not be restored and remain unchanged.")
                 if(vesselSettingsError!=null)append(" Vessel display preferences could not be restored.")
                 if(outputSettingsError!=null)append(" Phone NMEA output could not be forced off; verify Data Output before use.")
-                if(rebuildError!=null)append(" The derived sonar map will be rebuilt the next time Anchor Watch starts.")
-                append(" Restart Anchor Watch before use.")
+                if(rebuildError!=null)append(" The derived sonar map will be rebuilt the next time Boat Watch starts.")
+                append(" Restart Boat Watch before use.")
             }
             _state.value=BackupOperationState(result=message,lastBackupAt=_state.value.lastBackupAt)
             validation.manifest
@@ -428,7 +428,7 @@ class YokuliBackupManager @Inject constructor(
             }
         }
         val manifest=gson.fromJson(found.getValue(YokuliBackupArchive.MANIFEST).readText(),BackupManifestV1::class.java)
-        require(manifest.format==YokuliBackupArchive.FORMAT){"This is not an Anchor Watch backup"};require(manifest.formatVersion in setOf(YokuliBackupArchive.LEGACY_VERSION,YokuliBackupArchive.VERSION_2,YokuliBackupArchive.VERSION_3,YokuliBackupArchive.VERSION_4,YokuliBackupArchive.VERSION)){"Unsupported Anchor Watch backup version ${manifest.formatVersion}"}
+        require(manifest.format==YokuliBackupArchive.FORMAT){"This is not a Boat Watch backup"};require(manifest.formatVersion in setOf(YokuliBackupArchive.LEGACY_VERSION,YokuliBackupArchive.VERSION_2,YokuliBackupArchive.VERSION_3,YokuliBackupArchive.VERSION_4,YokuliBackupArchive.VERSION)){"Unsupported Boat Watch backup version ${manifest.formatVersion}"}
         val required=YokuliBackupArchive.requiredFor(manifest.formatVersion)
         val expected=if(manifest.formatVersion>=YokuliBackupArchive.VERSION)required+manifest.files.filter{it.startsWith(YokuliBackupArchive.GIS_MEDIA_PREFIX)} else required
         require(found.keys.containsAll(expected)){"Backup is missing required files: ${expected-found.keys}"};require(found.keys==expected){"Unexpected files for backup V${manifest.formatVersion}: ${found.keys-expected}"}
@@ -454,7 +454,7 @@ class YokuliBackupManager @Inject constructor(
         val sessions=mutableSetOf<Long>();var count=0L;var activeAnchorCount=0
         if(manifest.formatVersion==YokuliBackupArchive.LEGACY_VERSION)forEach(files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV1::class.java){row->YokuliBackupArchive.validateCoordinate(row.anchorLatitude,row.anchorLongitude);row.learningReferenceLatitude?.let{YokuliBackupArchive.validateCoordinate(it,requireNotNull(row.learningReferenceLongitude))};require(sessions.add(row.id)){"Duplicate anchor session id"};if(row.active)activeAnchorCount++;count++}
         else forEach(files.getValue(YokuliBackupArchive.ANCHORS),BackupAnchorSessionV2::class.java){row->val base=row.base;YokuliBackupArchive.validateCoordinate(base.anchorLatitude,base.anchorLongitude);require(sessions.add(base.id)){"Duplicate anchor session id"};if(base.active)activeAnchorCount++;count++}
-        require(activeAnchorCount<=1){"Backup contains more than one active Anchor Watch session"}
+        require(activeAnchorCount<=1){"Backup contains more than one active anchor-watch session"}
         requireCount(manifest,YokuliBackupArchive.ANCHORS,count)
         count=0;forEach(files.getValue(YokuliBackupArchive.POINTS),BackupTrackPointV1::class.java){row->require(row.sessionId in sessions){"Track point references a missing anchor session"};YokuliBackupArchive.validateCoordinate(row.latitude,row.longitude);count++};requireCount(manifest,YokuliBackupArchive.POINTS,count)
         count=0;forEach(files.getValue(YokuliBackupArchive.EVENTS),BackupAlarmEventV1::class.java){row->require(row.sessionId in sessions){"Alarm event references a missing anchor session"};count++};requireCount(manifest,YokuliBackupArchive.EVENTS,count)

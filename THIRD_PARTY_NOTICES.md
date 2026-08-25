@@ -16,7 +16,7 @@ AndroidX, Jetpack Compose, Google Maps SDK, Google Play services, Kotlin, Kotlin
 
 ## ZXing
 
-Local QR generation and decoding use ZXing Core, distributed under the Apache License 2.0. Camera preview and lifecycle binding use AndroidX CameraX. QR frames are decoded on-device and are not uploaded by Anchor Watch.
+Local QR generation and decoding use ZXing Core, distributed under the Apache License 2.0. Camera preview and lifecycle binding use AndroidX CameraX. QR frames are decoded on-device and are not uploaded by Boat Watch.
 
 ZXing project and licence: https://github.com/zxing/zxing
 

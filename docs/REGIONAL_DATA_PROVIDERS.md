@@ -12,9 +12,9 @@ LINZ is an optional regional provider for hydrographic chart imagery, vector dep
 
 LINZ 是可选的新西兰地区数据源，用于水文海图影像、矢量水深参考与潮汐预测。构建时使用 `LINZ_API_KEY` 或完整的 HTTPS `LINZ_HYDRO_TILE_TEMPLATE`。缺少配置、超时、响应无效或离线时必须明确降级，且不得影响锚警状态与报警。
 
-LINZ attribution and source/provenance must remain visible. Cached LINZ tiles are bounded and stale-aware. Anchor Watch never caches Google map content. See [OFFLINE_MAPS.md](OFFLINE_MAPS.md).
+LINZ attribution and source/provenance must remain visible. Cached LINZ tiles are bounded and stale-aware. Boat Watch never caches Google map content. See [OFFLINE_MAPS.md](OFFLINE_MAPS.md).
 
-LINZ 署名与来源信息必须持续可见；LINZ 缓存有容量与新鲜度限制。Anchor Watch 不缓存 Google 地图内容。详见 [OFFLINE_MAPS.md](OFFLINE_MAPS.md)。
+LINZ 署名与来源信息必须持续可见；LINZ 缓存有容量与新鲜度限制。Boat Watch 不缓存 Google 地图内容。详见 [OFFLINE_MAPS.md](OFFLINE_MAPS.md)。
 
 The on-map generic name is **Local depth chart**; LINZ is shown as the concrete `LINZ · New Zealand` provider. Availability follows the accepted boat position while locked and the settled camera target while browsing. Leaving coverage hides rendering without clearing the user's enabled preference.
 

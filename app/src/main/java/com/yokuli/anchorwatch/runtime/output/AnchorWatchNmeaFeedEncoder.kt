@@ -105,7 +105,7 @@ class PhoneAppNmeaMetricLeaseBank @Inject constructor(){
 /** Phone/App-owned encoder for the single product publisher. Transport choice
  * changes only where bytes go; it can never change what data is eligible.
  * Every destination receives only provenance-proven Phone sensors or values
- * explicitly computed by Anchor Watch. Raw/re-encoded Boat measurements and
+ * explicitly computed by Boat Watch. Raw/re-encoded Boat measurements and
  * legacy BACKUP ownership state never enter this boundary. */
 class AnchorWatchNmeaFeedEncoder @Inject constructor(
     private val mux:NmeaOutputMux,

@@ -180,7 +180,7 @@ private fun AiExportPrivacyDialog(dismiss:()->Unit,confirm:()->Unit){
     AlertDialog(
         onDismissRequest=dismiss,
         title={Text(tr("Export private session data?","导出私密会话数据？"))},
-        text={Text(tr("This export contains precise locations, timestamps, sensor data, notes and waypoints from this session. Anchor Watch does not upload it automatically. Continue only if you intend to share this data.","导出文件包含本次会话的精确位置、时间、传感器数据、备注和航点。Anchor Watch 不会自动上传；仅在你确实准备分享时继续。"))},
+        text={Text(tr("This export contains precise locations, timestamps, sensor data, notes and waypoints from this session. Boat Watch does not upload it automatically. Continue only if you intend to share this data.","导出文件包含本次会话的精确位置、时间、传感器数据、备注和航点。Boat Watch 不会自动上传；仅在你确实准备分享时继续。"))},
         confirmButton={Button(confirm){Text(tr("Create local ZIP","生成本地 ZIP"))}},
         dismissButton={TextButton(dismiss){Text(tr("Cancel","取消"))}},
     )

@@ -26,7 +26,7 @@ internal object AdditionalTranslations {
         "Background reliability" to "バックグラウンド信頼性", "Data & backup" to "データとバックアップ",
         "Storage & support" to "ストレージとサポート", "Developer" to "開発者",
         "About & support" to "このアプリとサポート", "Feedback & feature requests" to "フィードバックと機能要望",
-        "Support Yokuli" to "Yokuliを支援", "Made aboard Yokuli" to "Yokuli船上で開発",
+        "Support Yokuli" to "Yokuliを支援", "Developed aboard SV Yokuli" to "SV Yokuli船上で開発",
         "ALARM & WATCH" to "アラームと監視", "VESSEL & SENSORS" to "船舶とセンサー",
         "POSITION & MAP" to "測位と地図", "DEVICE & DATA" to "端末とデータ", "ADVANCED" to "詳細設定", "ABOUT" to "情報",
     )
@@ -49,7 +49,7 @@ internal object AdditionalTranslations {
         "Background reliability" to "Fiabilité en arrière-plan", "Data & backup" to "Données et sauvegarde",
         "Storage & support" to "Stockage et assistance", "Developer" to "Développeur",
         "About & support" to "À propos et assistance", "Feedback & feature requests" to "Retours et demandes de fonctionnalités",
-        "Support Yokuli" to "Soutenir Yokuli", "Made aboard Yokuli" to "Créé à bord de Yokuli",
+        "Support Yokuli" to "Soutenir Yokuli", "Developed aboard SV Yokuli" to "Développé à bord du SV Yokuli",
         "ALARM & WATCH" to "ALARME ET SURVEILLANCE", "VESSEL & SENSORS" to "BATEAU ET CAPTEURS",
         "POSITION & MAP" to "POSITION ET CARTE", "DEVICE & DATA" to "APPAREIL ET DONNÉES", "ADVANCED" to "AVANCÉ", "ABOUT" to "À PROPOS",
     )
@@ -72,7 +72,7 @@ internal object AdditionalTranslations {
         "Background reliability" to "Fiabilidad en segundo plano", "Data & backup" to "Datos y copia de seguridad",
         "Storage & support" to "Almacenamiento y soporte", "Developer" to "Desarrollador",
         "About & support" to "Acerca de y soporte", "Feedback & feature requests" to "Comentarios y solicitudes de funciones",
-        "Support Yokuli" to "Apoyar a Yokuli", "Made aboard Yokuli" to "Creado a bordo de Yokuli",
+        "Support Yokuli" to "Apoyar a Yokuli", "Developed aboard SV Yokuli" to "Desarrollado a bordo del SV Yokuli",
         "ALARM & WATCH" to "ALARMA Y VIGILANCIA", "VESSEL & SENSORS" to "BARCO Y SENSORES",
         "POSITION & MAP" to "POSICIÓN Y MAPA", "DEVICE & DATA" to "DISPOSITIVO Y DATOS", "ADVANCED" to "AVANZADO", "ABOUT" to "ACERCA DE",
     )

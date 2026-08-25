@@ -35,7 +35,7 @@ class TripExportManager @Inject constructor(
 
     suspend fun gpx(session:TripSessionEntity)=temp("trip-${session.id}.gpx"){file->file.bufferedWriter().use{writer->
         writer.appendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-        writer.appendLine("<gpx version=\"1.1\" creator=\"Anchor Watch\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
+        writer.appendLine("<gpx version=\"1.1\" creator=\"Boat Watch\" xmlns=\"http://www.topografix.com/GPX/1/1\">")
         pageTripWaypoints(session.id){waypoint->writer.appendLine("<wpt lat=\"${waypoint.latitude}\" lon=\"${waypoint.longitude}\"><time>${Instant.ofEpochMilli(waypoint.timestamp)}</time><name>${xml(waypoint.name)}</name><desc>${xml(waypoint.note)}</desc><type>${xml(waypoint.type)}</type></wpt>")}
         writer.appendLine("<trk><name>${xml(session.name)}</name><trkseg>")
         forEachTripSample(session.id){s->if(s.latitude!=null&&s.longitude!=null)writer.appendLine("<trkpt lat=\"${s.latitude}\" lon=\"${s.longitude}\"><time>${Instant.ofEpochMilli(s.timestamp)}</time></trkpt>")}
@@ -99,7 +99,7 @@ class TripExportManager @Inject constructor(
 
     private fun renderSnapshot(target:File,title:String,rows:List<Pair<String,String?>>){
         val bitmap=Bitmap.createBitmap(1080,1350,Bitmap.Config.ARGB_8888);val canvas=Canvas(bitmap);canvas.drawColor(Color.rgb(7,31,45))
-        val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.WHITE};paint.textSize=54f;paint.isFakeBoldText=true;canvas.drawText("Anchor Watch",72f,100f,paint);paint.textSize=42f;paint.color=Color.rgb(107,224,226);canvas.drawText(title.take(34),72f,175f,paint)
+        val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.WHITE};paint.textSize=54f;paint.isFakeBoldText=true;canvas.drawText("Boat Watch",72f,100f,paint);paint.textSize=42f;paint.color=Color.rgb(107,224,226);canvas.drawText(title.take(34),72f,175f,paint)
         paint.isFakeBoldText=false;var y=285f;rows.forEach{(label,value)->paint.textSize=30f;paint.color=Color.rgb(170,196,207);canvas.drawText(label,72f,y,paint);paint.textSize=54f;paint.color=Color.WHITE;paint.isFakeBoldText=true;canvas.drawText(value?:"—",520f,y,paint);paint.isFakeBoldText=false;y+=105f}
         paint.textSize=28f;paint.color=Color.rgb(170,196,207);canvas.drawText("Generated locally · precise position omitted by default",72f,1260f,paint);paint.textSize=25f;canvas.drawText("Developed aboard SV Yokuli",72f,1305f,paint)
         target.outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
@@ -126,9 +126,9 @@ class TripExportManager @Inject constructor(
         "reportEngineVersion" to reportVersion,"motionAlgorithmVersion" to motionVersion,"createdAtUtc" to Instant.now().toString(),
         "units" to mapOf("distance" to "m","speed" to "kn","angle" to "deg","pressure" to "hPa","acceleration" to "g"),"containsPreciseLocations" to true,
     )
-    private fun readme(kind:String)="""# Anchor Watch $kind source data
+    private fun readme(kind:String)="""# Boat Watch $kind source data
 
-This local export contains precise positions, timestamps, sensor observations and session notes. Anchor Watch does not upload it automatically.
+This local export contains precise positions, timestamps, sensor observations and session notes. Boat Watch does not upload it automatically.
 
 ## Semantics
 
@@ -143,7 +143,7 @@ This local export contains precise positions, timestamps, sensor observations an
 - Depth references and offsets must be checked before comparing with chart datum.
 - Motion scores and impact candidates are versioned observations, not a diagnosis.
 
-Suggested prompt: Analyze this Anchor Watch session using the supplied report and source data. Separate direct observations from hypotheses, identify gaps and source changes, and never infer navigation safety from missing data.
+Suggested prompt: Analyze this Boat Watch session using the supplied report and source data. Separate direct observations from hypotheses, identify gaps and source changes, and never infer navigation safety from missing data.
 """
     private suspend fun temp(name:String,write:suspend (File)->Unit):File{val value=File(context.cacheDir,name);write(value);return value}
     private fun zip(name:String,content:ZipBuilder.()->Unit):File{val target=File(context.cacheDir,name);ZipOutputStream(target.outputStream().buffered()).use{content(ZipBuilder(it))};return target}

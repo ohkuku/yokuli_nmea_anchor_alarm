@@ -51,10 +51,10 @@ gitGraph
 - **Stable**：来源只能是 `main`，tag 必须是 `vX.Y.Z`，不能带预发布后缀。
 
 发布由 Git tag 驱动：`scripts/release/manage-release.sh publish TAG` 会验证当前分支干净且已完整
-推送，然后只创建并推送不可变 tag。GitHub 的 `Publish Anchor Watch Release` Action 会自动识别
+推送，然后只创建并推送不可变 tag。GitHub 的 `Publish Boat Watch Release` Action 会自动识别
 channel 和版本号，先执行签名预检与 API 36 启动 smoke，再运行 Unit、Release Lint，生成签名
 APK/AAB、校验签名和 SHA‑256，并创建可下载的 GitHub Release。本机不负责编译正式包。
-完整设备 story 保留在独立的 `Anchor Watch Android CI` 三分片集成线上，用于发布
+完整设备 story 保留在独立的 `Boat Watch Android CI` 三分片集成线上，用于发布
 `debug-verified` 和持续发现回归，但不阻塞 alpha/stable 签名发布。网页上的手动 Action 仍是
 兜底入口，只需选择正确来源分支并填写同样格式的 tag。
 
@@ -90,9 +90,9 @@ scripts/release/manage-release.sh console
 
 ### 下载开发包
 
-进入 GitHub → Actions → `Anchor Watch Android CI` → 选择 `codex/develop` 最近一次绿色运行 → Artifacts，下载：
+进入 GitHub → Actions → `Boat Watch Android CI` → 选择 `codex/develop` 最近一次绿色运行 → Artifacts，下载：
 
-`anchor-watch-development-debug-<run>-<sha>`
+`boat-watch-development-debug-<run>-<sha>`
 
 Debug APK 使用调试签名，不能覆盖由正式签名安装的 stable APK；测试前应确认当前设备上安装的是哪一种签名。
 
@@ -128,7 +128,7 @@ branch is clean and exactly matches its remote, then creates and pushes only an 
 Actions derives the channel, `versionName`, and monotonic `versionCode`, performs an early signing
 preflight and API 36 launch smoke, runs JVM tests and Release Lint, builds signed APK/AAB files,
 verifies the signature, emits SHA‑256 checksums, and creates a downloadable GitHub Release. The full
-device-story suite remains on the separate three-shard `Anchor Watch Android CI` integration line; it
+device-story suite remains on the separate three-shard `Boat Watch Android CI` integration line; it
 gates `debug-verified` artifacts and reports regressions without blocking alpha/stable signing. The
 web-based manual action remains a tag-only fallback. Non-stable channels are marked as pre-releases.
 

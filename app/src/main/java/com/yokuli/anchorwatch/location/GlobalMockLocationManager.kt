@@ -27,7 +27,7 @@ class GlobalMockLocationManager @Inject constructor(@ApplicationContext private 
  override suspend fun start(enhancedCompatibility:Boolean):MockGpsStatus{
   if(_status.value.state==MockGpsState.ACTIVE)return _status.value;_status.value=MockGpsStatus(MockGpsState.STARTING,"Checking Android mock-location access…")
   return try{fused.setMockMode(true).await();val direct=enhancedCompatibility&&enableDirectProvider();MockGpsStatus(MockGpsState.ACTIVE,if(direct)"NMEA is feeding Fused Location and GPS_PROVIDER." else "NMEA is feeding Fused Location. Direct GPS compatibility is unavailable.",true,direct).also{_status.value=it}}
-  catch(_:SecurityException){resetSystemLocation();MockGpsStatus(MockGpsState.NOT_CONFIGURED,"GPS proxy was not enabled. Turn on Developer Options and select Anchor Watch as the location override app.").also{_status.value=it}}
+  catch(_:SecurityException){resetSystemLocation();MockGpsStatus(MockGpsState.NOT_CONFIGURED,"GPS proxy was not enabled. Turn on Developer Options and select Boat Watch as the location override app.").also{_status.value=it}}
   catch(cancelled:CancellationException){resetSystemLocation();throw cancelled}
   catch(e:Exception){resetSystemLocation();MockGpsStatus(MockGpsState.FAILED,"GPS proxy was not enabled: ${e.message?:e.javaClass.simpleName}. Android GPS remains on its normal source.").also{_status.value=it}}
  }

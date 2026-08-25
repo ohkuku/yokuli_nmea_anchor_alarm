@@ -94,7 +94,7 @@ upload_github_secrets() {
 
 show_help() {
   printf '%s\n' \
-    "Anchor Watch product-secret helper (values are never printed)" \
+    "Boat Watch product-secret helper (values are never printed)" \
     "" \
     "Usage:" \
     "  scripts/ci/manage-build-secrets.sh status" \

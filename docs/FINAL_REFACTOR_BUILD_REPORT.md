@@ -40,7 +40,7 @@ The local workspace has no physical helm device or real NMEA gateway attached. T
 - physical-device mount, magnetometer and IMU behaviour on representative phones/tablets;
 - real Raymarine or equivalent gateway RX/TX validation, including separate receive and transmit ports;
 - 8-hour Trip Watch soak;
-- 12-hour Anchor Watch soak;
+- 12-hour Boat Watch soak;
 - signed Release APK/AAB and store installation path.
 
 Use [PHYSICAL_SOAK_CHECKLIST.md](PHYSICAL_SOAK_CHECKLIST.md) on the target hardware. A final signed public release should be promoted only after those results are recorded.
@@ -81,7 +81,7 @@ Use [PHYSICAL_SOAK_CHECKLIST.md](PHYSICAL_SOAK_CHECKLIST.md) on the target hardw
 - 多款实体手机/平板的安装姿态、磁力计和 IMU；
 - Raymarine 或同类真实网关的收发验证，包括接收端口与发送端口不同的情况；
 - 8 小时 Trip Watch soak；
-- 12 小时 Anchor Watch soak；
+- 12 小时 Boat Watch soak；
 - 正式签名 APK/AAB 与商店安装链路。
 
 请按 [PHYSICAL_SOAK_CHECKLIST.md](PHYSICAL_SOAK_CHECKLIST.md) 在目标船载硬件上执行。只有这些结果也被记录后，才应把本版本晋升为正式签名的公开 Release Candidate。

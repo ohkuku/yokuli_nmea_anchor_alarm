@@ -56,7 +56,7 @@ keychain_set() {
     -U \
     -a "$account" \
     -s "$KEYCHAIN_SERVICE" \
-    -l "Anchor Watch release signing: $account" \
+    -l "Boat Watch release signing: $account" \
     -w "$secret_value" >/dev/null
 }
 
@@ -124,7 +124,7 @@ init_signing() {
     -keysize 4096 \
     -sigalg SHA256withRSA \
     -validity 36500 \
-    -dname "CN=Anchor Watch, OU=Yokuli, O=Yokuli, C=NZ" \
+    -dname "CN=Boat Watch, OU=Yokuli, O=Yokuli, C=NZ" \
     -storepass:env YOKULI_SIGNING_STORE_PASSWORD \
     -keypass:env YOKULI_SIGNING_KEY_PASSWORD; then
     unset YOKULI_SIGNING_STORE_PASSWORD YOKULI_SIGNING_KEY_PASSWORD store_password key_password
@@ -195,7 +195,7 @@ upload_github_secrets() {
     keychain_get "$STORE_PASSWORD_ACCOUNT" | gh secret set ANDROID_KEYSTORE_PASSWORD
     read_alias | gh secret set ANDROID_KEY_ALIAS
     keychain_get "$KEY_PASSWORD_ACCOUNT" | gh secret set ANDROID_KEY_PASSWORD
-    note "Four release-signing secrets uploaded to the Anchor Watch GitHub repository."
+    note "Four release-signing secrets uploaded to the Boat Watch GitHub repository."
     gh secret list | grep -E '^ANDROID_(SIGNING_KEY_BASE64|KEYSTORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)[[:space:]]' || true
   )
 }
@@ -215,7 +215,7 @@ backup_signing() {
   cp -p "$KEYSTORE_FILE" "$backup_file"
   chmod 600 "$backup_file"
   {
-    printf 'Anchor Watch release signing backup\n'
+    printf 'Boat Watch release signing backup\n'
     printf 'Created UTC: %s\n' "$timestamp"
     printf 'Alias: %s\n' "$(read_alias)"
     show_fingerprint
@@ -250,7 +250,7 @@ build_release() {
 
 show_help() {
   cat <<'EOF'
-Anchor Watch release-signing manager (macOS)
+Boat Watch release-signing manager (macOS)
 
 Usage:
   scripts/signing/manage-signing.sh init

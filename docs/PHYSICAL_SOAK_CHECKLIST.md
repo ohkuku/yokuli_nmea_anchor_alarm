@@ -1,4 +1,4 @@
-# Anchor Watch — Physical-device soak checklist
+# Boat Watch — Physical-device soak checklist
 
 This checklist is a release-candidate gate, not a substitute for a navigational watch. Keep an independent anchor alarm and a qualified watchkeeper throughout every test.
 

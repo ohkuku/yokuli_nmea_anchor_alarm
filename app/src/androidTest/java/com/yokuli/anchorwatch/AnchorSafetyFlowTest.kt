@@ -562,7 +562,7 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("settings_list").performScrollToIndex(6)
             compose.onNodeWithTag("settings_about").performClick()
             compose.onNodeWithTag("about_page").assertExists()
-            compose.onNodeWithText("Made aboard Yokuli").assertExists()
+            compose.onNodeWithText("Developed aboard SV Yokuli").assertExists()
             compose.onNodeWithTag("about_list").performScrollToIndex(2)
             compose.onNodeWithTag("about_crew_kuku").assertExists()
             compose.onNodeWithTag("about_crew_yoyo").assertExists()
@@ -578,7 +578,7 @@ class AnchorSafetyFlowTest {
         preferences.save(AppSettings(onboardingCompleted=false,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithTag("onboarding_maker").assertExists()
-            compose.onNodeWithText("Made aboard Yokuli").assertExists()
+            compose.onNodeWithText("Developed aboard SV Yokuli").assertExists()
             compose.onNodeWithTag("onboarding_language").assertExists().performClick()
             compose.onNodeWithTag("language_zh_cn").performClick()
             withTimeout(5_000){preferences.settings.first{it.appLanguage==AppLanguage.SIMPLIFIED_CHINESE}}
@@ -617,7 +617,7 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("feedback_subject").assertExists()
             compose.onNodeWithTag("feedback_details").assertExists()
             compose.onNodeWithTag("feedback_open_email").assertIsEnabled()
-            compose.onNodeWithText("Anchor Watch does not send or track the message itself.",substring=true).assertExists()
+            compose.onNodeWithText("Boat Watch does not send or track the message itself.",substring=true).assertExists()
         }
     }
 

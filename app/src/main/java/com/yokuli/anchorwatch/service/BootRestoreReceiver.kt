@@ -50,8 +50,8 @@ class BootRestoreReceiver:BroadcastReceiver(){
     private fun notifyRecovery(context:Context,sonarInterrupted:Boolean){
         val manager=context.getSystemService(NotificationManager::class.java);manager.createNotificationChannel(NotificationChannel(CHANNEL,"Monitoring recovery",NotificationManager.IMPORTANCE_HIGH))
         val open=PendingIntent.getActivity(context,0,Intent(context,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val text=if(sonarInterrupted)"Reboot interrupted monitoring and closed the sonar survey. Open Anchor Watch, verify live data, then explicitly resume anchor watch or start a new survey." else "Reboot interrupted location monitoring. Open Anchor Watch, verify the GPS source, then explicitly resume anchor watch."
-        manager.notify(ID,NotificationCompat.Builder(context,CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_alert).setContentTitle("Anchor Watch needs confirmation").setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build())
+        val text=if(sonarInterrupted)"Reboot interrupted monitoring and closed the sonar survey. Open Boat Watch, verify live data, then explicitly resume anchor watch or start a new survey." else "Reboot interrupted location monitoring. Open Boat Watch, verify the GPS source, then explicitly resume anchor watch."
+        manager.notify(ID,NotificationCompat.Builder(context,CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_alert).setContentTitle("Boat Watch needs confirmation").setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build())
     }
 
     companion object{const val CHANNEL="monitor_restore";const val ID=47}

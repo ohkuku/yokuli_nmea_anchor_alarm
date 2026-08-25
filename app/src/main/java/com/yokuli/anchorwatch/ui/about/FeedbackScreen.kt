@@ -65,7 +65,7 @@ object FeedbackEmailComposer {
     ): String = buildString {
         if (details.isNotBlank()) append(details.trim()).append("\n\n")
         append("---\n")
-        append("Anchor Watch version: ").append(versionName.ifBlank { "unknown" }).append('\n')
+        append("Boat Watch version: ").append(versionName.ifBlank { "unknown" }).append('\n')
         append("Android version: ").append(androidVersion.ifBlank { "unknown" }).append('\n')
         append("Device model: ").append(deviceModel.ifBlank { "unknown" })
     }

@@ -11,8 +11,8 @@ import org.junit.Test
 
 class ProductBrandTest {
     @Test fun productIdentityAndConfiguredChannelsAreExact() {
-        assertEquals("Anchor Watch", ProductBrand.PRODUCT_NAME)
-        assertEquals("Made aboard Yokuli", ProductBrand.MAKER_LINE)
+        assertEquals("Boat Watch", ProductBrand.PRODUCT_NAME)
+        assertEquals("Developed aboard SV Yokuli", ProductBrand.MAKER_LINE)
         assertEquals("https://www.youtube.com/@yokuli_ocean_diary", ProductBrand.youtubeChannelUrl)
         assertEquals("https://buymeacoffee.com/ukus3yya8a", ProductBrand.buyMeACoffeeUrl)
         assertEquals("kuku.the.developer@gmail.com", ProductBrand.contactEmail)

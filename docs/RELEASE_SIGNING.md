@@ -2,7 +2,7 @@
 
 ## 中文
 
-Anchor Watch 的 GitHub 直发 APK 必须永远使用同一把签名密钥。仓库内的
+Boat Watch 的 GitHub 直发 APK 必须永远使用同一把签名密钥。仓库内的
 `scripts/signing/manage-signing.sh` 管理本机签名，但实际密钥位于被 Git 忽略的
 `.signing/`，两个密码保存在 macOS Keychain，不写入源码或普通配置文件。
 
@@ -63,7 +63,7 @@ scripts/release/manage-release.sh status
 scripts/release/manage-release.sh publish v1.1.0-alpha.1
 ```
 
-也可以在 GitHub 的 `Publish Anchor Watch Release` 手动 Action 中选择正确分支并只填写 tag。
+也可以在 GitHub 的 `Publish Boat Watch Release` 手动 Action 中选择正确分支并只填写 tag。
 
 ### 不可逆规则
 
@@ -75,7 +75,7 @@ scripts/release/manage-release.sh publish v1.1.0-alpha.1
 
 ## English
 
-Direct-distribution Anchor Watch APKs must always use the same signing key. The repository
+Direct-distribution Boat Watch APKs must always use the same signing key. The repository
 manager stores the keystore under the Git-ignored `.signing/` directory and stores the two
 passwords in macOS Keychain.
 
