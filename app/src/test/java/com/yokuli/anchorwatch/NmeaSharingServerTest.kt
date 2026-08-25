@@ -9,6 +9,7 @@ import com.yokuli.anchorwatch.domain.model.PositionProvider
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
+import java.net.SocketException
 import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -23,7 +24,27 @@ class NmeaSharingServerTest {
     }
 
     @Test fun stoppedServerAcceptsNoClientsAndQueuesNoData(){
-        val server=NmeaSharingServer(NetworkAddressProvider());assertEquals(0,server.publish("\$IIHDT,123.4,T*00\r\n"));assertEquals(SharingServerState.STOPPED,server.status.value.state);assertEquals(0,server.status.value.sentSentences)
+        val server=NmeaSharingServer(NetworkAddressProvider())
+        repeat(60_000){assertEquals(0,server.publish("\$IIHDT,123.4,T*00\r\n"))}
+        assertEquals(SharingServerState.STOPPED,server.status.value.state);assertEquals(0,server.status.value.sentSentences)
+    }
+
+    @Test fun stopWithQueuedBatch_writesZeroBytesAfterStopReturns(){
+        val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider())
+        val client=Socket()
+        try{
+            server.start(port);waitUntil{server.status.value.state==SharingServerState.RUNNING}
+            client.connect(java.net.InetSocketAddress("127.0.0.1",port));client.soTimeout=500
+            waitUntil{server.status.value.clientCount==1}
+            server.publish("\$IIHDT,123.40,T*00\r\n")
+            assertEquals("\$IIHDT,123.40,T*00",client.getInputStream().bufferedReader().readLine())
+            server.stop()
+            repeat(1_000){assertEquals(0,server.publish("\$IIHDT,124.00,T*00\r\n"))}
+            val afterStop=runCatching{client.getInputStream().read()}.getOrElse{error->if(error is SocketException)-1 else throw error}
+            assertEquals(-1,afterStop)
+            assertEquals(0,server.status.value.sentSentences)
+            assertEquals(SharingServerState.STOPPED,server.status.value.state)
+        }finally{client.close();server.stop()}
     }
 
     @Test fun broadcastsCrlfSentenceToTcpClientAndStopsCleanly(){

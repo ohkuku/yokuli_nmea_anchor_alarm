@@ -24,11 +24,71 @@ class VesselSourceArbitratorTest{
     }
 
     @Test fun staleHdtFallsBackButStrictPinNeverDoes(){
-        val now=10_000L;val staleHdt=candidate("IIHDT","HDT",83.0,0);val vhw=candidate("SDVHW","VHW",271.0,now)
+        val now=20_000L;val staleHdt=candidate("IIHDT","HDT",83.0,0);val vhw=candidate("SDVHW","VHW",271.0,now)
         val automatic=VesselSourceArbitrator().select(VesselMetricId.HEADING_TRUE,listOf(staleHdt,vhw),MetricSourcePreference(),now)
         assertEquals("SDVHW",automatic.selected?.source?.id)
         val pinned=VesselSourceArbitrator().select(VesselMetricId.HEADING_TRUE,listOf(staleHdt,vhw),MetricSourcePreference(pinnedSourceId="IIHDT"),now)
         assertNull(pinned.selected);assertTrue(pinned.pinnedSourceUnavailable);assertEquals("PINNED_SOURCE_UNAVAILABLE",pinned.reason)
+    }
+
+    @Test fun numericHeading_thenBlankHeartbeats_remainsHeldAndSelected(){
+        val measuredAt=1_000L
+        val now=10*60_000L
+        val held=candidate("IIHDT","HDT",83.0,measuredAt).copy(
+            sourceHeartbeatElapsedRealtime=now,
+        )
+        val selection=VesselSourceArbitrator().select(
+            VesselMetricId.HEADING_TRUE,
+            listOf(held),
+            MetricSourcePreference(),
+            now,
+        )
+        assertEquals("IIHDT",selection.selected?.source?.id)
+        assertEquals(measuredAt,selection.selected?.measuredElapsedRealtime)
+        assertEquals(now,selection.selected?.sourceHeartbeatElapsedRealtime)
+    }
+
+    @Test fun positionBlankHeartbeat_neverExtendsNumericPositionFreshness(){
+        val measuredAt=1_000L
+        val now=10_000L
+        val source=VesselSourceIdentity(
+            id="IIGGA",
+            sourceType=VesselSourceType.NMEA_INPUT,
+            sentenceType="GGA",
+            displayName="Boat GGA",
+        )
+        val held=VesselSourceCandidate(
+            metric=VesselMetricId.POSITION,
+            value=VesselPosition(-36.8485,174.7633),
+            source=source,
+            sourceClass=VesselSourceClass.BOAT_NMEA,
+            receivedElapsedRealtime=measuredAt,
+            sourceHeartbeatElapsedRealtime=now,
+        )
+        val selection=VesselSourceArbitrator().select(
+            VesselMetricId.POSITION,
+            listOf(held),
+            MetricSourcePreference(),
+            now,
+        )
+        assertNull(selection.selected)
+        assertEquals(CandidateValidity.STALE,selection.candidates.single().validity)
+    }
+
+    @Test fun headingExplicitInvalid_stopsImmediatelyEvenWithFreshHeartbeat(){
+        val now=10_000L
+        val invalid=candidate("IIHDT","HDT",83.0,now).copy(
+            validity=CandidateValidity.INVALID,
+            sourceHeartbeatElapsedRealtime=now,
+        )
+        val selection=VesselSourceArbitrator().select(
+            VesselMetricId.HEADING_TRUE,
+            listOf(invalid),
+            MetricSourcePreference(),
+            now,
+        )
+        assertNull(selection.selected)
+        assertEquals(CandidateValidity.INVALID,selection.candidates.single().validity)
     }
 
     @Test fun phoneVesselHeadingIsFallbackOnlyAfterBoatCandidatesExpire(){
@@ -36,7 +96,7 @@ class VesselSourceArbitratorTest{
         val freshBoat=candidate("IIHDT","HDT",83.0,8_000)
         val arbitrator=VesselSourceArbitrator()
         assertEquals("IIHDT",arbitrator.select(VesselMetricId.HEADING_TRUE,listOf(phone,freshBoat),MetricSourcePreference(),8_000).selected?.source?.id)
-        assertEquals("phone:vessel-heading",arbitrator.select(VesselMetricId.HEADING_TRUE,listOf(phone.copy(receivedElapsedRealtime=14_000),freshBoat),MetricSourcePreference(),14_000).selected?.source?.id)
+        assertEquals("phone:vessel-heading",arbitrator.select(VesselMetricId.HEADING_TRUE,listOf(phone.copy(receivedElapsedRealtime=24_000),freshBoat),MetricSourcePreference(),24_000).selected?.source?.id)
     }
 
     @Test fun conflictOnlyAppearsAfterSustainedDisagreement(){

@@ -78,7 +78,8 @@ import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
-internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:AnchorageSetupReference?=null,start:(Double,Double,AnchorWatchInput)->Unit){
+internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:AnchorageSetupReference?=null,previewPhoneGps:(Boolean)->Unit={},start:(Double,Double,AnchorWatchInput)->Unit){
+ DisposableEffect(Unit){previewPhoneGps(true);onDispose{previewPhoneGps(false)}}
  val now=android.os.SystemClock.elapsedRealtime();val proxyActive=GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state)
  val nmeaReady=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1000L)
  val systemReady=state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&now-it.receivedElapsedRealtime<state.settings.gpsLossSeconds*1000L&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}==true&&!proxyActive
@@ -101,13 +102,16 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
  var submitFeedbackBaseline by remember{mutableLongStateOf(0L)}
  var submitFailure by remember{mutableStateOf<String?>(null)}
  val latestRuntimeFeedback=state.runtimeDiagnostics.lastUserFeedback
+ LaunchedEffect(systemReady,nmeaReady,state.settings.demoMode){if(!state.settings.demoMode&&source==GpsDataSource.NMEA&&!nmeaReady&&systemReady)source=GpsDataSource.SYSTEM}
  LaunchedEffect(submitting,state.active?.id,latestRuntimeFeedback?.id){
   if(!submitting)return@LaunchedEffect
   if(state.active!=null){dismiss();return@LaunchedEffect}
-  if(latestRuntimeFeedback!=null&&latestRuntimeFeedback.id>submitFeedbackBaseline&&latestRuntimeFeedback.title.contains("not started",ignoreCase=true)){
-   submitting=false;submitFailure=latestRuntimeFeedback.message;return@LaunchedEffect
+  if(AnchorSetupSubmissionPolicy.isFailure(latestRuntimeFeedback,submitFeedbackBaseline)){
+   submitting=false;submitFailure=latestRuntimeFeedback?.message;return@LaunchedEffect
   }
-  kotlinx.coroutines.delay(15_000)
+  // Runtime owns the 15 s GNSS acquisition timeout. Give its typed result time
+  // to cross the Service/UI boundary before presenting a local fallback.
+  kotlinx.coroutines.delay(18_000)
   submitting=false;submitTimedOut=true
  }
  fun numeric(value:String)=value.filter{it.isDigit()||it=='.'}
@@ -166,6 +170,10 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
   Button({validationRequested=true;submitTimedOut=false;submitFailure=null;if(!valid)return@Button;val coordinate=selectedCoordinate?:return@Button;val confirmedRadius=finalRadius?:return@Button;val conditionConfig=ConditionGuardConfig(depthGuard,shallowValue,deepValue.takeIf{deepGuard},windGuard,windWarningValue,windAlarmValue,windShift,shiftValue,state.settings.allowApparentWindFallback).validated();submitFeedbackBaseline=state.runtimeDiagnostics.lastUserFeedback?.id?:0L;submitting=true;start(coordinate.latitude,coordinate.longitude,AnchorWatchInput(placement,effectiveRangeMode,preset,depthValue,if(geometryNeeded)rodeValue?:0.0 else 0.0,if(geometryNeeded)bowValue?:0.0 else 0.0,if(effectiveRangeMode==AnchorRangeMode.ADVANCED)boatValue else null,confirmedRadius,source,if(estimate)AnchorCenterSource.UNKNOWN else knownMethod,true,depthSource,conditionConfig))},enabled=!submitting,modifier=Modifier.fillMaxWidth().padding(bottom=24.dp).testTag("start_anchor_watch")){if(submitting){CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp);Spacer(Modifier.width(8.dp))};Text(if(submitting)tr("Starting anchor watch…","正在启动锚警…")else tr("Start anchor watch","启动锚警"))}
  }}
  if(showMapPicker&&BuildConfig.MAPS_CONFIGURED){val initial=picked?:sourceFix?.let{LatLng(it.latitude,it.longitude)}?:LatLng(-36.8485,174.7633);FullScreenAnchorMapPicker(initial,{showMapPicker=false}){picked=it;showMapPicker=false}}
+}
+
+internal object AnchorSetupSubmissionPolicy{
+ fun isFailure(feedback:com.yokuli.anchorwatch.runtime.RuntimeUserFeedback?,baselineId:Long)=feedback!=null&&feedback.id>baselineId&&(feedback.context==com.yokuli.anchorwatch.runtime.RuntimeFeedbackContext.ARM_WATCH||feedback.highPriority)
 }
 
 @Composable

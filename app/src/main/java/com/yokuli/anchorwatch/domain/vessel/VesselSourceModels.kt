@@ -10,7 +10,7 @@ enum class VesselMetricId{
     WAYPOINT_DISTANCE,DESTINATION_WAYPOINT,TOTAL_LOG,TRIP_LOG,VMG_WIND,VMC_WAYPOINT,MOTION_SCORE,ROLL_PERIOD,
 }
 
-enum class VesselSourceType{NMEA_INPUT,PHONE_SENSOR,APP_DERIVED,DEMO}
+enum class VesselSourceType{NMEA_INPUT,PHONE_SENSOR,APP_DERIVED,PHONE_TX_ECHO,DEMO}
 enum class VesselSourceClass{NONE,BOAT_NMEA,PHONE_GNSS,PHONE_DEVICE_COMPASS,PHONE_VESSEL_HEADING,PHONE_IMU,PHONE_BAROMETER,DERIVED_WATER,DERIVED_GROUND,DEMO}
 
 data class VesselSourceIdentity(
@@ -66,7 +66,17 @@ data class VesselSourceCandidate<T>(
     val validity:CandidateValidity=CandidateValidity.ELIGIBLE,
     val provenance:VesselProvenance?=null,
     val sourceHeartbeatElapsedRealtime:Long=receivedElapsedRealtime,
-)
+){
+    /** Monotonic time of the last complete numeric measurement. Kept as an
+     * explicit semantic alias while the persisted/public API still calls the
+     * field receivedElapsedRealtime. It must never be replaced by a blank
+     * same-source heartbeat. */
+    val measuredElapsedRealtime:Long get()=receivedElapsedRealtime
+
+    /** Explicit negative validity is authoritative and cannot be extended by
+     * a transport or same-sentence heartbeat. */
+    val explicitValidity:CandidateValidity get()=validity
+}
 
 data class VesselSourceConflict(
     val active:Boolean=false,

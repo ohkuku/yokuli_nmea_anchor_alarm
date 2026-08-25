@@ -77,4 +77,13 @@ class NmeaParserTest{private val p=Nmea0183Parser()
   assertNull(retainer.accept(p.parse("\$IIMWV,,R,,N,A",false,500)!!,500,"\$IIMWV,,R,,N,A").apparentWindSpeedKnots)
  }
  @Test fun streamSplitsAndBatches(){val s=NmeaStreamSplitter();assertTrue(s.feed("\$GPR").isEmpty());assertEquals("\$GPRMC,A",s.feed("MC,A\r\n").single());assertEquals(3,s.feed("\$A\r\n\$B\n\$C\r\n").size)}
+ @Test fun streamFramingSurvivesRandomTcpFragmentation(){
+  val lines=(0 until 80).map{index->"\$PYOK,$index,${"X".repeat(index%23)}*00"}
+  val wire=lines.joinToString(""){"$it\r\n"}.toByteArray(Charsets.US_ASCII)
+  repeat(300){seed->
+   val random=java.util.Random(seed.toLong());val splitter=NmeaStreamSplitter();val decoded=mutableListOf<String>();var offset=0
+   while(offset<wire.size){val count=minOf(wire.size-offset,1+random.nextInt(37));decoded+=splitter.feed(wire.copyOfRange(offset,offset+count),count);offset+=count}
+   assertEquals("fragment seed $seed",lines,decoded)
+  }
+ }
 }

@@ -30,6 +30,7 @@ class SystemLocationRepository @Inject constructor(
     private val _recentFixes = MutableStateFlow<List<NavigationFix>>(emptyList())
     val recentFixes = _recentFixes.asStateFlow()
     private var appEnabled = false
+    private var previewEnabled = false
     private var backgroundEnabled = false
     private var running = false
     private val listener = LocationListener { publish(it) }
@@ -67,12 +68,13 @@ class SystemLocationRepository @Inject constructor(
 
     fun hasPermission(): Boolean = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     fun setAppEnabled(enabled: Boolean) = synchronized(guard) { appEnabled = enabled; reconcileLocked() }
+    fun setPreviewEnabled(enabled: Boolean) = synchronized(guard) { previewEnabled = enabled; reconcileLocked() }
     fun setBackgroundEnabled(enabled: Boolean) = synchronized(guard) { backgroundEnabled = enabled; reconcileLocked() }
     fun refreshPermission() = synchronized(guard) { reconcileLocked() }
 
     @SuppressLint("MissingPermission")
     private fun reconcileLocked() {
-        val shouldRun = (appEnabled || backgroundEnabled) && hasPermission()
+        val shouldRun = (appEnabled || previewEnabled || backgroundEnabled) && hasPermission()
         if (shouldRun && !running) {
             val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
                 .filter { runCatching { locationManager.isProviderEnabled(it) }.getOrDefault(false) }
@@ -86,7 +88,7 @@ class SystemLocationRepository @Inject constructor(
         } else if (!shouldRun && running) {
             locationManager.removeUpdates(listener)
             running = false
-            if (!appEnabled && !backgroundEnabled) _fix.value = null
+            if (!appEnabled && !previewEnabled && !backgroundEnabled) _fix.value = null
         }
     }
 

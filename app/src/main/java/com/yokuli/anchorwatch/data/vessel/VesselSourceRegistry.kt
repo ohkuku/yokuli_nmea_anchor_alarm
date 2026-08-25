@@ -25,12 +25,18 @@ class VesselSourceRegistry @Inject constructor(){
     @Synchronized fun clearPhone(){values.values.forEach{sources->sources.entries.removeAll{it.value.source.sourceType==VesselSourceType.PHONE_SENSOR}};publishSnapshot()}
     @Synchronized fun removeSources(sourceIds:Set<String>){if(sourceIds.isEmpty())return;values.values.forEach{sources->sources.entries.removeAll{it.value.source.id in sourceIds}};publishSnapshot()}
     @Synchronized fun invalidate(event:NmeaSourceInvalidation){
-        event.affectedMetrics.forEach{metric->values[metric]?.entries?.removeAll{(_,candidate)->
-            candidate.source.id==event.sourceId||(
-                candidate.source.transportProfileId==event.transportProfileId&&
-                    candidate.source.connectionGeneration==event.connectionGeneration&&
-                    candidate.source.fullSentenceId.equals(event.fullSentenceId,true)
-                )
+        event.affectedMetrics.forEach{metric->values[metric]?.let{sources->
+            val matching=sources.filterValues{candidate->
+                candidate.source.id==event.sourceId||(
+                    candidate.source.transportProfileId==event.transportProfileId&&
+                        candidate.source.connectionGeneration==event.connectionGeneration&&
+                        candidate.source.fullSentenceId.equals(event.fullSentenceId,true)
+                    )
+            }.keys
+            // Preserve a short explicit-invalid tombstone. Arbitrators and the
+            // publisher must see the negative validity event immediately; a
+            // subsequent complete value from the same source replaces it.
+            matching.forEach{key->sources[key]?.let{candidate->sources[key]=candidate.copy(validity=CandidateValidity.INVALID,sourceHeartbeatElapsedRealtime=event.elapsedRealtime)}}
         }}
         publishSnapshot()
     }

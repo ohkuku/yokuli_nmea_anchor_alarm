@@ -1,6 +1,8 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.vessel.VesselSourceRegistry
+import com.yokuli.anchorwatch.data.nmea.NmeaInvalidationReason
+import com.yokuli.anchorwatch.data.nmea.NmeaSourceInvalidation
 import com.yokuli.anchorwatch.domain.vessel.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -36,5 +38,14 @@ class VesselSourceRegistryTest{
 
         assertTrue(registry.candidates<Double>(VesselMetricId.HEADING_TRUE).isEmpty())
         assertEquals(1,registry.candidates<VesselPosition>(VesselMetricId.POSITION).size)
+    }
+
+    @Test fun explicitInvalidIsPublishedAsATombstoneUntilACompleteValueReplacesIt(){
+        val registry=VesselSourceRegistry();val valid=candidate("boat",4,"IIHDT",83.0,1_000)
+        registry.publish(valid)
+        registry.invalidate(NmeaSourceInvalidation(valid.source.id,setOf(VesselMetricId.HEADING_TRUE),NmeaInvalidationReason.EXPLICIT_INVALID_STATUS,1_200,"boat",4,"IIHDT"))
+        assertEquals(CandidateValidity.INVALID,registry.candidates<Double>(VesselMetricId.HEADING_TRUE).single().validity)
+        registry.publish(valid.copy(value=84.0,receivedElapsedRealtime=1_400,sourceHeartbeatElapsedRealtime=1_400))
+        assertEquals(CandidateValidity.ELIGIBLE,registry.candidates<Double>(VesselMetricId.HEADING_TRUE).single().validity)
     }
 }

@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.runBlocking
 
 enum class SharingServerState { STOPPED, STARTING, RUNNING, ERROR }
 
@@ -56,13 +58,13 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
     private val _status = MutableStateFlow(NmeaSharingStatus())
     val status = _status.asStateFlow()
 
-    @Synchronized
     fun start(port: Int) {
         val safePort = port.takeIf { it in 1024..65535 } ?: 10111
-        if (acceptJob?.isActive == true && _status.value.port == safePort) return
-        stopLocked()
-        _status.value = NmeaSharingStatus(SharingServerState.STARTING, safePort, addresses = addresses.localAddresses())
-        acceptJob = scope.launch {
+        synchronized(this){if(acceptJob?.isActive==true&&_status.value.port==safePort)return}
+        stop()
+        synchronized(this){
+        _status.value=NmeaSharingStatus(SharingServerState.STARTING,safePort,addresses=addresses.localAddresses())
+        acceptJob=scope.launch {
             while(isActive){
                 try {
                     val server = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress("0.0.0.0", safePort), 16) }
@@ -79,10 +81,22 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
                 }
             }
         }
+        }
     }
 
-    @Synchronized
-    fun stop() = stopLocked()
+    /** Hard stop: close the listener and every client socket, then wait for all
+     * old writer jobs to leave their OutputStream before returning. */
+    fun stop(){
+        val jobs=synchronized(this){stopLocked()}
+        // Socket close/cancellation interrupts every accept/write first. Do not
+        // turn a timeout into a false OFF acknowledgement: STOP may return only
+        // after every old client writer has actually left its OutputStream.
+        runBlocking{jobs.joinAll()}
+        // A writer's finally block may have captured RUNNING just before Stop
+        // reset the status. Reassert the terminal state after every old job has
+        // joined so no stale coroutine can resurrect presentation state.
+        synchronized(this){_status.value=NmeaSharingStatus(port=_status.value.port,addresses=addresses.localAddresses(),lastEvent="NMEA_SHARING_STOPPED")}
+    }
 
     internal fun forceRebindForTest(){runCatching{serverSocket?.close()}}
 
@@ -154,11 +168,13 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
     }
 
     @Synchronized
-    private fun stopLocked() {
+    private fun stopLocked():List<Job> {
+        val jobs=buildList{acceptJob?.let(::add);clients.values.forEach{add(it.job)}}
         acceptJob?.cancel(); acceptJob = null
         runCatching { serverSocket?.close() }; serverSocket = null
         clients.toMap().forEach { (id, client) -> closeClient(id, client) }
         _status.value = NmeaSharingStatus(port = _status.value.port, addresses = addresses.localAddresses(),lastEvent="NMEA_SHARING_STOPPED")
+        return jobs
     }
 
     private fun update(

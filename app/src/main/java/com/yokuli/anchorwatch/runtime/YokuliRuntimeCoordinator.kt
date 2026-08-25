@@ -128,6 +128,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
    override fun notificationPermissionGranted()=host.notificationPermissionGranted()
    override fun enableSystemGps()=this@YokuliRuntimeCoordinator.enableSystemGps()
    override fun notify(title:String,message:String,high:Boolean)=notifySeparate(title,message,high)
+   override fun notifyArmFailure(title:String,message:String,high:Boolean)=notifySeparate(title,message,high,RuntimeFeedbackContext.ARM_WATCH)
    override fun refresh()=refreshNotification()
    override fun sound(){setAlarmSource(ConditionAlarmSource.ANCHOR,true)}
    override fun silence(){setAlarmSource(ConditionAlarmSource.ANCHOR,false)}
@@ -556,9 +557,9 @@ class YokuliRuntimeCoordinator @Inject constructor(
   idleStopJob?.cancel();idleStopJob=null
   return started&&host.startForeground(notification(l("Processing safety action…","正在处理安全操作…"),false),location=false)
  }
- private fun notifySeparate(title:String,text:String,high:Boolean){
+ private fun notifySeparate(title:String,text:String,high:Boolean,context:RuntimeFeedbackContext=RuntimeFeedbackContext.GENERAL){
   val visibleTitle=serviceMessage(title);val visibleText=serviceMessage(text)
-  diagnostics.recordUserFeedback(visibleTitle,visibleText,high)
+  diagnostics.recordUserFeedback(visibleTitle,visibleText,high,context)
   notificationCoordinator.publishEvent(visibleTitle,visibleText,high)
  }
 

@@ -25,7 +25,10 @@ data class RuntimeUserFeedback(
     val message:String,
     val highPriority:Boolean,
     val receivedElapsedRealtime:Long,
+    val context:RuntimeFeedbackContext=RuntimeFeedbackContext.GENERAL,
 )
+
+enum class RuntimeFeedbackContext { GENERAL, ARM_WATCH }
 
 data class RuntimeDiagnostics(
     val acceptedFixCount:Long=0,
@@ -124,13 +127,14 @@ class RuntimeDiagnosticsRepository @Inject constructor(
 
     /** Mirrors a Service command result into the foreground UI. A safety
      * action must never be observable only through the notification shade. */
-    fun recordUserFeedback(title:String,message:String,highPriority:Boolean){
+    fun recordUserFeedback(title:String,message:String,highPriority:Boolean,context:RuntimeFeedbackContext=RuntimeFeedbackContext.GENERAL){
         val feedback=RuntimeUserFeedback(
             id=feedbackIds.incrementAndGet(),
             title=title,
             message=message,
             highPriority=highPriority,
             receivedElapsedRealtime=android.os.SystemClock.elapsedRealtime(),
+            context=context,
         )
         _state.update{it.copy(lastUserFeedback=feedback)}
     }

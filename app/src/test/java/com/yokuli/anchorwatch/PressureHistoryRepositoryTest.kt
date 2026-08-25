@@ -34,7 +34,10 @@ class PressureHistoryRepositoryTest{
         withTimeout(2_000){repository.historyLoaded.first{it}}
         repository.record("phone:barometer","Phone barometer",1_012.0,now)
         repository.record("phone:barometer","Phone barometer",1_012.4,now+20_000L)
-        withTimeout(2_000){while(dao.count()!=1L)delay(10)}
+        // Both writes are intentionally asynchronous. Waiting only for row
+        // count can observe the first upsert before the replacement in the
+        // same minute has completed, which made this gate scheduler-dependent.
+        withTimeout(2_000){while(dao.count()!=1L||dao.rows.values.singleOrNull()?.pressureHpa!=1_012.4)delay(10)}
         assertEquals(1L,dao.count());assertEquals(1_012.4,dao.rows.values.single().pressureHpa,.001)
     }
 }

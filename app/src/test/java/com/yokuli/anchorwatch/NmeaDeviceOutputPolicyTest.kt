@@ -11,10 +11,12 @@ import com.yokuli.anchorwatch.data.vessel.anyEnabled
 import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
 import com.yokuli.anchorwatch.data.vessel.phonePositionPublishing
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputLeasePolicy
+import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportDefaults
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.*
 import com.yokuli.anchorwatch.runtime.output.SelectedExternalSourcePresence
 import com.yokuli.anchorwatch.runtime.output.canonicalPublisherConfiguration
+import com.yokuli.anchorwatch.runtime.output.NmeaPublisherConfig
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
@@ -27,6 +29,13 @@ import java.util.concurrent.TimeUnit
 
 class NmeaDeviceOutputPolicyTest{
     private val input=ConnectionProfile(protocol=Protocol.TCP,host="192.168.20.10",port=10110)
+
+    @Test fun sameInputSocketIsTheAuthoritativeFreshInstallRouteWhileStoredAdvancedRoutesSurvive(){
+        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportDefaults.restore(null))
+        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportDefaults.restore("BROKEN_LEGACY_VALUE"))
+        assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportDefaults.restore(NmeaOutputTransportMode.DEDICATED_TCP.name))
+        assertEquals(NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET,NmeaOutputDestination().transport)
+    }
 
     @Test fun dedicatedTxIsValidWithoutOwningTheInputTransport(){
         val settings=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost="192.168.20.50",outputPort=10111)
@@ -60,7 +69,7 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(restored.publicationEnabled);assertFalse(restored.autoStartOutput)
     }
 
-    @Test fun legacyInjectionAndBackupPoliciesCollapseToOneStoppedCanonicalPublisher(){
+    @Test fun legacySameSocketBackupPoliciesMigrateToAlwaysLocalInjection(){
         val migrated=NmeaDeviceOutputSettings(
             purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
             phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=true,
@@ -69,11 +78,27 @@ class NmeaDeviceOutputPolicyTest{
             motionPolicy=PublicationPolicy.BACKUP,pressurePolicy=PublicationPolicy.ALWAYS,
             derivedWindPolicy=PublicationPolicy.BACKUP,autoStartOutput=true,
         ).canonicalPublisherConfiguration()
-        assertEquals(NmeaOutputPurpose.CANONICAL_CLIENT_FEED,migrated.purpose)
-        assertFalse(migrated.phonePositionEnabled);assertFalse(migrated.phoneHeadingEnabled)
-        assertFalse(migrated.phoneMotionEnabled);assertFalse(migrated.phonePressureEnabled)
+        assertEquals(NmeaOutputPurpose.BOAT_BUS_INJECTION,migrated.purpose)
+        assertTrue(migrated.phonePositionEnabled);assertTrue(migrated.phoneHeadingEnabled)
+        assertTrue(migrated.phoneMotionEnabled);assertTrue(migrated.phonePressureEnabled)
         assertFalse(migrated.proprietaryStatusEnabled);assertFalse(migrated.autoStartOutput)
-        assertTrue(listOf(migrated.positionPolicy,migrated.headingPolicy,migrated.motionPolicy,migrated.pressurePolicy,migrated.derivedWindPolicy).all{it==PublicationPolicy.OFF})
+        assertTrue(listOf(migrated.positionPolicy,migrated.headingPolicy,migrated.motionPolicy,migrated.pressurePolicy,migrated.derivedWindPolicy).all{it==PublicationPolicy.ALWAYS})
+    }
+
+    @Test fun livePublisherConfigCannotReadLegacyPerStreamOrBackupFlags(){
+        val live=NmeaPublisherConfig.from(NmeaDeviceOutputSettings(
+            purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
+            phoneHeadingEnabled=true,headingPolicy=PublicationPolicy.BACKUP,
+            proprietaryStatusEnabled=true,autoStartOutput=true,
+            transportMode=NmeaOutputTransportMode.DEDICATED_TCP,
+            outputHost="10.0.0.2",outputPort=10111,
+            transportConfigured=true,publicationEnabled=true,
+        ))
+        assertTrue(live.running);assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,live.transportMode)
+        val canonical=live.asOutputSettings()
+        assertEquals(NmeaOutputPurpose.CANONICAL_CLIENT_FEED,canonical.purpose)
+        assertFalse(canonical.phoneHeadingEnabled);assertEquals(PublicationPolicy.OFF,canonical.headingPolicy)
+        assertFalse(canonical.proprietaryStatusEnabled);assertFalse(canonical.autoStartOutput)
     }
 
     @Test fun backupLooksOnlyAtSelectedExternalSourceAndFishfinderVhwDoesNotBlockHeadingTakeover(){
@@ -169,12 +194,28 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(guard.isRecentOutbound(sentence,7_001))
     }
 
+    @Test fun exactEchoQuarantineConsumesOneOccurrencePerOutboundFrame(){
+        val guard=NmeaOutboundLoopGuard();val sentence="\$IIHDT,123.00,T*00"
+        guard.record(listOf(sentence,sentence),1_000)
+        assertTrue(guard.isRecentOutbound(sentence,1_100))
+        assertTrue(guard.isRecentOutbound(sentence,1_200))
+        assertFalse("A third identical boat sentence is not an App echo",guard.isRecentOutbound(sentence,1_300))
+    }
+
     @Test fun semanticEchoWithAnotherTalkerAndChecksumIsStillQuarantined(){
         val guard=NmeaOutboundLoopGuard()
         guard.record(listOf("\$IIHDT,123.00,T*00\r\n"),1_000)
         guard.record(listOf("\$IIHDT,123.02,T*00\r\n"),1_200)
         assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",2_000))
         assertFalse(guard.isRecentOutbound("\$HCHDT,124.00,T*7F",2_000))
+    }
+
+    @Test fun semanticEchoAlsoConsumesOneOutboundOccurrence(){
+        val guard=NmeaOutboundLoopGuard()
+        guard.record(listOf("\$IIHDT,123.00,T*00\r\n","\$IIHDT,123.02,T*00\r\n"),1_000)
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_100))
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_200))
+        assertFalse(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_300))
     }
 
     @Test fun semanticCoincidenceNeverPermanentlyHidesARealSource(){
@@ -206,8 +247,8 @@ class NmeaDeviceOutputPolicyTest{
     }
 
     @Test fun dedicatedFailureDoesNotReportAWrite(){
-        val closedPort=ServerSocket(0).use{it.localPort};val client=DedicatedNmeaTcpClient()
-        try{val result=client.write("127.0.0.1",closedPort,listOf("\$PYOK,TEST*00\r\n"));assertFalse(result.success);assertNotNull(result.error)}finally{client.close()}
+        val client=DedicatedNmeaTcpClient().apply{socketFactory={object:Socket(){override fun connect(endpoint:SocketAddress?,timeout:Int){throw java.net.ConnectException("deterministic refusal")}}}}
+        try{val result=client.write("127.0.0.1",10111,listOf("\$PYOK,TEST*00\r\n"));assertFalse(result.success);assertNotNull(result.error)}finally{client.close()}
     }
 
     @Test fun stopClosesAnInFlightConnectCandidateInsteadOfWaitingForTimeout(){

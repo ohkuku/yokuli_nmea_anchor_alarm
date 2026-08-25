@@ -79,7 +79,7 @@ fun FirstRunSetupScreen(
                         else->tr("Route and calibration are ready — output waits for an explicit Start","线路和校准已就绪；输出正在等待用户明确启动")
                     }
                     SetupStatusCard(Icons.Default.Output,"NMEA Output",body,output.publicationEnabled)
-                    Text(tr("Output is optional and separate from input. Data → NMEA Output owns only the TX route, diagnostics and explicit Start/Stop. Metric sources are selected once in Data → Vessel; the shared feed does not send null or losing-source values.","输出是可选功能，并与输入完全分离。“数据 → NMEA 输出”只负责 TX 线路、诊断和明确启停；每项数据的来源只在“数据 → 船舶”选择一次，共享流不会发送 null 或落选来源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(tr("Output is optional and separate from input. Data → NMEA Output owns only the TX route, diagnostics and explicit Start/Stop. Metric sources are selected once in Data → Vessel; the shared feed re-encodes complete selected values, holds same-source unchanged heartbeats, and never sends a blank primary field.","输出是可选功能，并与输入完全分离。“数据 → NMEA 输出”只负责 TX 线路、诊断和明确启停；每项数据的来源只在“数据 → 船舶”选择一次，共享流会重新编码已选中的完整数值、保留同源未变化心跳，并且绝不会发送空的主字段。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 else->{
                     SetupStatusCard(Icons.Default.NotificationsActive,tr("Audible safety check","可听见的安全检查"),if(alarmTesting)tr("Alarm test is sounding","警报测试正在响")else tr("Use the real global alarm path before relying on Anchor Watch","依赖 Anchor Watch 前，请通过真实全局警报链路完成试听"),alarmTesting)

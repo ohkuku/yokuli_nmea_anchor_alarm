@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RuntimeTripOwnerTest{
+    @Test fun anchorStartupGpsLeaseHandsOffWithoutAZeroOwnerGap(){
+        val registry=RuntimeOwnerRegistry()
+        registry.set(RuntimeOwner.ANCHOR_STARTUP,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true))
+        assertTrue(registry.snapshot().needsSystemLocation)
+        registry.set(RuntimeOwner.ANCHOR_WATCH,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true,needsPhoneMotion=true))
+        registry.set(RuntimeOwner.ANCHOR_STARTUP,null)
+        val active=registry.snapshot();assertEquals(setOf(RuntimeOwner.ANCHOR_WATCH),active.owners);assertTrue(active.needsSystemLocation);assertTrue(active.needsWakeLock)
+    }
     @Test fun tripAndLiveHubDemandsComposeWithoutReleasingEachOther(){val registry=RuntimeOwnerRegistry();registry.set(RuntimeOwner.VESSEL_HUB_UI,RuntimeRequirement(needsSystemLocation=true,needsPhoneMotion=true));registry.set(RuntimeOwner.TRIP_WATCH,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true,needsWifiLock=true,needsPhonePressure=true));assertTrue(registry.snapshot().needsWakeLock);registry.set(RuntimeOwner.VESSEL_HUB_UI,null);val active=registry.snapshot();assertTrue(active.needsSystemLocation);assertTrue(active.needsPhonePressure);assertEquals(setOf(RuntimeOwner.TRIP_WATCH),active.owners)}
 
     @Test fun runningPhoneOnlyTripCanClaimNmeaTransportWithoutLosingOtherDemands(){

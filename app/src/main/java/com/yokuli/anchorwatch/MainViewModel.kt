@@ -844,10 +844,12 @@ class MainViewModel @Inject constructor(
     }
     fun startNmeaOutput()=viewModelScope.launch{
         val state=_ui.value
-        // Product output is one canonical, heartbeat-driven vessel feed. The
-        // source of each metric is selected in Data -> Vessel; output does not
-        // create a second, contradictory source-selection UI.
-        val value=state.outputSettings.copy(purpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,autoStartOutput=false)
+        // SAME_AS_INPUT injects only local phone/App evidence. Independent
+        // transports remain the unified VesselDataHub fan-out.
+        val value=state.outputSettings.copy(
+            purpose=if(state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)NmeaOutputPurpose.BOAT_BUS_INJECTION else NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
+            autoStartOutput=false,
+        )
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
         if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Complete vessel zero, explicitly confirm the current mount, and confirm heading alignment for this calibration before sharing NMEA data.");return@launch}
         if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,state.settings.profile)){fail(NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE);return@launch}
@@ -900,6 +902,7 @@ class MainViewModel @Inject constructor(
         prefs.save(current.copy(demoScenario=scenario?:current.demoScenario,demoSpeedMultiplier=speed?:current.demoSpeedMultiplier))
     }
     fun onPermissionsChanged(){systemLocation.refreshPermission()}
+    fun setAnchorSetupGpsPreview(enabled:Boolean)=systemLocation.setPreviewEnabled(enabled)
 
     fun clearDiagnostics()=nav.clearDiagnostics()
     fun arm(lat:Double,lon:Double,input:AnchorWatchInput){

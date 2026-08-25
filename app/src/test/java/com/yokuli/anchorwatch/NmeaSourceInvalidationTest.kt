@@ -8,7 +8,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NmeaSourceInvalidationTest {
-    @Test fun invalidStatusRemovesOnlyMatchingTransportGenerationAndMetrics(){
+    @Test fun invalidStatusMarksOnlyMatchingTransportGenerationAndMetricsInvalid(){
         val registry=VesselSourceRegistry()
         fun source(id:String,generation:Long,full:String)=VesselSourceIdentity(id,"boat",generation,VesselSourceType.NMEA_INPUT,fullSentenceId=full,displayName=full)
         val rmc=source("nmea:boat:4:GPRMC",4,"GPRMC")
@@ -22,9 +22,11 @@ class NmeaSourceInvalidationTest {
             VesselSourceCandidate(VesselMetricId.SOG,5.0,vtg,VesselSourceClass.BOAT_NMEA,receivedElapsedRealtime=100),
         ))
         registry.invalidate(NmeaSourceInvalidation(rmc.id,setOf(VesselMetricId.SOG),NmeaInvalidationReason.EXPLICIT_INVALID_STATUS,200,"boat",4,"GPRMC"))
-        val ids=registry.candidates<Double>(VesselMetricId.SOG).map{it.source.id}
-        assertFalse(rmc.id in ids);assertFalse(sameSentenceField.id in ids)
-        assertTrue(older.id in ids);assertTrue(vtg.id in ids)
+        val candidates=registry.candidates<Double>(VesselMetricId.SOG).associateBy{it.source.id}
+        assertEquals(CandidateValidity.INVALID,candidates[rmc.id]?.validity)
+        assertEquals(CandidateValidity.INVALID,candidates[sameSentenceField.id]?.validity)
+        assertEquals(CandidateValidity.ELIGIBLE,candidates[older.id]?.validity)
+        assertEquals(CandidateValidity.ELIGIBLE,candidates[vtg.id]?.validity)
     }
 
     @Test fun invalidMwvImmediatelyClearsLegacyLiveWind(){

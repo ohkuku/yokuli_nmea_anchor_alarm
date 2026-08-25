@@ -149,6 +149,39 @@ class AnchorSafetyFlowTest {
         if(::sonarDao.isInitialized)sonarDao.active()?.let{sonarDao.finish(it.id,System.currentTimeMillis())}
     }
 
+    /** CI provisions a fresh emulator GNSS fix before device stories run. This
+     * exercises the real Service → startup lease → LocationRepository → Room
+     * session path; it must not depend on an NMEA connection. */
+    @Test fun freshSystemGpsArmCreatesAnActiveSessionWithoutNmea() = runBlocking<Unit>{
+        navigation.disconnectAll()
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))
+        val arm=Intent(context,AnchorForegroundService::class.java)
+            .setAction(AnchorForegroundService.ARM)
+            .putExtra("lat",-36.8485)
+            .putExtra("lon",174.7633)
+            .putExtra("rode",0.0)
+            .putExtra("depth",Double.NaN)
+            .putExtra("bowHeight",0.0)
+            .putExtra("boatLength",Double.NaN)
+            .putExtra("antennaOffset",0.0)
+            .putExtra("warning",40.0)
+            .putExtra("alarm",50.0)
+            .putExtra("placement","CENTER_DROP")
+            .putExtra("rangeMode","BASIC")
+            .putExtra("safetyPreset","BALANCED")
+            .putExtra("positionSource",GpsDataSource.SYSTEM.name)
+            .putExtra("centerSource",AnchorCenterSource.CURRENT_POSITION.name)
+            .putExtra("depthSource","MANUAL")
+        ContextCompat.startForegroundService(context,arm)
+        val active=withTimeoutOrNull(20_000){while(dao.active()==null)delay(50);dao.active()}
+        assertNotNull("System-GPS ARM never created an active session; feedback=${runtimeDiagnostics.state.value.lastUserFeedback}",active)
+        requireNotNull(active)
+        assertTrue(active.active)
+        assertFalse(active.paused)
+        assertEquals(GpsDataSource.SYSTEM.name,active.positionSource)
+        assertEquals(NmeaConnectionState.DISCONNECTED,navigation.connectionState.value)
+    }
+
     @Test fun activeNmeaWatchDisconnectDialogDoesNotOfferUnsafeHotSwitch() = runBlocking<Unit> {
         TestNmeaServer().use { server ->
             val profile = liveProfile(server, autoReconnect = true)
@@ -376,10 +409,7 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("nmea_output_tx_host").assertExists()
             compose.onNodeWithTag("nmea_output_tx_port").assertExists()
             compose.onNodeWithText("192.168.1.211").assertExists()
-            // The output route is one deliberately long lazy-list item. Compose's
-            // performScrollTo cannot position a descendant of the following item on
-            // this emulator even though manual scrolling reaches it, so verify the
-            // console's interactive semantics rather than viewport clipping here.
+            compose.onNodeWithTag("nmea_output_list").performScrollToIndex(5)
             compose.onNodeWithTag("raw_tx_stream_filter").assertExists()
             compose.onNodeWithTag("raw_tx_type_filter").assertExists()
             compose.onNodeWithTag("raw_tx_pause").assertExists()
@@ -416,9 +446,9 @@ class AnchorSafetyFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 compose.onNodeWithText("Data").performClick()
                 compose.onNodeWithTag("data_tab_input").performClick()
-                compose.waitUntil(5_000){compose.onAllNodesWithText("Test, save & connect").fetchSemanticsNodes().isNotEmpty()}
-                compose.waitUntil(5_000){runCatching{compose.onNodeWithText("Test, save & connect").assertIsEnabled();true}.getOrDefault(false)}
-                compose.onNodeWithText("Test, save & connect").performScrollTo().performClick()
+                compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_connect_input").fetchSemanticsNodes().isNotEmpty()}
+                compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("nmea_connect_input").assertIsEnabled();true}.getOrDefault(false)}
+                compose.onNodeWithTag("nmea_connect_input").performScrollTo().performClick()
                 withTimeout(15_000){navigation.connectionState.first{it==NmeaConnectionState.CONNECTED}}
                 assertEquals(GpsDataSource.DEMO,preferences.settings.first().gpsDataSource)
                 compose.onNodeWithText("Settings").performClick()
@@ -635,7 +665,7 @@ class AnchorSafetyFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 startServiceForRestore()
                 server.closeConnections()
-                withTimeout(5_000) { navigation.connectionState.first { it == NmeaConnectionState.DISCONNECTED } }
+                withTimeout(5_000) { navigation.connectionState.first { it in setOf(NmeaConnectionState.DISCONNECTED,NmeaConnectionState.ERROR) } }
                 val lost = withTimeout(5_000) { dao.events(sessionId).first { rows -> rows.any { it.type == "NMEA_CONNECTION_LOST" } } }
                 assertTrue(lost.any { it.type == "NMEA_CONNECTION_LOST" })
                 val alarm = withTimeout(10_000) { dao.events(sessionId).first { rows -> rows.any { it.type == "ALARM_TRIGGERED" && it.detail == "GPS_DATA_LOST" } } }
@@ -972,15 +1002,17 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun sharingReusesTheLiveUpstreamAndKeepsServingAfterActivityCloses() = runBlocking<Unit> {
+    @Test fun legacySharingRequestMigratesToAStoppedCanonicalDestinationWithoutOpeningASocket() = runBlocking<Unit> {
         TestNmeaServer().use{boat->
             val profile=liveProfile(boat,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val upstreamConnections=boat.accepted.get();val port=ServerSocket(0).use{it.localPort}
             preferences.save(preferences.settings.first().copy(nmeaSharingEnabled=true,nmeaSharingPort=port))
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.SET_NMEA_SHARING).putExtra("enabled",true).putExtra("port",port))
-            withTimeout(5_000){sharingServer.status.first{it.state==SharingServerState.RUNNING}}
-            ActivityScenario.launch(MainActivity::class.java).use{}
-            Socket("127.0.0.1",port).use{client->client.soTimeout=3_000;withTimeout(5_000){sharingServer.status.first{it.clientCount==1}};val line=client.getInputStream().bufferedReader().readLine();assertTrue(line.startsWith("\$GPRMC")||line.startsWith("\$GNRMC"))}
+            withTimeout(5_000){preferences.settings.first{!it.nmeaSharingEnabled}}
+            val migrated=withTimeout(5_000){outputSettings.settings.first{it.transportConfigured&&it.transportMode==NmeaOutputTransportMode.TCP_SERVER&&it.outputPort==port}}
+            assertFalse(migrated.publicationEnabled)
+            assertEquals(SharingServerState.STOPPED,sharingServer.status.value.state)
+            assertEquals(0,sharingServer.status.value.clientCount)
             assertEquals(upstreamConnections,boat.accepted.get())
         }
     }

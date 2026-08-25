@@ -1,11 +1,13 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
+import com.yokuli.anchorwatch.data.nmea.output.NmeaGeneratedSentenceValidator
 import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.domain.vessel.*
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,7 +57,17 @@ class NmeaOutputMuxTest {
         val output=mux.phonePosition(fix,10_100)
         assertEquals(listOf("RMC","GGA","VTG","ZDA"),output.mapNotNull(mux::sentenceType))
         assertTrue(output.all{it.endsWith("\r\n")&&NmeaChecksum.validate(it,true)})
+        assertTrue(output.all(NmeaGeneratedSentenceValidator::isValid))
         assertTrue(output.last().startsWith("\$GNZDA,094640.00,03,07,2024,00,00"))
+    }
+
+    @Test fun generatedSentenceBoundaryRejectsBadFramingUnicodeChecksumAndOversize(){
+        val valid=mux.phoneHeading(123.4)
+        assertTrue(NmeaGeneratedSentenceValidator.isValid(valid))
+        assertFalse(NmeaGeneratedSentenceValidator.isValid(valid.removeSuffix("\r\n")))
+        assertFalse(NmeaGeneratedSentenceValidator.isValid(valid.replace("123.40","航向")))
+        assertFalse(NmeaGeneratedSentenceValidator.isValid(valid.replace("*",",BROKEN\n*")))
+        assertFalse(NmeaGeneratedSentenceValidator.isValid("\$PYOK,${"X".repeat(80)}*00\r\n"))
     }
 
     @Test fun phoneOutputNeverReplaysAStaleFix(){
@@ -70,6 +82,14 @@ class NmeaOutputMuxTest {
         assertTrue(output.all{NmeaChecksum.validate(it,true)})
         assertTrue(output[2].contains("PHONE_HEEL")&&output[2].contains("PHONE_BARO"))
         assertTrue(output[3].contains(",42.5,"))
+    }
+
+    @Test fun canonicalDepthAndWaterSpeedUseCompleteStandardSentences(){
+        val depth=mux.canonicalDepth(8.2)
+        val stw=mux.canonicalSpeedThroughWater(4.1,123.4,120.0)
+        assertEquals(listOf("DBT","VHW"),listOf(depth,stw).mapNotNull(mux::sentenceType))
+        assertTrue(depth.contains(",8.20,M,"));assertTrue(stw.contains("IIVHW,123.40,T,120.00,M,4.10,N,7.59,K"))
+        assertTrue(listOf(depth,stw).all{it.endsWith("\r\n")&&NmeaChecksum.validate(it,true)})
     }
 
     @Test fun defaultOutputDiagnosticCannotBeMistakenForNavigation(){

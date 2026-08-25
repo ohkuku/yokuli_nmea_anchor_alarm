@@ -59,6 +59,7 @@ data class NmeaInstrumentState(
  fun connect(p:ConnectionProfile)=synchronized(requestGuard){userDisconnected=false;appConnectionRequested=true;activeProfile=p;requireChecksum=p.requireChecksum;noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.connect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
  fun reconnect(p:ConnectionProfile)=synchronized(requestGuard){userDisconnected=false;appConnectionRequested=true;activeProfile=p;requireChecksum=p.requireChecksum;noDataTimeoutMillis=p.noDataTimeoutSeconds.coerceIn(3,120)*1_000L;val previous=_connectionStartedElapsed.value;_connectionStartedElapsed.value=SystemClock.elapsedRealtime();connection.reconnect(p).also{if(!it)_connectionStartedElapsed.value=previous}}
  fun writeToBoat(sentences:List<String>)=connection.write(sentences)
+ fun writeToBoatExpected(sentences:List<String>,expectedGeneration:Long?)=connection.writeExpected(sentences,expectedGeneration)
  @Synchronized fun pinBoatHeadingSource(sourceId:String?,allowFallback:Boolean=false){headingResolver.pin(sourceId,allowFallback);publishInstruments(SystemClock.elapsedRealtime())}
  fun disconnect()=synchronized(requestGuard){appConnectionRequested=false;if(!backgroundConnectionRequested){userDisconnected=true;connection.disconnect();_connectionStartedElapsed.value=null}}
  /** Acquire the shared NMEA stream for a foreground service without replacing a

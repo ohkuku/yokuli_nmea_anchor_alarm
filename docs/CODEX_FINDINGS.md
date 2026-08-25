@@ -177,7 +177,7 @@
 - Reproduction steps: enter a closed or refusing TCP endpoint, tap Connect once, then inspect the status/error and server connection attempts; repeat with auto reconnect enabled and with several rapid Reconnect taps.
 - Root cause: transport ownership, presentation state and retry policy were coupled in one loop without a latched failure state, monotonic transport-generation diagnostics or a bounded retry circuit.
 - Failing test: `NmeaConnectionManagerTest.refusedConnectionKeepsOneVisibleErrorAndDoesNotOpenAnotherSocket`; `automaticOpenFailuresBackOffAndStopAfterTheBoundedCircuitLimit`; `explicitReconnectReplacesSameProfileOnceAndRapidTapsAreDebounced`; `P0NmeaEndpointStoryTest.formalInputOwnsOneSocketWhileQuietThenReceivesLater`.
-- Fix commit: **PENDING**
+- Fix commit: **`f22c8fe`**
 - Verification result: **Passed `NmeaConnectionManagerTest` (9/9) and `P0NmeaEndpointStoryTest` (2/2) using loopback fake endpoints. Final `assembleDebug` passed in 30s. No real endpoint was contacted.**
 - Real hardware verified: **No — fragile NMEA gateway remains UNVERIFIED_HARDWARE.**
 - Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY QA**
@@ -190,7 +190,7 @@
 - Reproduction steps: configure independent TX with the exact RX host+port before connecting RX and try endpoint test/start; repeat while RX is open. Separately recalibrate vessel zero after enabling formal output and attempt to restart without reconfirming mount/alignment.
 - Root cause: calibration facts had timestamps but no version binding, and endpoint collision was a warning rather than a mandatory policy enforced at UI, ViewModel, runtime, connection and writer boundaries.
 - Failing test: `NmeaDeviceOutputPolicyTest.duplicateIndependentTxIsBlockedByConfigurationEvenBeforeRxEverOpened`; `protectedWriterNeverCreatesDuplicateSocketWhenRxIsAlreadyOpen`; `protectedWriterNeverCreatesDuplicateSocketBeforeRxHasEverOpened`; `NmeaStreamReadinessPolicyTest.formalOutputRequiresVersionMatchedZeroMountAndHeadingAlignment`; `suspectMountImmediatelyBlocksFormalOutput`.
-- Fix commit: **PENDING**
+- Fix commit: **`f22c8fe`**
 - Verification result: **Passed `NmeaDeviceOutputPolicyTest` (18/18) and `NmeaStreamReadinessPolicyTest` (6/6), including the open-RX and never-opened-RX zero-new-socket cases. Final `assembleDebug` passed in 30s. Tests used loopback sockets only.**
 - Real hardware verified: **No — vessel mounting and the actual TX/RX gateway ports remain UNVERIFIED_HARDWARE.**
 - Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY/SENSOR QA**
@@ -202,8 +202,112 @@
 - Evidence: production had both `PhonePositionNmeaOutputRuntime` and `NmeaSharingRuntime`. The former could suppress phone values through `PublicationOwnershipGate/BACKUP`; the latter subscribed to `validRawSentences` and forwarded Boat instruments. Dedicated TCP registered its Socket only after blocking `connect()`, and queued writes had no publication generation. TCP server enqueue was also counted as sent without a client flush.
 - Reproduction steps: start normal phone output, feed a Boat HDT/VHW candidate, hold phone heading constant, then Stop during a blocked dedicated connect or while heading batches are queued. Separately start the old Sharing server and observe raw Boat sentences using a different feed.
 - Root cause: output source policy, feed generation, transport ownership and lifecycle were split across two engines; Stop did not own a monotonic session lease or the in-flight connect candidate.
-- Failing test: `AnchorWatchNmeaPublisherTest.constantHeadingHasFiveHertzHeartbeatForTenMinutesWithoutBlankSentence`; `boatCandidatesNeverSuppressOrRewriteTheSelectedAnchorWatchHeading`; `stopInvalidatesEveryOldPublicationGeneration`; `NmeaDeviceOutputPolicyTest.stopClosesAnInFlightConnectCandidateInsteadOfWaitingForTimeout`; `NmeaSharingServerTest.listeningWithoutAClientNeverClaimsASentenceWasSent`.
-- Fix commit: **PENDING**
-- Verification result: **One `AnchorWatchNmeaPublisher` now generates Phone GNSS, calibrated phone vessel heading/motion, phone pressure and App-derived wind. TCP client/server, UDP and advanced same-socket consume that same bounded latest-value feed. Legacy Sharing migrates stopped; raw Boat forwarding and the second runtime were deleted. Stop invalidates generation, closes connect candidates/transports, waits for the writer lease, clears Live TX and retains a separately labelled last session. `testDebugUnitTest` passed 523/523, `lintDebug` passed, and `assembleDebug` produced the APK. Tests used only deterministic clocks, loopback/fake TCP endpoints and local Android build tools; no real NMEA endpoint was contacted.**
+- Failing test: `AnchorWatchNmeaPublisherTest.constantHeadingHasFiveHertzHeartbeatForTenMinutesWithoutBlankSentence`; `boatCandidatesNeverSuppressOrRewriteTheSelectedAnchorWatchHeading`; `stopInvalidatesEveryOldPublicationGeneration`; `NmeaDeviceOutputPolicyTest.stopClosesAnInFlightConnectCandidateInsteadOfWaitingForTimeout`; `PhoneNmeaOutputStopBarrierTest.stopCannotReturnBeforeAnInFlightSocketWriteHasJoined`; `NmeaSharingServerTest.listeningWithoutAClientNeverClaimsASentenceWasSent`.
+- Fix commit: **`f22c8fe` plus the uncommitted `codex/nmea-publisher-hard-stop` follow-up**
+- Verification result: **One `AnchorWatchNmeaPublisher` now generates Phone GNSS, calibrated phone vessel heading/motion, phone pressure and App-derived wind. Authoritative/default same-input Socket and explicitly selected Advanced TCP client/server or UDP consume that same bounded latest-value feed. Legacy Sharing migrates stopped; raw Boat forwarding and the second runtime were deleted. Stop invalidates generation, closes connect candidates/transports, waits for the byte barrier, clears Live TX and retains a separately labelled last session. The dedicated in-flight barrier regression uses a real loopback Socket and proves STOP cannot return before the blocked writer joins or allow local socket byte count to rise after return. TCP-server writer jobs are now joined without a timeout escape. The targeted barrier/output/server policy group passed 35/35; the prior final Debug unit/lint/assemble gates also passed. No real NMEA endpoint was contacted.**
 - Real hardware verified: **No — do not connect repeatedly to the user's fragile gateway. Run the manual receiver matrix once with packet capture.**
 - Status: **FIXED — UNIT/LINT/DEBUG BUILD PASSED; AWAITING ONE CONTROLLED HARDWARE QA RUN**
+
+## Finding P0-016 — Previous publisher fix still expired unchanged Heading by numeric time
+
+- Severity: **P0 / downstream NO HEADING**
+- User story: a physical instrument may send one complete Heading followed by same-sentence blank fields while unchanged; the App must keep publishing the last complete Heading while that exact source heartbeat remains fresh.
+- Evidence: `VesselSourceCandidate` stored a heartbeat, but `VesselSourceArbitrator.select()` evaluated only `now - receivedElapsedRealtime`; `AnchorWatchNmeaFeedEncoder` separately imposed a five-second Heading age filter.
+- Reproduction steps: publish one numeric IIHDT, then feed IIHDT blank heartbeats for more than five seconds while polling the canonical encoder at 5 Hz.
+- Root cause: numeric measurement age and source liveness were conflated in arbitration, while publication had no independent per-metric last-complete-value lease.
+- Failing test: `VesselSourceArbitratorTest.numericHeading_thenBlankHeartbeats_remainsHeldAndSelected`; `AnchorWatchNmeaPublisherTest.numericHeading_thenBlankHeartbeats_remainsHeldAndPublished`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **The tests failed before implementation and pass after `MetricSourceEligibility` + `CanonicalNmeaMetricLeaseBank`. The final unit evidence is aggregate 539 passed, 0 failed/errors and one wall-clock soak skipped by default. The wall-clock soak was then forced uncached against the final source and passed exactly 3,000 complete HDT deliveries at 5 Hz with every receiver gap asserted ≤400 ms. Lint and Debug assemble also passed.**
+- Real hardware verified: **No.**
+- Status: **FIXED — ALL LOCAL SOFTWARE GATES PASSED; CONTROLLED HARDWARE QA REQUIRED**
+
+## Finding P0-017 — TCP-server client writers could outlive Stop presentation
+
+- Severity: **P0 / ghost bytes after Stop**
+- User story: once Stop returns and Output shows OFF, no old TCP-server client writer may flush another byte or resurrect RUNNING state.
+- Evidence: the destination closed/cancelled clients but did not join their writer jobs; a writer `finally` block could publish a stale RUNNING status after Stop reset state.
+- Reproduction steps: attach a TCP client, publish a sentence, close/Stop while the client writer is active, then inspect server state and receiver bytes.
+- Root cause: transport closure and coroutine termination were separate asynchronous operations.
+- Failing test: `NmeaSharingServerTest.broadcastsCrlfSentenceToTcpClientAndStopsCleanly`; stopped zero-byte soak.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **`NmeaSharingServer.stop()` now closes listener/clients, joins old jobs with a bounded timeout, and reasserts STOPPED after join. Targeted socket tests pass. The forced wall-clock Fake TCP soak closed the only writer after 3,000 lines and then completed a real 60-second window with no new connection or line. Packet-path diagnostics now distinguish queued server delivery from actual client flush.**
+- Real hardware verified: **No.**
+- Status: **FIXED — ALL LOCAL SOFTWARE GATES PASSED; CONTROLLED HARDWARE QA REQUIRED**
+
+## Finding P0-018 — Depth, STW and selected Boat ROT were omitted from the independent canonical scheduler
+
+- Severity: **P0 / canonical feed completeness**
+- User story: every already-supported selected typed vessel metric listed by the P0 contract must keep its own cadence and lease; a Boat ROT must not disappear merely because phone attitude is absent.
+- Evidence: the initial replacement scheduler contained only Position, Heading, Motion, Pressure and Derived Wind. The sentence completeness filter recognized DBT/VHW, but no stream ever generated either sentence, and Motion read only phone attitude yaw rather than `rateOfTurnDegreesPerMinute`.
+- Reproduction steps: construct a `VesselDataSnapshot` containing selected Depth, STW and Boat ROT with no phone attitude, then poll every scheduler stream; observe no DBT, VHW or ROT before the fix.
+- Root cause: the first publisher consolidation focused on the reported Heading/Stop failures and copied the previous phone-output families instead of reconciling every stream in the attached P0 schedule.
+- Failing test: `AnchorWatchNmeaPublisherTest.depthAndStwHaveIndependentCadenceAndHoldOnlyCompleteSameSourceValues`; `selectedBoatRotPublishesWithoutAConnectedPhoneAttitudeSensor`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **Both tests failed before implementation and now pass. DBT is 1 Hz with a 60-second metric lease, VHW/STW is 2 Hz with a 10-second lease, and Boat ROT uses the 2 Hz Motion stream with a three-second lease. Out-of-range or incomplete primary fields suppress the whole sentence. Final aggregate unit, lint, assemble, targeted Output Compose and real-time Heading/Stop soak gates pass.**
+- Real hardware verified: **No.**
+- Status: **FIXED — LOCAL SOFTWARE VERIFIED; CONTROLLED HARDWARE QA REQUIRED**
+
+## Finding P2-019 — Pressure history test could observe the first asynchronous upsert before replacement
+
+- Severity: **P2 / CI determinism**
+- User story: a passing product behavior must not fail the build gate depending on coroutine scheduling.
+- Evidence: the test waited only until DAO row count became one. The first same-minute write already satisfied that condition, so the assertion could run before the second upsert replaced its pressure value.
+- Reproduction steps: run the complete unit suite under load; `repeatedMeasurementsInOneMinuteRemainOneDatabaseRow` can read 1012.0 instead of the eventual 1012.4.
+- Root cause: the assertion synchronized on cardinality rather than the observable state it intended to verify.
+- Failing test: `PressureHistoryRepositoryTest.repeatedMeasurementsInOneMinuteRemainOneDatabaseRow`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **The test now awaits both one row and the final replacement value, then passed when only the failed case was rerun. Product repository behavior was not changed.**
+- Real hardware verified: **Not applicable.**
+- Status: **FIXED — TARGETED RETRY PASSED**
+
+## Finding P0-020 — Same-socket queued NMEA could cross an RX reconnect boundary
+
+- Severity: **P0 / incorrect live vessel output**
+- User story: a canonical batch generated for TCP transport N must be written only to N; reconnect N+1 starts with newly sampled data and never receives a queued pre-reconnect batch.
+- Evidence: publication batches carried only publisher generation. `NmeaConnectionManager.write()` looked up whichever Socket was current at write time and returned only Boolean.
+- Reproduction steps: queue a batch, replace the formal input transport, then let the writer drain; before this fix the batch could resolve the replacement socket.
+- Root cause: publisher lifecycle generation and physical transport generation were separate concepts, but only the former was bound to a batch.
+- Failing test: `NmeaConnectionManagerTest.queuedBatchFromOldTransportGenerationIsNeverWrittenAfterReconnect`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **Generation-aware loopback test passed. Encoder also rejects a selected Boat value from an older input generation. Packet diagnostics contain expected/actual transport generation and a dropped reason. Final Debug unit suite passed 549 total with 0 failures/errors and one opt-in soak skipped; lintDebug and assembleDebug passed.**
+- Real hardware verified: **No — UNVERIFIED_HARDWARE.**
+- Status: **FIXED IN CODE — TARGETED JVM PASSED; CONTROLLED GATEWAY QA REQUIRED**
+
+## Finding P0-021 — Phone GPS Arm could wait before actually acquiring GNSS
+
+- Severity: **P0 / anchor safety cannot start**
+- User story: choosing Phone GPS and pressing Start must first acquire System GNSS, then create the session, or show the exact foreground failure once.
+- Evidence: `awaitUsableStartFix()` called `enableSystemGps()`, which changed the foreground-service type but did not set `SystemLocationRepository.backgroundEnabled`. Formal `ANCHOR_WATCH` resources were acquired only after a session was inserted. The setup UI also recognized failures by the English substring `not started`, and its 15-second timeout raced the Runtime's own 15-second timeout.
+- Reproduction steps: open setup when Phone GPS is not already owned by saved App settings, select Phone GPS, then Start; no repository owner starts LocationManager while Runtime waits. In Chinese, the localized failure does not match the English substring and the progress UI persists until its fallback timeout.
+- Root cause: circular resource acquisition plus language-dependent command-result inference.
+- Failing test: `RuntimeTripOwnerTest.anchorStartupGpsLeaseHandsOffWithoutAZeroOwnerGap`; `AnchorSetupSubmissionPolicyTest.localizedArmFailureEndsSpinnerWithoutMatchingEnglishTitle`; device story `AnchorSafetyFlowTest.freshSystemGpsArmCreatesAnActiveSessionWithoutNmea`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **`ANCHOR_STARTUP` now owns GNSS/wake resources before the bounded wait and hands off to `ANCHOR_WATCH`; the setup sheet temporarily previews GNSS and consumes typed `ARM_WATCH` failure context. Targeted JVM tests, the 549-test Debug unit gate, lintDebug and assembleDebug passed. The full Service → startup lease → emulator GNSS → Room ACTIVE-session regression has been added and `assembleDebugAndroidTest` passes, but that device story was deliberately not executed in this pass.**
+- Real hardware verified: **No — start once outdoors with a fresh GNSS fix.**
+- Status: **FIXED IN CODE — TARGETED JVM PASSED; PHONE HARDWARE QA REQUIRED**
+
+## Finding P1-022 — Residual field/echo/framing gaps reduced output trust
+
+- Severity: **P1 / interoperability and diagnostics**
+- User story: App output frames are valid and observable; echoes cannot become Boat evidence; held values disappear after source silence; App pressure is typed consistently.
+- Evidence: exact echo storage kept one timestamp per sentence, semantic matches were not occurrence-consuming, retained generic fields expired only when a later sentence arrived, XDR bar pressure remained RAW, and no final centralized 82-byte framing validator existed.
+- Reproduction steps: send the same App frame twice and receive three echoes; stop all input traffic after an XDR field; decode `IIXDR,P,1.01320,B,PHONE_BARO`; inject an oversized generated frame.
+- Root cause: value-oriented caches were reused where occurrence, time-driven expiry and a final transport boundary were required.
+- Failing test: `NmeaDeviceOutputPolicyTest.exactEchoQuarantineConsumesOneOccurrencePerOutboundFrame`; `semanticEchoAlsoConsumesOneOutboundOccurrence`; `NmeaFieldDecoderTest.retainedFieldsExpireWithoutWaitingForAnotherSentence`; `NmeaOutputMuxTest.generatedSentenceBoundaryRejectsBadFramingUnicodeChecksumAndOversize`; `NmeaParserTest.streamFramingSurvivesRandomTcpFragmentation`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **All listed targeted tests pass, including 300 randomized fragmentation seeds. Final Debug unit suite passed 549 total with 0 failures/errors and one opt-in soak skipped; lintDebug and assembleDebug passed.**
+- Real hardware verified: **No — Pi/converter/MFD are NOT YET PROVEN.**
+- Status: **FIXED IN CODE — LOCAL TARGETS PASS; EXTERNAL CHAIN QA REQUIRED**
+
+## Finding P0-023 — Same-socket canonical feed could re-inject Raymarine/KC-2W Boat data
+
+- Severity: **P0 / bidirectional gateway feedback and disappearing instruments**
+- User story: when Phone Vessel Output uses the already-open KC-2W TCP connection, each healthy local phone stream remains stable even after a Raymarine MFD joins the N2K network; no value originating from that Boat connection may be written back to it directly, reformatted, AUTO-selected or indirectly derived.
+- Evidence: `AnchorWatchNmeaFeedEncoder` consumed `VesselDataHub` selected Position, SOG, COG, Heading, ROT, Pressure, Wind, Depth and STW for every transport. `VesselDataHub` AUTO normally prioritizes `BOAT_NMEA`; only Position had a partial exclusion while phone position publication was active, and RMC still resolved SOG/COG independently. A bidirectional KC-2W could therefore return Raymarine/N2K candidates that the App encoded back onto the same Socket.
+- Reproduction steps: create a Phone GNSS fix and phone Heading candidate; add higher-priority Raymarine-like Boat SOG/COG/HDT/MWV/DBT candidates from the current input generation; encode each stream for `SAME_AS_INPUT_CONNECTION`. Before the fix, Boat Heading/Depth/STW and Boat-derived wind were emitted and Phone RMC could contain Boat SOG/COG.
+- Root cause: destination semantics were unified too early. Sentence generation was treated as sufficient proof of safety, while the dependency provenance of selected and App-derived values was not enforced at the same-input encoding boundary.
+- Failing test: `AnchorWatchNmeaPublisherTest.sameInputRmcUsesOneAtomicPhoneFixAndNeverBoatSogCog`; `selectedBoatHeadingIsBlockedOnSameInputButAllowedForIndependentUnifiedFeed`; `raymarineLikeExternalHeadingDoesNotSuppressPhoneHeadingOnSameSocket`; `externalPressureDoesNotSuppressFreshPhonePressureOnSameSocket`; `boatDerivedWindIsBlockedOnSameInputButAllowedOnDedicatedFeed`; `phoneTxEchoIdentityIsAlwaysDeniedBySameSocketFirewall`; existing Depth/STW/ROT destination split regressions.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
+- Verification result: **`SAME_AS_INPUT_CONNECTION` is now Local Sensor Injection. It uses one accepted Android `NavigationFix` atomically for position/SOG/COG/time, explicitly selects local phone Heading/IMU/Barometer candidates even when AUTO selects Boat data, blocks Depth/STW, and rejects derived ancestry containing NMEA input, TX echo or unknown nested derivation. Dedicated TCP/UDP/TCP Server retain unified selected-vessel semantics. BACKUP is normalized to ALWAYS for normal same-socket local streams; source conflict remains diagnostic while publication continues. The focused firewall/settings/field/echo/hard-stop group passed 55/55. The final Debug JVM gate passed 557 tests with 0 failures/errors and one opt-in real-time soak skipped; `lintDebug` and `assembleDebug` passed.**
+- Real hardware verified: **No — Raymarine MDS, KC-2W firmware conversion and N2K source-address behavior remain EXTERNAL-UNVERIFIED.**
+- Status: **FIXED IN CODE — TARGETED JVM PASSED; ONE CONTROLLED KC-2W/IS42/RAYMARINE QA RUN REQUIRED**

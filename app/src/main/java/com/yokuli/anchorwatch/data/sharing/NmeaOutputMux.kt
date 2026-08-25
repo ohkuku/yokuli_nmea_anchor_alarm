@@ -66,6 +66,14 @@ class NmeaOutputMux @Inject constructor() {
     fun diagnostic():String=sentence("PYOK,TEST,ANCHOR_WATCH,1")
     fun diagnosticMagneticHeading(headingDegrees:Double=123.4):String=sentence("IIHDG,${f(normalizeDegrees(headingDegrees),2)},,,,")
     fun phoneRateOfTurn(degreesPerMinute:Double):String=sentence("IIROT,${f(degreesPerMinute.coerceIn(-720.0,720.0),2)},A")
+    fun canonicalDepth(depthMeters:Double):String{
+        val meters=depthMeters.coerceIn(0.0,12_000.0)
+        return sentence("IIDBT,${f(meters*3.280839895,2)},f,${f(meters,2)},M,${f(meters/1.8288,2)},F")
+    }
+    fun canonicalSpeedThroughWater(speedKnots:Double,trueHeadingDegrees:Double?=null,magneticHeadingDegrees:Double?=null):String{
+        val speed=speedKnots.coerceIn(0.0,200.0)
+        return sentence("IIVHW,${trueHeadingDegrees?.let{f(normalizeDegrees(it),2)}.orEmpty()},T,${magneticHeadingDegrees?.let{f(normalizeDegrees(it),2)}.orEmpty()},M,${f(speed,2)},N,${f(speed*1.852,2)},K")
+    }
     fun phoneXdr(attitude:VesselAttitude?,pressureHpa:Double?):String?{
         val groups=buildList{
             attitude?.let{add("A,${f(it.heelDegrees,2)},D,PHONE_HEEL");add("A,${f(it.pitchDegrees,2)},D,PHONE_PITCH")}

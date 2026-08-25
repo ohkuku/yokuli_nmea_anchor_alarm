@@ -29,12 +29,13 @@ class NmeaFieldDecoderTest {
     }
 
     @Test fun xdrKeepsStableTransducerIdentity(){
-        val result=NmeaFieldDecoder.decode(NmeaChecksum.append("IIXDR,A,12.4,D,RUDDER,A,-3.2,D,PHONE_HEEL,A,1.7,D,PHONE_PITCH,A,99.0,D,OTHER,C,19.3,C,WATER"),123)
+        val result=NmeaFieldDecoder.decode(NmeaChecksum.append("IIXDR,A,12.4,D,RUDDER,A,-3.2,D,PHONE_HEEL,A,1.7,D,PHONE_PITCH,A,99.0,D,OTHER,C,19.3,C,WATER,P,1.01320,B,PHONE_BARO"),123)
         assertTrue(result.any{it.key.transducerName=="RUDDER"&&it.key.semantic==NmeaFieldSemantic.RUDDER_ANGLE})
         assertTrue(result.any{it.key.transducerName=="PHONE_HEEL"&&it.key.semantic==NmeaFieldSemantic.HEEL})
         assertTrue(result.any{it.key.transducerName=="PHONE_PITCH"&&it.key.semantic==NmeaFieldSemantic.PITCH})
         assertTrue(result.any{it.key.transducerName=="OTHER"&&it.key.semantic==NmeaFieldSemantic.RAW_ANGULAR})
         assertTrue(result.any{it.key.transducerName=="WATER"&&it.key.semantic==NmeaFieldSemantic.WATER_TEMPERATURE})
+        assertEquals(1013.2,result.single{it.key.transducerName=="PHONE_BARO"&&it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE}.value!!,.001)
     }
 
     @Test fun genericWeatherFieldsHoldOnlyWithinTheSameTalkerAndSentence(){
@@ -66,5 +67,12 @@ class NmeaFieldDecoderTest {
         fun accept(body:String,elapsed:Long)=NmeaChecksum.append(body).let{line->cache.accept(NmeaFieldDecoder.decode(line,elapsed),NmeaFieldDecoder.heartbeat(line),line,elapsed)}
         assertTrue(accept("IIROT,3.2,A",100).any{it.key.semantic==NmeaFieldSemantic.ROT})
         assertFalse(accept("IIROT,,V",200).any{it.key.semantic==NmeaFieldSemantic.ROT})
+    }
+
+    @Test fun retainedFieldsExpireWithoutWaitingForAnotherSentence(){
+        val cache=NmeaFieldRetentionBuffer(retentionMillis=1_000)
+        val line=NmeaChecksum.append("IIXDR,P,1.01320,B,PHONE_BARO")
+        assertEquals(1,cache.accept(NmeaFieldDecoder.decode(line,100),NmeaFieldDecoder.heartbeat(line),line,100).count{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE})
+        assertTrue(cache.expire(1_101).none{it.key.semantic==NmeaFieldSemantic.AIR_PRESSURE})
     }
 }

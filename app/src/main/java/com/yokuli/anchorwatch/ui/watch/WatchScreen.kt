@@ -172,7 +172,7 @@ internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false;setupReference=null}){showPreflight=false;showSetup=true}
-    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input)}
+    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview){lat,lon,input->vm.arm(lat,lon,input)}
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
@@ -446,7 +446,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input)}
+        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview){lat,lon,input->vm.arm(lat,lon,input)}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}

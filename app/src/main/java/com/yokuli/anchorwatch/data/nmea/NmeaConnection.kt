@@ -33,6 +33,18 @@ data class NmeaTransportDiagnostics(
  val lastOperation:String="IDLE",
 )
 
+enum class NmeaTransportWriteFailure { NONE, TRANSPORT_UNAVAILABLE, STALE_TRANSPORT_GENERATION, WRITE_FAILED }
+
+data class NmeaTransportWriteResult(
+ val success:Boolean,
+ val expectedGeneration:Long?,
+ val actualGeneration:Long,
+ val attemptedSentenceCount:Int,
+ val writtenSentenceCount:Int=0,
+ val failure:NmeaTransportWriteFailure=if(success)NmeaTransportWriteFailure.NONE else NmeaTransportWriteFailure.WRITE_FAILED,
+ val error:String?=null,
+)
+
 class NmeaConnectionManager(
  private val scope:CoroutineScope,
  private val retryPolicy:NmeaConnectionRetryPolicy=NmeaConnectionRetryPolicy(),
@@ -71,10 +83,28 @@ class NmeaConnectionManager(
   lastManualReconnectElapsed=now
   startLocked(p,retryPolicy.reconnectCoalesceMillis,NmeaConnectionState.RECONNECTING,"USER_RECONNECT")
  }
- fun write(sentences:List<String>):Boolean{
-  val socket=synchronized(guard){transport as? Socket}?:return false
-  if(socket.isClosed||!socket.isConnected)return false
-  return runCatching{synchronized(socket){val output=socket.getOutputStream();sentences.forEach{line->output.write(line.toByteArray(Charsets.US_ASCII))};output.flush()};true}.getOrDefault(false)
+ fun write(sentences:List<String>):Boolean=writeExpected(sentences,null).success
+ /** Writes only to the transport generation that produced the queued batch.
+  * A reconnect must never make an old batch appear on the replacement socket. */
+ fun writeExpected(sentences:List<String>,expectedGeneration:Long?):NmeaTransportWriteResult{
+  val lease=synchronized(guard){
+   val actual=transportGeneration
+   if(expectedGeneration!=null&&expectedGeneration!=actual)return NmeaTransportWriteResult(false,expectedGeneration,actual,sentences.size,failure=NmeaTransportWriteFailure.STALE_TRANSPORT_GENERATION,error="Queued NMEA batch belongs to transport generation $expectedGeneration; current generation is $actual.")
+   val socket=transport as? Socket?:return NmeaTransportWriteResult(false,expectedGeneration,actual,sentences.size,failure=NmeaTransportWriteFailure.TRANSPORT_UNAVAILABLE,error="The shared input TCP transport is not open.")
+   socket to actual
+  }
+  val (socket,actual)=lease
+  if(socket.isClosed||!socket.isConnected)return NmeaTransportWriteResult(false,expectedGeneration,actual,sentences.size,failure=NmeaTransportWriteFailure.TRANSPORT_UNAVAILABLE,error="The shared input TCP transport is closed.")
+  return try{
+   synchronized(socket){
+    val stillCurrent=synchronized(guard){transport===socket&&transportGeneration==actual&&(expectedGeneration==null||expectedGeneration==actual)}
+    if(!stillCurrent)return NmeaTransportWriteResult(false,expectedGeneration,synchronized(guard){transportGeneration},sentences.size,failure=NmeaTransportWriteFailure.STALE_TRANSPORT_GENERATION,error="The input TCP transport changed before this queued batch could be written.")
+    val output=socket.getOutputStream();sentences.forEach{line->output.write(line.toByteArray(Charsets.US_ASCII))};output.flush()
+   }
+   NmeaTransportWriteResult(true,expectedGeneration,actual,sentences.size,sentences.size)
+  }catch(error:Exception){
+   NmeaTransportWriteResult(false,expectedGeneration,synchronized(guard){transportGeneration},sentences.size,failure=NmeaTransportWriteFailure.WRITE_FAILED,error=error.javaClass.simpleName+(error.message?.let{": $it"}.orEmpty()))
+  }
  }
  fun hasOpenTransport():Boolean=synchronized(guard){transport!=null&&job?.isActive==true}
  fun disconnect(){synchronized(guard){generation++;transportGeneration++;onGenerationStarted();profile=null;job?.cancel();job=null;closeTransportLocked();_state.value=NmeaConnectionState.DISCONNECTED;_diagnostics.value=NmeaTransportDiagnostics(connectionGeneration=transportGeneration,lastDisconnectReason="USER_DISCONNECT",desiredConnected=false,lastOperation="USER_DISCONNECT")}}

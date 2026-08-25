@@ -126,7 +126,7 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     val data=state.vesselData
     var detailMetric by remember{mutableStateOf<VesselMetricId?>(null)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{PageHeader(tr("App-internal vessel data","App 内部船舶数据"),tr("Choose one source for App instruments and calculations. Available or historical here does not mean it is currently transmitted; normal NMEA output is the separate phone/App-owned Anchor Watch feed.","为 App 仪表和计算选择每项数值的来源。此处显示“可用”或“历史”并不代表当前正在发送；普通 NMEA 输出是独立的 Anchor Watch 手机/App-owned 数据流。"))}
+        item{PageHeader(tr("App-internal vessel data","App 内部船舶数据"),tr("Choose one source for App instruments and calculations. Available or historical here does not mean it is currently transmitted. When NMEA Output is explicitly running, it re-encodes these selected complete values as one stable Anchor Watch source.","为 App 仪表和计算选择每项数值的来源。此处显示“可用”或“历史”不代表当前正在发送；只有明确启动 NMEA 输出后，应用才会把这些已选中的完整数值重新编码为唯一且稳定的 Anchor Watch 来源。"))}
         item{Card{Column{
             SourceRoutingSummaryRow(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){detailMetric=VesselMetricId.POSITION}
             HorizontalDivider(Modifier.padding(horizontal=14.dp))

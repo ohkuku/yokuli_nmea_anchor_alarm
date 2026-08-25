@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionManager
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionRetryPolicy
+import com.yokuli.anchorwatch.data.nmea.NmeaTransportWriteFailure
 import com.yokuli.anchorwatch.data.nmea.output.DedicatedNmeaTcpClient
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import kotlinx.coroutines.*
@@ -80,6 +81,21 @@ class NmeaConnectionManagerTest {
             assertEquals("\$PYOK,SAME*00",withTimeout(3_000){received.await()})
         }finally{manager.disconnect();managerScope.cancel();runCatching{server.close()};serverJob.cancelAndJoin()}
     }}
+
+    @Test fun queuedBatchFromOldTransportGenerationIsNeverWrittenAfterReconnect() = runBlocking {
+        val server=ServerSocket(0);val clients=CopyOnWriteArrayList<Socket>();val accepted=AtomicInteger()
+        val serverJob=launch(Dispatchers.IO){runCatching{while(isActive)server.accept().also{clients+=it;accepted.incrementAndGet()}}}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
+        val profile=ConnectionProfile(host="127.0.0.1",port=server.localPort)
+        try{
+            assertTrue(manager.connect(profile));withTimeout(5_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
+            val oldGeneration=manager.diagnostics.value.connectionGeneration
+            manager.disconnect();assertTrue(manager.connect(profile));withTimeout(5_000){while(accepted.get()<2)delay(20)}
+            val result=manager.writeExpected(listOf("\$PYOK,STALE*00\r\n"),oldGeneration)
+            assertFalse(result.success);assertEquals(NmeaTransportWriteFailure.STALE_TRANSPORT_GENERATION,result.failure)
+            assertNotEquals(oldGeneration,result.actualGeneration)
+        }finally{manager.disconnect();managerScope.cancel();clients.forEach{runCatching{it.close()}};runCatching{server.close()};serverJob.cancelAndJoin()}
+    }
 
     @Test fun quietTcpStreamReportsNoDataWithoutOpeningAnotherSocket() = runBlocking {
         val server=ServerSocket(0);val accepted=AtomicInteger();val clients=CopyOnWriteArrayList<Socket>()

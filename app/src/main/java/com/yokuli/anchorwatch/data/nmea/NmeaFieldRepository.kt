@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class NmeaFieldSemantic {
@@ -61,6 +63,9 @@ class NmeaFieldRetentionBuffer(private val retentionMillis:Long=30_000L){
             carried.forEach{(id,value)->held[id]=value.copy(sourceHeartbeatElapsedRealtime=elapsed,confirmation=NmeaMeasurementConfirmation.UNCHANGED_HEARTBEAT)}
         }
         decoded.forEach{held[it.key.stableId]=it}
+        return expire(elapsed)
+    }
+    @Synchronized fun expire(elapsed:Long):List<NmeaFieldObservation>{
         held.entries.removeAll{elapsed-it.value.sourceHeartbeatElapsedRealtime>retentionMillis}
         return held.values.sortedWith(compareBy<NmeaFieldObservation>{it.key.sentenceType}.thenBy{it.key.fieldIndex}.thenBy{it.key.transducerName.orEmpty()})
     }
@@ -140,6 +145,7 @@ object NmeaFieldDecoder {
             val value=fields[index+1].toDoubleOrNull();val unit=fields[index+2].trim();val name=fields[index+3].trim().takeIf{it.isNotEmpty()}
             if(value!=null){
                 val semantic=when{
+                    fields[index].equals("P",true)&&unit.equals("B",true)->NmeaFieldSemantic.AIR_PRESSURE
                     fields[index].equals("C",true)&&unit.equals("C",true)&&name?.contains("WATER",true)==true->NmeaFieldSemantic.WATER_TEMPERATURE
                     fields[index].equals("C",true)&&unit.equals("C",true)->NmeaFieldSemantic.AIR_TEMPERATURE
                     fields[index].equals("A",true)->when(name?.trim()?.uppercase(Locale.US)){
@@ -150,7 +156,9 @@ object NmeaFieldDecoder {
                     }
                     else->NmeaFieldSemantic.RAW
                 }
-                result+=NmeaFieldObservation(NmeaFieldKey(talker,type,index+1,semantic,name),value=value,unit=unit,receivedElapsedRealtime=elapsed,rawSentence=raw)
+                val normalizedValue=if(semantic==NmeaFieldSemantic.AIR_PRESSURE&&unit.equals("B",true))value*1_000.0 else value
+                val normalizedUnit=if(semantic==NmeaFieldSemantic.AIR_PRESSURE&&unit.equals("B",true))"hPa" else unit
+                result+=NmeaFieldObservation(NmeaFieldKey(talker,type,index+1,semantic,name),value=normalizedValue,unit=normalizedUnit,receivedElapsedRealtime=elapsed,rawSentence=raw)
             }
             index+=4
         }
@@ -166,6 +174,9 @@ class NmeaFieldRepository @Inject constructor(navigation:NavigationRepository){
     init{
         scope.launch{navigation.transportDiagnostics.map{it.connectionGeneration}.distinctUntilChanged().drop(1).collect{retention.clear();_fields.value=emptyList()}}
         scope.launch{navigation.validRawSentences.collect{line->accept(line)}}
+        // Expiry must not depend on another sentence arriving. A quiet or
+        // disconnected stream removes stale generic fields on wall-clock time.
+        scope.launch{while(isActive){delay(1_000L);val expired=retention.expire(SystemClock.elapsedRealtime());if(expired!=_fields.value)_fields.value=expired}}
     }
     fun accept(line:String,elapsed:Long=SystemClock.elapsedRealtime()){
         val decoded=NmeaFieldDecoder.decode(line,elapsed)

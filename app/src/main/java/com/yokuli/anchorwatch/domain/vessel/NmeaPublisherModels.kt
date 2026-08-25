@@ -30,7 +30,9 @@ data class NmeaRetryPolicy(val delaysMillis:List<Long> = listOf(1_000,2_000,5_00
 data class NmeaOutputDestination(
     val id:String="boat-gateway",
     val name:String="Boat Gateway",
-    val transport:NmeaDestinationTransport=NmeaDestinationTransport.DEDICATED_TCP,
+    /** The existing full-duplex Boat connection is the normal Phone→Boat path.
+     * Independent TCP/UDP destinations are explicit advanced choices. */
+    val transport:NmeaDestinationTransport=NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET,
     val host:String="",
     val port:Int=10110,
     val enabled:Boolean=false,

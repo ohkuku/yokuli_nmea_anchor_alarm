@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.yokuli.anchorwatch.data.anchorage.*
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.AppDatabase
+import com.yokuli.anchorwatch.data.database.AnchorageDatabaseCallback
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachEngine
@@ -28,7 +29,7 @@ import org.junit.runner.RunWith
 class AnchorageApproachStoryTest {
     @Test fun onlySavedAnchoragesCreateNearbyApproachAndArrivalGeometry() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).addCallback(AnchorageDatabaseCallback).build()
         try {
             repeat(10) { index ->
                 database.anchorDao().insertSession(

@@ -49,8 +49,7 @@ class VesselSourceArbitrator{
 
     @Synchronized fun <T> select(metric:VesselMetricId,raw:List<VesselSourceCandidate<T>>,settings:MetricSourcePreference,now:Long):VesselSourceSelection<T>{
         val state=states.getOrPut(metric){State()};val candidates=raw.map{candidate->
-            val age=now-candidate.receivedElapsedRealtime
-            candidate.copy(validity=when{candidate.validity in setOf(CandidateValidity.INVALID,CandidateValidity.DISABLED)->candidate.validity;age<0||age>staleMillis(metric)->CandidateValidity.STALE;candidate.quality==VesselDataQuality.UNKNOWN->CandidateValidity.LOW_QUALITY;else->CandidateValidity.ELIGIBLE})
+            candidate.copy(validity=MetricSourceEligibility.evaluate(metric,candidate,now))
         }
         val eligible=candidates.filter{it.validity==CandidateValidity.ELIGIBLE&&matchesPreference(it,settings.preference)}
         val pinned=settings.pinnedSourceId?.let{id->candidates.firstOrNull{it.source.id==id&&it.validity==CandidateValidity.ELIGIBLE}}
@@ -101,5 +100,60 @@ class VesselSourceArbitrator{
         return when(candidate.sourceClass){VesselSourceClass.BOAT_NMEA->400;VesselSourceClass.PHONE_GNSS,VesselSourceClass.PHONE_VESSEL_HEADING,VesselSourceClass.PHONE_DEVICE_COMPASS,VesselSourceClass.PHONE_IMU,VesselSourceClass.PHONE_BAROMETER->300;VesselSourceClass.DERIVED_WATER->200;VesselSourceClass.DERIVED_GROUND->100;VesselSourceClass.DEMO->50;VesselSourceClass.NONE->0}
     }
     private fun recoveryMillis(metric:VesselMetricId)=when(metric){VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC,VesselMetricId.DEPTH->3_000L;else->5_000L}
-    private fun staleMillis(metric:VesselMetricId)=when(metric){VesselMetricId.POSITION,VesselMetricId.SOG,VesselMetricId.COG,VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC,VesselMetricId.SPEED_THROUGH_WATER,VesselMetricId.RATE_OF_TURN->5_000L;VesselMetricId.DEPTH->60_000L;VesselMetricId.PRESSURE->10*60_000L;else->60_000L}
+}
+
+/** Per-metric eligibility distinguishes a complete measurement from evidence
+ * that the same physical producer is still alive. Position is safety-critical
+ * and can never be renewed by a blank heartbeat. Slowly changing vessel
+ * instruments may retain their last complete value while that exact source
+ * continues to heartbeat; explicit invalid/disabled status always wins. */
+object MetricSourceEligibility{
+    fun evaluate(metric:VesselMetricId,candidate:VesselSourceCandidate<*>,now:Long):CandidateValidity{
+        if(candidate.explicitValidity in setOf(CandidateValidity.INVALID,CandidateValidity.DISABLED))return candidate.explicitValidity
+        val measurementAge=now-candidate.measuredElapsedRealtime
+        val heartbeatAge=now-candidate.sourceHeartbeatElapsedRealtime
+        val timeInvalid=measurementAge<0||heartbeatAge<0
+        val heartbeatHeld=candidate.sourceHeartbeatElapsedRealtime>candidate.measuredElapsedRealtime&&heartbeatAge<=heartbeatFreshMillis(metric)
+        val eligible=when{
+            timeInvalid->false
+            metric==VesselMetricId.POSITION->measurementAge<=measurementLeaseMillis(metric)
+            heartbeatHeld&&metric in HOLDABLE_METRICS->true
+            else->measurementAge<=measurementLeaseMillis(metric)
+        }
+        return when{
+            !eligible->CandidateValidity.STALE
+            candidate.quality==VesselDataQuality.UNKNOWN->CandidateValidity.LOW_QUALITY
+            else->CandidateValidity.ELIGIBLE
+        }
+    }
+
+    fun measurementLeaseMillis(metric:VesselMetricId)=when(metric){
+        VesselMetricId.POSITION->3_000L
+        VesselMetricId.SOG,VesselMetricId.COG->5_000L
+        VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC->15_000L
+        VesselMetricId.RATE_OF_TURN->3_000L
+        VesselMetricId.HEEL,VesselMetricId.PITCH,VesselMetricId.ROLL_RATE,VesselMetricId.PITCH_RATE,VesselMetricId.YAW_RATE->5_000L
+        VesselMetricId.PRESSURE,VesselMetricId.DEPTH->60_000L
+        VesselMetricId.SPEED_THROUGH_WATER->10_000L
+        VesselMetricId.APPARENT_WIND_ANGLE,VesselMetricId.APPARENT_WIND_SPEED,VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.TRUE_WIND_DIRECTION->10_000L
+        else->60_000L
+    }
+
+    fun heartbeatFreshMillis(metric:VesselMetricId)=when(metric){
+        VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC,VesselMetricId.RATE_OF_TURN->5_000L
+        VesselMetricId.HEEL,VesselMetricId.PITCH,VesselMetricId.ROLL_RATE,VesselMetricId.PITCH_RATE,VesselMetricId.YAW_RATE->5_000L
+        VesselMetricId.SPEED_THROUGH_WATER,VesselMetricId.APPARENT_WIND_ANGLE,VesselMetricId.APPARENT_WIND_SPEED,VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.TRUE_WIND_DIRECTION->10_000L
+        VesselMetricId.DEPTH->10_000L
+        VesselMetricId.PRESSURE->60_000L
+        else->measurementLeaseMillis(metric)
+    }
+
+    private val HOLDABLE_METRICS=setOf(
+        VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC,
+        VesselMetricId.SPEED_THROUGH_WATER,VesselMetricId.DEPTH,VesselMetricId.PRESSURE,
+        VesselMetricId.APPARENT_WIND_ANGLE,VesselMetricId.APPARENT_WIND_SPEED,
+        VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_SPEED,VesselMetricId.TRUE_WIND_DIRECTION,
+        VesselMetricId.RATE_OF_TURN,VesselMetricId.HEEL,VesselMetricId.PITCH,
+        VesselMetricId.ROLL_RATE,VesselMetricId.PITCH_RATE,VesselMetricId.YAW_RATE,
+    )
 }
