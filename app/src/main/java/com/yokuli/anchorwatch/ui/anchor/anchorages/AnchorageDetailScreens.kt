@@ -42,6 +42,7 @@ internal fun AnchoragePlaceDetailDialog(
     toggleCollection:(Long)->Unit,
     cycleProtection:(AnchorageProtectionMedium,AnchorageCompassSector)->Unit,
     edit:()->Unit,
+    editPosition:(Long)->Unit,
     delete:()->Unit,
 ) {
     Dialog(onDismissRequest=dismiss,properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)) {
@@ -73,7 +74,7 @@ internal fun AnchoragePlaceDetailDialog(
                     }
                 }
                 item{SectionTitle(tr("Anchoring positions","锚泊位置"),tr("Coordinates and parameters you saved for this anchorage.","你为这个锚地保存的坐标和参数。"))}
-                items(bundle.spots.size,key={bundle.spots[it].id}){index->AnchoringPositionCard(bundle.spots[index],approach,openMap,shareSpot)}
+                items(bundle.spots.size,key={bundle.spots[it].id}){index->AnchoringPositionCard(bundle.spots[index],approach,openMap,shareSpot,editPosition)}
                 if(bundle.spots.isEmpty())item{EmptySection(tr("No anchoring position is saved yet.","还没有保存锚泊位置。"))}
                 item{SavedAnchorageNotes(bundle)}
                 item{PlanningAndCollections(bundle,allCollections,setPlanning,toggleCollection)}
@@ -96,10 +97,13 @@ private fun SafetyReferenceNotice(){
 }
 
 @Composable
-private fun AnchoringPositionCard(spot:AnchorageSpotEntity,approach:(Long)->Unit,openMap:(Double,Double)->Unit,share:(Long)->Unit){
+private fun AnchoringPositionCard(spot:AnchorageSpotEntity,approach:(Long)->Unit,openMap:(Double,Double)->Unit,share:(Long)->Unit,edit:(Long)->Unit){
     ElevatedCard(Modifier.fillMaxWidth().testTag("anchorage_position_${spot.id}")){
         Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
-            Text(if(spot.name.equals("Main spot",true))tr("Primary anchoring position","主要锚泊位置")else spot.name,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth()){
+                Text(if(spot.name.equals("Main spot",true))tr("Primary anchoring position","主要锚泊位置")else spot.name,Modifier.weight(1f),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                IconButton({edit(spot.id)},Modifier.testTag("edit_anchorage_position_${spot.id}")){Icon(Icons.Default.Edit,tr("Edit this position","编辑这个位置"))}
+            }
             Text("%.5f, %.5f".format(spot.latitude,spot.longitude),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             val facts=buildList{
                 spot.typicalWaterDepthMeters?.let{add(tr("Depth %.1f m".format(it),"水深 %.1f 米".format(it)))}
@@ -199,8 +203,8 @@ private fun PhotoSection(bundle:AnchoragePlaceBundle,add:()->Unit,delete:(Anchor
 }
 
 @Composable
-internal fun AnchorageEditorDialog(bundle:AnchoragePlaceBundle,dismiss:()->Unit,save:(String,String,String,Long?,String,String,String,Double?,Double?,Double?)->Unit){
-    val spot=bundle.spots.firstOrNull()
+internal fun AnchorageEditorDialog(bundle:AnchoragePlaceBundle,preferredSpotId:Long?,dismiss:()->Unit,save:(String,String,String,Long?,String,String,String,Double?,Double?,Double?)->Unit){
+    val spot=bundle.spots.firstOrNull{it.id==preferredSpotId}?:bundle.spots.firstOrNull()
     var name by remember(bundle.place.id){mutableStateOf(bundle.place.displayName)}
     var description by remember(bundle.place.id){mutableStateOf(bundle.place.description)}
     var notes by remember(bundle.place.id){mutableStateOf(bundle.place.personalNotes)}

@@ -49,6 +49,7 @@ fun AnchorageLibraryScreen(
     var showRegions by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showEditor by remember { mutableStateOf(false) }
+    var editingSpotId by remember { mutableStateOf<Long?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val snackbar=remember{SnackbarHostState()}
     val actionMessage=when(state.action){
@@ -135,10 +136,10 @@ fun AnchorageLibraryScreen(
             {spotId->vm.selectPlace(null);approachSpot(spotId)},
             openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,
             vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection,
-            {showEditor=true},{confirmDelete=true},
+            {editingSpotId=null;showEditor=true},{spotId->editingSpotId=spotId;showEditor=true},{confirmDelete=true},
         )
     }
-    if(showEditor)state.selectedPlace?.let{bundle->AnchorageEditorDialog(bundle,{showEditor=false}){name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius->vm.updateSelected(name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius);showEditor=false}}
+    if(showEditor)state.selectedPlace?.let{bundle->AnchorageEditorDialog(bundle,editingSpotId,{showEditor=false;editingSpotId=null}){name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius->vm.updateSelected(name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius);showEditor=false;editingSpotId=null}}
     if(confirmDelete)AlertDialog(
         onDismissRequest={confirmDelete=false},
         title={Text(tr("Delete saved anchorage?","删除收藏锚地？"))},
