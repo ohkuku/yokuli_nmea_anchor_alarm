@@ -340,3 +340,29 @@
 - Verification result: **All normal stream periods are now 1,000 ms. The publisher prepares every due stream, retains only its newest blocked value, and wakes the writer once after the complete tick is ready. The writer drains those values into one contiguous payload and invokes one Socket write/flush; stale publication/input generations are dropped and never replayed. A slow write cannot trigger a catch-up burst: after crossing 500 ms it receives a full one-second recovery window and the pending slots continue replacing in place. At 500 ms the live UI reports congestion; at three seconds the exact same-input transport generation is aborted once and only the existing bounded RX reconnect policy may recover it. Unchanged complete Heading remains a mandatory 1 Hz heartbeat. Tests and manuals were updated but deliberately NOT RUN.**
 - Real hardware verified: **No — post-fix KC-2W/Raymarine run pending.**
 - Status: **FIXED IN CODE — TESTS NOT RUN; BUILD AND CONTROLLED HARDWARE QA PENDING**
+
+## Finding P0-026 — Boat-network injection and phone-hosted NMEA server shared one lifecycle
+
+- Severity: **P0 / wrong product boundary and cross-feature socket ownership**
+- User story: writing missing Phone/App data into the Boat network and hosting a TCP service for another device are different products. Either must be configurable, started, stopped and diagnosed without mutating the other.
+- Evidence: `NmeaOutputTransportMode.TCP_SERVER` lived inside `NmeaDeviceOutputSettings`; `AnchorWatchNmeaPublisher`, `NmeaDeviceOutputConnection`, calibration gating, one `publicationEnabled` lease and one Output UI owned same-socket Boat TX, dedicated Boat TX, UDP and the phone listener. Stopping the common connection called `tcpServer.stop()`.
+- Reproduction steps: configure TCP Server in Data → Output; Start it, then change/stop the common output product or exercise a Boat-output lifecycle refresh. Observe that the phone listener is treated as a Boat destination and shares its Stop/generation/status.
+- Root cause: a common Phone/App sentence feed was mistaken for common destination ownership. Data-plane reuse leaked into control-plane settings and lifecycle.
+- Failing test: updated `NmeaDeviceOutputPolicyTest.tcpServerIsNotABoatNetworkOutputTransport`; `AnchorSafetyFlowTest.legacySharingRequestMigratesToIndependentStoppedPhoneServiceWithoutOpeningASocket`; new direction-selection UI story and product-boundary unit coverage.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **Code written; tests deliberately NOT RUN. Boat supplement no longer injects/owns `NmeaSharingServer`. Phone NMEA service has a separate DataStore-backed configuration, process-local lease, runtime, encoder state, resource owner, diagnostics and UI destination. Both may run together. Legacy TCP-server routes migrate stopped and are rejected below UI.**
+- Real hardware verified: **No.**
+- Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL TWO-DEVICE QA REQUIRED**
+
+## Finding P0-027 — Rapid phone NMEA server Start requests could stop a fresh listener
+
+- Severity: **P0 / Start requires repeated taps; apparent 1 ms session**
+- User story: one Start tap must create a stable listener. Repeated taps or duplicate UI/runtime refreshes must be harmless, and zero clients must not self-stop the service.
+- Evidence: `NmeaSharingServer.start()` checked the active job under `synchronized`, released it, called `stop()`, then reacquired it to launch. Two concurrent Start calls could both pass the first check; the second then stopped the first call's newly created listener.
+- Reproduction steps: issue many concurrent `start(samePort)` calls while the server is stopped, then connect a client. Before serialization the lifecycle could visibly enter STARTING/STOPPED and require another tap.
+- Root cause: check → stop/join → launch was not one serialized lifecycle transaction; configuration persistence and the live lease were also exposed as one operation in the common Output repository.
+- Failing test: `NmeaSharingServerTest.rapidDuplicateStartIsIdempotentAndCannotCreateAOneMillisecondSession`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **Code written; test deliberately NOT RUN. A fair lifecycle lock now serializes complete Start/Stop transactions. Same-port Start is idempotent inside that lock. Local service configuration saving cannot mutate its live lease.**
+- Real hardware verified: **No.**
+- Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL START/SOAK QA REQUIRED**

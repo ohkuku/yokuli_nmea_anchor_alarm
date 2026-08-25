@@ -153,8 +153,7 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
     }
     val settings=combine(persistedSettings,outputRunning){persisted,running->persisted.copy(publicationEnabled=running)}
     suspend fun activateAutoStart(){outputRunning.value=NmeaOutputLeasePolicy.shouldAutoStart(persistedSettings.first())}
-    suspend fun save(value:NmeaDeviceOutputSettings){
-        val canonical=value.copy(
+    private fun canonical(value:NmeaDeviceOutputSettings)=value.copy(
             purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
             phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=value.includePressure,
             proprietaryStatusEnabled=false,
@@ -165,7 +164,21 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
             derivedWindPolicy=if(value.includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
             autoStartOutput=false,
         )
+
+    /** Configuration persistence never mutates the live boat-network lease. */
+    suspend fun saveConfiguration(value:NmeaDeviceOutputSettings)=persist(canonical(value))
+    fun requestStart(){outputRunning.value=true}
+    fun requestStop(){outputRunning.value=false}
+
+    /** Compatibility entry point for restore/tests. Product UI uses the
+     * explicit configuration and lease methods above. */
+    suspend fun save(value:NmeaDeviceOutputSettings){
+        val canonical=canonical(value)
         outputRunning.value=canonical.publicationEnabled
+        persist(canonical)
+    }
+
+    private suspend fun persist(canonical:NmeaDeviceOutputSettings){
         context.outputSettingsStore.edit{preferences->
             preferences[K.purpose]=canonical.purpose.name;preferences[K.autoStart]=false;preferences.remove(K.publicationEnabled)
             preferences[K.phonePosition]=canonical.phonePositionEnabled;preferences[K.phoneHeading]=canonical.phoneHeadingEnabled;preferences[K.phoneMotion]=canonical.phoneMotionEnabled;preferences[K.phonePressure]=canonical.phonePressureEnabled

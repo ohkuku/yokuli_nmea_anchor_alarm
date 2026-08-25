@@ -103,7 +103,7 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     LaunchedEffect(pager){snapshotFlow{pager.currentPage}.collect(vm::rememberDataSection)}
     Column(Modifier.fillMaxSize().testTag("data_page")){
         PrimaryTabRow(selectedTabIndex=pager.currentPage){
-            listOf(tr("Vessel","船舶"),tr("Input","输入"),tr("Output","输出"),tr("Sonar","声呐")).forEachIndexed{index,label->
+            listOf(tr("Vessel","船舶"),tr("Input","输入"),tr("Share","共享"),tr("Sonar","声呐")).forEachIndexed{index,label->
                 Tab(selected=pager.currentPage==index,onClick={scope.launch{pager.animateScrollToPage(index)}},modifier=Modifier.testTag("data_tab_${listOf("vessel","input","output","sonar")[index]}"),text={Text(label,maxLines=1)})
             }
         }
@@ -126,7 +126,7 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     val data=state.vesselData
     var detailMetric by remember{mutableStateOf<VesselMetricId?>(null)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{PageHeader(tr("App-internal vessel data","App 内部船舶数据"),tr("Choose one source for App instruments and calculations. Available or historical here does not mean it is currently transmitted. When NMEA Output is explicitly running, it re-encodes these selected complete values as one stable Anchor Watch source.","为 App 仪表和计算选择每项数值的来源。此处显示“可用”或“历史”不代表当前正在发送；只有明确启动 NMEA 输出后，应用才会把这些已选中的完整数值重新编码为唯一且稳定的 Anchor Watch 来源。"))}
+        item{PageHeader(tr("App-internal vessel data","App 内部船舶数据"),tr("Choose sources for App instruments and calculations. This page never decides what is shared: both NMEA sharing products accept only provenance-proven Phone/App-owned data and never repeat selected Boat input.","为 App 仪表和计算选择数据来源。本页不决定对外共享内容：两种 NMEA 共享功能都只接受来源可证明的手机 / App 自有数据，绝不会重复这里选中的船载输入。"))}
         item{Card{Column{
             SourceRoutingSummaryRow(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){detailMetric=VesselMetricId.POSITION}
             HorizontalDivider(Modifier.padding(horizontal=14.dp))
@@ -373,7 +373,7 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
         RuntimeOwner.TRIP_WATCH->localized(state.settings.appLanguage,"Trip Watch using NMEA (will pause, not end)","正在使用 NMEA 的航程监控（将暂停，不会结束）")
         RuntimeOwner.GPS_PROXY->localized(state.settings.appLanguage,"Global GPS proxy","全局 GPS 代理")
         RuntimeOwner.PHONE_NMEA_OUTPUT->localized(state.settings.appLanguage,"Phone-to-boat NMEA output","手机到船网的 NMEA 输出")
-        RuntimeOwner.NMEA_SHARING->localized(state.settings.appLanguage,"NMEA Sharing using the upstream stream","使用上游数据的 NMEA 共享")
+        RuntimeOwner.NMEA_SHARING->null // phone-hosted service never owns the boat RX transport
         else->null
     }}
     val nowElapsed=android.os.SystemClock.elapsedRealtime()
@@ -386,7 +386,7 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
         vm.clearConnectionAttempt()
     }
     LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("nmea_runtime_list"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { PageHeader(tr("NMEA input","NMEA 输入"), tr("Server → App receive (RX). This connection and App → Server output (TX) have separate controls.","服务器 → App 的接收连接（RX）。它与 App → 服务器的输出（TX）分别管理。")) }
+        item { PageHeader(tr("Boat NMEA input","船载 NMEA 输入"), tr("Boat server → App receive (RX). Boat-network supplement and the Phone NMEA service each have separate controls on Share.","船载服务器 → App 的接收连接（RX）。船网补缺发送与本机 NMEA 服务都在“共享”页分别管理。")) }
         if(state.outputSettings.publicationEnabled)item{Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(if(state.outputSettings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)tr("Same-socket output is using this RX connection. Stop output on the Output tab before stopping input.","同 Socket 输出正在使用这条输入连接。停止输入前，请先到“输出”页停止输出。")else tr("NMEA output is running on an independent transport. Stopping input here does not stop output; use Stop all output on the Output tab when needed.","NMEA 输出正在使用独立传输。停止输入不会关闭输出；需要时请到“输出”页点击“停止全部 NMEA 输出”。"),Modifier.fillMaxWidth().padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSecondaryContainer)}}
         if(activeWatchNmeaFault)item { Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Anchor watch needs a usable NMEA position","锚警需要可用的 NMEA 船位"),style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer);Text(tr("The transport may be disconnected, stale, without a current fix, or reporting unacceptable quality. The session remains locked to NMEA with no silent failover. Reconnect, or pause safely before changing the source.","连接可能已断开、过期、没有当前定位，或正在报告不合格的定位质量。本次会话仍锁定 NMEA，不会静默切源。请重连，或先安全暂停再更换数据源。"),color=MaterialTheme.colorScheme.onErrorContainer);OutlinedButton({showWatchDisconnect=true}){Text(tr("Pause safely","安全暂停"))}}} }
         item{ConnectionResultCard(state)}
@@ -402,14 +402,14 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
             OutlinedTextField(profile.noDataTimeoutSeconds.toString(),{v->edit(profile.copy(noDataTimeoutSeconds=v.filter(Char::isDigit).toIntOrNull()?:0))},label={Text(tr("No-data timeout","无数据超时"))},suffix={Text(tr("s","秒"))},supportingText={Text(tr("3–120 seconds; reports a quiet stream without closing the TCP connection.","3–120 秒；用于报告数据流静默，但不会因此关闭 TCP 连接。"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled,isError=profile.noDataTimeoutSeconds !in 3..120,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
             SettingSwitch(tr("Require checksum","要求校验和"), tr("Reject sentences without a checksum","拒绝没有校验和的语句"), profile.requireChecksum,enabled=controlsEnabled) { edit(profile.copy(requireChecksum = it)) }; SettingSwitch(tr("Auto reconnect","自动重连"), tr("Reconnect after network loss","网络中断后自动重新连接"), profile.autoReconnect,enabled=controlsEnabled) { edit(profile.copy(autoReconnect = it)) }
             HorizontalDivider()
-            AssistChip({},label={Text(tr("App → Server sending is configured in NMEA Output","App → 服务器的发送功能请在 NMEA 输出页配置"))},leadingIcon={Icon(Icons.Default.NorthEast,null)},enabled=false)
+            AssistChip({},label={Text(tr("Sharing directions are configured separately on Share","不同方向的数据共享请在“共享”页分别配置"))},leadingIcon={Icon(Icons.Default.NorthEast,null)},enabled=false)
             if(!connectionRunning)Button({validationRequested=true;if(validationError==null)vm.saveAndConnect(draftProfile)},Modifier.fillMaxWidth().testTag("nmea_connect_input"),enabled=state.settingsReady&&!testing){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Connecting input…","正在连接输入…") else tr("Save & connect input","保存并连接输入"))}
             if(!state.settingsReady)Text(tr("Loading saved connection settings…","正在加载已保存的连接设置…"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
             if(state.connectionAttempt.state==ConnectionAttemptState.WARNING)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.tertiary,style=MaterialTheme.typography.bodySmall)
             if(testing)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(testing&&!connectionRunning)Text(tr("One formal RX socket is opening. A quiet stream will remain connected as ‘No data’; the App never opens a disposable preflight socket.","正在打开唯一的正式 RX Socket。安静的数据流会保持“已连接，无数据”；应用绝不会先开一次性测试连接。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(state.settings.nmeaSharingEnabled)Text(tr("A legacy Sharing request is being migrated to the stopped canonical NMEA output page. It will not open a listener or publish until you explicitly review and start it there.","旧版“共享”请求正在迁移到已停止的统一 NMEA 输出页；在你前往该页检查并明确启动前，不会打开监听端口或发布数据。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(state.settings.nmeaSharingEnabled)Text(tr("A legacy Sharing request is being migrated to the stopped Phone NMEA service. Review and explicitly start it on Share.","旧版“共享”请求正在迁移到已停止的“本机 NMEA 服务”；请前往“共享”页检查并明确启动。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
     }
     if(showWatchDisconnect)ActiveWatchDisconnectDialog(pauseWatch={showWatchDisconnect=false;vm.stopActiveWatchAndDisconnect()},dismiss={showWatchDisconnect=false})

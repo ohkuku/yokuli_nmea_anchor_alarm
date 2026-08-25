@@ -48,7 +48,9 @@ import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
+import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerSettingsRepository
 import com.yokuli.anchorwatch.runtime.output.PhonePositionNmeaOutputRuntime
+import com.yokuli.anchorwatch.runtime.sharing.LocalNmeaServerRuntime
 import com.yokuli.anchorwatch.runtime.trip.TripRuntime
 import com.yokuli.anchorwatch.runtime.sonar.SonarRuntime
 import com.yokuli.anchorwatch.runtime.proxy.GpsProxyRuntime
@@ -89,6 +91,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private val batteryHealth:BatteryHealthMonitor,
  private val outputSettings:OutputSettingsRepository,
  private val phonePositionOutput:PhonePositionNmeaOutputRuntime,
+ private val localNmeaServerSettings:LocalNmeaServerSettingsRepository,
+ private val localNmeaServer:LocalNmeaServerRuntime,
  private val vesselMountCalibration:VesselMountCalibrationRepository,
  private val vesselAttitude:PhoneVesselAttitudeRepository,
  private val tripRuntime:TripRuntime,
@@ -198,22 +202,37 @@ class YokuliRuntimeCoordinator @Inject constructor(
    reconcileAudio()
   }}
   scope.launch{preferences.settings.map{it.appLanguage}.distinctUntilChanged().collect{appLanguage=it;channels();refreshNotification()}}
-  // Retire the pre-unification Sharing publisher. Preserve its listening port
-  // as a stopped canonical TCP-server route when no newer route exists, but
-  // never restore the legacy publisher or its running state.
+  // Migrate every historical TCP-server/Sharing value into the independent,
+  // stopped phone-hosted service. It must never remain a Boat TX destination.
   scope.launch{startupReady.await();preferences.settings.map{Triple(it.nmeaSharingEnabled,it.nmeaSharingPort,it.gpsDataSource)}.distinctUntilChanged().collect{(enabled,port,source)->
    if(enabled){
     val legacy=preferences.settings.first();val output=outputSettings.settings.first()
-    if(!output.transportConfigured)outputSettings.save(output.copy(transportMode=NmeaOutputTransportMode.TCP_SERVER,outputHost="",outputPort=port.coerceIn(1024,65535),transportConfigured=true,publicationEnabled=false))
+    localNmeaServerSettings.saveConfiguration(localNmeaServerSettings.settings.first().copy(port=port.coerceIn(1024,65535),configured=true,serverRequested=false))
     preferences.save(legacy.copy(nmeaSharingEnabled=false))
-    incidentLogger.record("nmea_output","LEGACY_SHARING_MIGRATED_STOPPED",details=mapOf("port" to port,"source" to source.name))
+    incidentLogger.record("local_nmea_server","LEGACY_SHARING_MIGRATED_STOPPED",details=mapOf("port" to port,"source" to source.name))
    }
+  }}
+  scope.launch{startupReady.await();val output=outputSettings.settings.first();if(output.transportMode==NmeaOutputTransportMode.TCP_SERVER){
+   localNmeaServerSettings.saveConfiguration(localNmeaServerSettings.settings.first().copy(port=output.outputPort.coerceIn(1024,65535),configured=true,serverRequested=false))
+   outputSettings.requestStop();outputSettings.saveConfiguration(output.copy(transportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,outputHost="",outputPort=10110,transportConfigured=false,publicationEnabled=false))
+   incidentLogger.record("nmea_output","TCP_SERVER_ROUTE_MIGRATED_TO_LOCAL_SERVICE",details=mapOf("port" to output.outputPort))
   }}
   scope.launch{
    startupReady.await();outputSettings.activateAutoStart()
    combine(outputSettings.settings,vesselMountCalibration.calibration,vesselAttitude.mountState){output,calibration,mount->
     PhoneOutputConfiguration(output,PhoneVesselOutputReadinessPolicy.evaluate(calibration,mount))
    }.distinctUntilChanged().collect{request->configurePhoneOutput(request.output,request.readiness)}
+  }
+  scope.launch{
+   startupReady.await()
+   combine(localNmeaServerSettings.settings,vesselMountCalibration.calibration,vesselAttitude.mountState){settings,calibration,mount->Triple(settings,calibration,mount)}
+    .distinctUntilChanged().collect{(settings,calibration,mount)->
+     val readiness=PhoneVesselOutputReadinessPolicy.evaluate(calibration,mount)
+     if(settings.serverRequested&&!localNmeaServer.enabled&&!readiness.ready){
+      localNmeaServerSettings.requestStop();localNmeaServer.configure(settings.copy(serverRequested=false))
+      notifySeparate("Phone NMEA service blocked","Complete vessel zero, confirm the mount, and align heading before publishing phone vessel data.",true)
+     }else localNmeaServer.configure(settings)
+    }
   }
   scope.launch{
    startupReady.await()
@@ -317,6 +336,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
     refreshNotification();releaseIfIdle()
    }
    RuntimeCommand.RefreshPhoneSensorOutput->launchCommand{configurePhoneOutput(outputSettings.settings.first())}
+   RuntimeCommand.RefreshLocalNmeaServer->launchCommand{localNmeaServer.configure(localNmeaServerSettings.settings.first());refreshNotification()}
    is RuntimeCommand.StartTrip->launchCommand{
     if(preferences.settings.first().demoMode)notifySeparate("Trip Watch not started","Developer Demo mode simulates Anchor Watch only. Disable Demo mode before recording a real Trip.",true)
     else if(anchorRuntime.activeSession()!=null)notifySeparate("Trip Watch not started","Lift the current anchor before starting Trip Watch.",true)
@@ -452,7 +472,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   }
   if(RuntimeOwner.PHONE_NMEA_OUTPUT in nmeaOwners&&outputSettings.settings.first().anyEnabled){
    val outputStopped=outputSettings.settings.first().copy(publicationEnabled=false)
-   outputSettings.save(outputStopped)
+   outputSettings.requestStop()
    phonePositionOutput.configure(outputStopped)
    stopped+="phone-to-boat output"
   }
@@ -530,7 +550,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
    active!=null->l("Watch ${snapshot?.distanceMeters?.toInt()?:"--"} m • NMEA ${navigation.connectionState.value.name}","锚警 ${snapshot?.distanceMeters?.toInt()?:"--"} 米 · NMEA ${navigation.connectionState.value.name}")
    sonarContinuity==SonarSurveyContinuityState.REAL_INTERRUPTED->l("Sonar survey waiting • NMEA recovery required","声呐调查等待中 · 需要恢复 NMEA")
    proxy.state==MockGpsState.ACTIVE->l("NMEA → Android GPS active • ${proxy.publishedFixes} fixes","NMEA → Android GPS 已开启 · ${proxy.publishedFixes} 个定位点")
-   phonePositionOutput.enabled->l("Canonical NMEA output active","统一 NMEA 输出运行中")
+   phonePositionOutput.enabled->l("Boat-network supplement active","船网补缺发送运行中")
+   localNmeaServer.enabled->l("Phone NMEA service active","本机 NMEA 服务运行中")
    sonarRuntime.status.value.activeSurvey!=null->l("Sonar survey recording • ${sonarRuntime.status.value.activeSurvey?.sampleCount?:0} samples","声呐调查记录中 · ${sonarRuntime.status.value.activeSurvey?.sampleCount?:0} 个样本")
    tripRuntime.activeSession()?.paused==false->l("Trip Watch recording • ${tripRuntime.activeSession()?.sampleCount?:0} samples","航程监控记录中 · ${tripRuntime.activeSession()?.sampleCount?:0} 个样本")
    tripRuntime.activeSession()?.paused==true->l("Trip Watch paused","航程监控已暂停")
@@ -575,9 +596,13 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private suspend fun configurePhoneOutput(requested:NmeaDeviceOutputSettings,knownReadiness:PhoneVesselOutputReadiness?=null){
   val appSettings=preferences.settings.first()
   if(!requested.anyEnabled){phonePositionOutput.configure(requested,appSettings.profile);nmeaRuntime.releaseIfUnowned();return}
+  if(requested.transportMode==NmeaOutputTransportMode.TCP_SERVER){
+   outputSettings.requestStop();phonePositionOutput.configure(requested.copy(publicationEnabled=false),appSettings.profile)
+   notifySeparate("Boat-network supplement blocked","Use Phone NMEA service for a listening TCP server. This feature only writes into the boat network.",true);return
+  }
   val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(vesselMountCalibration.calibration.first(),vesselAttitude.mountState.first())
   if(!readiness.ready&&!phonePositionOutput.enabled){
-   val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.save(stopped)
+   val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.requestStop()
    notifySeparate("NMEA output blocked","Complete vessel zero, confirm the current phone mount, and align heading for this calibration before formal sharing.",true);return
   }
   if(!readiness.ready&&phonePositionOutput.enabled){
@@ -589,19 +614,19 @@ class YokuliRuntimeCoordinator @Inject constructor(
    refreshNotification();return
   }
   if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requested,appSettings.profile)){
-   val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.save(stopped)
+   val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.requestStop()
    notifySeparate("NMEA output endpoint blocked",NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE,true);return
   }
   val effective=requested
   if(effective.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
-   val destinationValid=if(effective.transportMode==NmeaOutputTransportMode.TCP_SERVER)effective.outputPort in 1024..65535 else effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
-   if(!destinationValid){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("NMEA output needs an endpoint",if(effective.transportMode==NmeaOutputTransportMode.TCP_SERVER)"Enter a TCP server listening port from 1024 to 65535." else "Enter a valid dedicated output host and port.",true);return}
+   val destinationValid=effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
+   if(!destinationValid){phonePositionOutput.configure(effective,appSettings.profile);notifySeparate("Boat-network supplement needs an endpoint","Enter a valid dedicated output host and port.",true);return}
    // Dedicated TX is write-only. It must never claim RX ownership or inherit
    // the receiver's no-data timeout/state machine.
    phonePositionOutput.configure(effective,appSettings.profile)
   }else{
    val liveInput=navigation.hasOpenTransport()&&navigation.connectionState.value in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
-   if(appSettings.profile.protocol!=Protocol.TCP||!liveInput){val stopped=effective.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.save(stopped);notifySeparate("Phone sensor output blocked","Same-as-input output can only reuse an already-open TCP RX socket. Output will never open that input connection by itself.",true);return}
+   if(appSettings.profile.protocol!=Protocol.TCP||!liveInput){val stopped=effective.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile);outputSettings.requestStop();notifySeparate("Phone sensor output blocked","Same-as-input output can only reuse an already-open TCP RX socket. Output will never open that input connection by itself.",true);return}
    phonePositionOutput.configure(effective,appSettings.profile)
   }
   refreshNotification()
@@ -626,13 +651,13 @@ class YokuliRuntimeCoordinator @Inject constructor(
    }
   }
  }
- private fun isIdle()=pendingCommands.get()==0&&!alarmTestActive&&anchorRuntime.activeSession()?.paused!=false&&tripRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!phonePositionOutput.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending
+ private fun isIdle()=pendingCommands.get()==0&&!alarmTestActive&&anchorRuntime.activeSession()?.paused!=false&&tripRuntime.activeSession()?.paused!=false&&proxyRuntime.status.value.state!=MockGpsState.ACTIVE&&!phonePositionOutput.enabled&&!localNmeaServer.enabled&&sonarRuntime.status.value.activeSurvey==null&&!armPending
  private fun cleanup(){alarmTestGeneration.incrementAndGet();alarmTestActive=false;audioArbiter.clearAll();alarmAudio.stop();resources.releaseAll()}
  @Synchronized fun shutdown(){
   if(!started)return
   started=false
   idleStopJob?.cancel();idleStopJob=null
-  incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();phonePositionOutput.shutdown();tripRuntime.shutdown();anchorTelemetry.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup();diagnostics.serviceStopped()
+  incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();phonePositionOutput.shutdown();localNmeaServer.shutdown();tripRuntime.shutdown();anchorTelemetry.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup();diagnostics.serviceStopped()
  }
  private fun channels()=notificationCoordinator.createChannels(l("Anchor and GPS status","锚警与 GPS 状态"),l("Anchor safety events","锚泊安全事件"),l("Anchor alarms with snooze","带稍后提醒的锚警"))
  private fun l(english:String,chinese:String)=localized(appLanguage,english,chinese)

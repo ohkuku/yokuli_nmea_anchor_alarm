@@ -5,8 +5,6 @@ import com.yokuli.anchorwatch.data.NavigationRepository
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.Protocol
 import com.yokuli.anchorwatch.data.nmea.NmeaWireBatch
-import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
-import com.yokuli.anchorwatch.data.sharing.SharingServerState
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
@@ -65,8 +63,8 @@ data class NmeaPacketPathDiagnostic(
 )
 
 object NmeaOutputEndpointPolicy{
-    fun resolved(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.host to input.port;NmeaOutputTransportMode.TCP_SERVER->"0.0.0.0" to settings.outputPort;else->settings.outputHost.trim() to settings.outputPort}
-    fun isValid(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=!opensSecondTransportOnInputEndpoint(settings,input)&&when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.protocol==Protocol.TCP&&input.host.isNotBlank()&&input.port in 1..65535;NmeaOutputTransportMode.TCP_SERVER->settings.outputPort in 1024..65535;NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->settings.outputHost.isNotBlank()&&settings.outputPort in 1..65535}
+    fun resolved(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.host to input.port;NmeaOutputTransportMode.TCP_SERVER->"local-service" to settings.outputPort;else->settings.outputHost.trim() to settings.outputPort}
+    fun isValid(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=!opensSecondTransportOnInputEndpoint(settings,input)&&when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.protocol==Protocol.TCP&&input.host.isNotBlank()&&input.port in 1..65535;NmeaOutputTransportMode.TCP_SERVER->false;NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->settings.outputHost.isNotBlank()&&settings.outputPort in 1..65535}
     fun needsInputTransport(settings:NmeaDeviceOutputSettings)=settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
     fun duplicateEndpointRisk(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):Boolean{val resolved=resolved(settings,input);return when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->true;NmeaOutputTransportMode.TCP_SERVER->false;else->resolved.first.equals(input.host,true)&&resolved.second==input.port}}
     /** Independent TX may never open another client on the formal RX endpoint.
@@ -242,7 +240,6 @@ class NmeaDeviceOutputConnection @Inject constructor(
     private val loopGuard:NmeaOutboundLoopGuard,
     private val dedicatedClient:DedicatedNmeaTcpClient,
     private val udpClient:NmeaUdpClient,
-    private val tcpServer:NmeaSharingServer,
 ){
     private val guard=Any()
     /** Writers hold a read lease for the complete socket operation. Stop first
@@ -262,7 +259,6 @@ class NmeaDeviceOutputConnection @Inject constructor(
     private var nextDedicatedAttemptElapsed=0L
     private var endpointBlocked=false
     private var dedicatedCircuitOpen=false
-    private var observedServerWrites=0L
     private var activeWriteInputGeneration:Long?=null
     private var abortRequestedInputGeneration:Long?=null
 
@@ -302,12 +298,6 @@ class NmeaDeviceOutputConnection @Inject constructor(
                     _status.value=_status.value.copy(backpressureAbortCount=_status.value.backpressureAbortCount+1)
                 }
             }
-            if(configured.anyOutputEnabled&&configured.transportMode==NmeaOutputTransportMode.TCP_SERVER){
-                val server=tcpServer.status.value
-                captureServerWritesLocked(server)
-                val state=when(server.state){SharingServerState.RUNNING->NmeaTxConnectionState.CONNECTED;SharingServerState.STARTING->NmeaTxConnectionState.CONNECTING;SharingServerState.ERROR->NmeaTxConnectionState.ERROR;SharingServerState.STOPPED->NmeaTxConnectionState.DISCONNECTED}
-                _status.value=_status.value.copy(connectionState=state,lastError=server.message.takeIf{server.state==SharingServerState.ERROR},message=server.message.ifBlank{if(state==NmeaTxConnectionState.CONNECTED)"TCP output server is listening." else "TCP output server is not listening."})
-            }
         }
         abortGeneration?.let{generation->navigation.abortBoatWriteStall(generation,"Shared NMEA output write exceeded ${NmeaWriteBackpressurePolicy.STALLED_AFTER_MILLIS} ms.")}
     }
@@ -315,7 +305,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
     fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile,generation:Long=publicationGeneration+1,newSessionId:String?=null){
         lastInputProfile=input
         if(!value.anyOutputEnabled){
-            synchronized(guard){captureServerWritesLocked(tcpServer.status.value);_status.value=_status.value.copy(connectionState=NmeaTxConnectionState.STOPPING,message="Stopping NMEA output…")}
+            synchronized(guard){_status.value=_status.value.copy(connectionState=NmeaTxConnectionState.STOPPING,message="Stopping boat-network supplement…")}
             // Close the registered connect candidate/active transports before
             // waiting for the writer lease. This is what makes Stop immediate
             // even when a fragile gateway never completes connect().
@@ -345,6 +335,11 @@ class NmeaDeviceOutputConnection @Inject constructor(
                     return@synchronized
                 }
                 configured=value;sessionId=newSessionId
+                if(value.transportMode==NmeaOutputTransportMode.TCP_SERVER){
+                    endpointBlocked=true;closeLocked()
+                    _status.value=_status.value.copy(enabled=false,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=NmeaTxConnectionState.ERROR,lastError="A listening TCP server is configured in Phone NMEA service, not Boat-network supplement.",message="Legacy TCP-server route blocked.",publicationGeneration=generation,sessionId=null)
+                    return@synchronized
+                }
                 if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,input)){
                     endpointBlocked=true;closeLocked()
                     _status.value=_status.value.copy(enabled=false,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=NmeaTxConnectionState.ERROR,lastError=NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE,message="TX blocked before opening a socket.",publicationGeneration=generation,sessionId=null)
@@ -353,16 +348,13 @@ class NmeaDeviceOutputConnection @Inject constructor(
                 endpointBlocked=false
                 if(endpointChanged)closeLocked()
                 if(previousSession!=newSessionId){generated.clear();recent.clear()}
-                if(value.transportMode==NmeaOutputTransportMode.TCP_SERVER){tcpServer.start(value.outputPort);observedServerWrites=tcpServer.status.value.sentSentences}
                 val state=when{
                     value.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaTxConnectionState.DISCONNECTED
-                    value.transportMode==NmeaOutputTransportMode.TCP_SERVER&&tcpServer.status.value.state==SharingServerState.RUNNING->NmeaTxConnectionState.CONNECTED
-                    value.transportMode==NmeaOutputTransportMode.TCP_SERVER->NmeaTxConnectionState.CONNECTING
                     dedicatedClient.isConnected(endpoint.first,endpoint.second)->NmeaTxConnectionState.CONNECTED
                     else->NmeaTxConnectionState.DISCONNECTED
                 }
                 activeWriteInputGeneration=null;abortRequestedInputGeneration=null
-                _status.value=_status.value.copy(enabled=true,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=state,message=when(value.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Waiting for the input TCP connection.";NmeaOutputTransportMode.DEDICATED_TCP->"Dedicated NMEA TX ready.";NmeaOutputTransportMode.TCP_SERVER->"TCP output server is starting.";NmeaOutputTransportMode.UDP_UNICAST->"UDP unicast destination ready.";NmeaOutputTransportMode.UDP_BROADCAST->"UDP broadcast destination ready."},lastError=null,activeWriteStartedElapsed=null,backpressureState=NmeaWriteBackpressureState.NORMAL,recentGenerated=generated.toList(),recentTx=recent.toList(),streams=if(previousSession==newSessionId)_status.value.streams else emptyMap(),publicationGeneration=generation,sessionId=newSessionId,stoppedAtElapsed=null)
+                _status.value=_status.value.copy(enabled=true,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=state,message=when(value.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Waiting for the input TCP connection.";NmeaOutputTransportMode.DEDICATED_TCP->"Dedicated boat-network TX ready.";NmeaOutputTransportMode.TCP_SERVER->"Legacy TCP-server route blocked.";NmeaOutputTransportMode.UDP_UNICAST->"UDP unicast destination ready.";NmeaOutputTransportMode.UDP_BROADCAST->"UDP broadcast destination ready."},lastError=null,activeWriteStartedElapsed=null,backpressureState=NmeaWriteBackpressureState.NORMAL,recentGenerated=generated.toList(),recentTx=recent.toList(),streams=if(previousSession==newSessionId)_status.value.streams else emptyMap(),publicationGeneration=generation,sessionId=newSessionId,stoppedAtElapsed=null)
             }
         }
     }
@@ -409,7 +401,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
         val result=when(settings.transportMode){
             NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->navigation.writeToBoatExpected(sentences,expectedInputTransportGeneration).let{write->TransportWriteResult(write.success,error=write.error,writtenSentenceCount=write.writtenSentenceCount,inputTransportGeneration=write.actualGeneration,failureReason=write.failure.name)}
             NmeaOutputTransportMode.DEDICATED_TCP->writeDedicated(settings,input,sentences)
-            NmeaOutputTransportMode.TCP_SERVER->writeTcpServer(sentences)
+            NmeaOutputTransportMode.TCP_SERVER->TransportWriteResult(false,error="TCP server is owned by the independent Phone NMEA service.")
             NmeaOutputTransportMode.UDP_UNICAST->writeUdp(settings,input,sentences,false)
             NmeaOutputTransportMode.UDP_BROADCAST->writeUdp(settings,input,sentences,true)
         }
@@ -448,7 +440,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
                 lastError=result.error,
                 message=when(settings.transportMode){
                     NmeaOutputTransportMode.DEDICATED_TCP->if(dedicatedCircuitOpen)"Dedicated NMEA TX stopped after three failures." else "Dedicated NMEA TX write failed; reconnect in ${delay/1_000}s."
-                    NmeaOutputTransportMode.TCP_SERVER->"TCP output server is not listening yet."
+                    NmeaOutputTransportMode.TCP_SERVER->"Legacy TCP-server output route is disabled."
                     NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->"UDP NMEA TX failed."
                     NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Waiting for the input TCP connection."
                 },
@@ -475,33 +467,8 @@ class NmeaDeviceOutputConnection @Inject constructor(
         val result=dedicatedClient.write(settings,input,sentences)
         return TransportWriteResult(result.success,result.openedNewConnection,result.error,if(result.success)sentences.size else 0)
     }
-    private fun writeTcpServer(sentences:List<String>):TransportWriteResult{
-        // Binding happens on the server's IO scope. Give an explicit endpoint
-        // test (and only the first publication tick) a short chance to observe
-        // the listener without creating a second socket or client.
-        val deadline=SystemClock.elapsedRealtime()+1_000L
-        while(tcpServer.status.value.state==SharingServerState.STARTING&&SystemClock.elapsedRealtime()<deadline)Thread.sleep(20L)
-        if(tcpServer.status.value.state!=SharingServerState.RUNNING)return TransportWriteResult(false,error=tcpServer.status.value.message.ifBlank{"TCP output server could not bind."})
-        var receivers=0;sentences.forEach{receivers=maxOf(receivers,tcpServer.publish(it))}
-        return TransportWriteResult(true,writtenSentenceCount=0,acceptedReceivers=receivers)
-    }
     private fun writeUdp(settings:NmeaDeviceOutputSettings,input:ConnectionProfile,sentences:List<String>,broadcast:Boolean):TransportWriteResult{val endpoint=NmeaOutputEndpointPolicy.resolved(settings,input);val result=udpClient.write(endpoint.first,endpoint.second,sentences,broadcast);return TransportWriteResult(result.success,result.openedNewConnection,result.error,if(result.success)sentences.size else 0)}
-    private fun captureServerWritesLocked(server:com.yokuli.anchorwatch.data.sharing.NmeaSharingStatus){
-        val delta=(server.sentSentences-observedServerWrites).coerceAtLeast(0L);if(delta<=0)return
-        observedServerWrites=server.sentSentences
-        val timestamp=java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS"))
-        val writtenLines=server.recentWritten.takeLast(delta.coerceAtMost(RECENT_LIMIT.toLong()).toInt())
-        writtenLines.forEach{line->
-            recent.addLast("$timestamp  [TCP_SERVER] $line");while(recent.size>RECENT_LIMIT)recent.removeFirst()
-            val sentenceType=line.trim().removePrefix("$").substringBefore(',').takeLast(3)
-            val stream=when(sentenceType){"RMC","GGA","VTG","ZDA"->"POSITION";"HDT","HDG","HDM"->"HEADING";"ROT"->"MOTION";"MWD","MWV","VWT"->"DERIVED_WIND";else->sentenceType}
-            val streamStatus=_status.value.streams[stream]
-            val queued=packetDiagnostics.lastOrNull{event->event.generation==publicationGeneration&&event.stream==stream&&event.sentenceType==sentenceType&&event.stage==NmeaPacketStage.QUEUED_TO_SERVER_CLIENT}
-            appendPacketDiagnosticLocked(NmeaPacketPathDiagnostic(sessionId,publicationGeneration,NmeaPacketPath.LOCAL_SENSOR_INJECTION,NmeaPacketStage.WRITTEN,stream,NmeaOutputTransportMode.TCP_SERVER,destinationLocked(configured,lastInputProfile),sentenceType,queued?.generatedAtElapsed?:server.lastOutputElapsed?:SystemClock.elapsedRealtime(),writeStartedAtElapsed=queued?.writeStartedAtElapsed,writtenAtElapsed=server.lastOutputElapsed,sourceStableKey=queued?.sourceStableKey?:streamStatus?.sourceStableKey))
-        }
-        _status.value=_status.value.copy(writtenSentences=_status.value.writtenSentences+delta,lastWriteElapsed=server.lastOutputElapsed,bytesWritten=_status.value.bytesWritten+writtenLines.sumOf{it.toByteArray(Charsets.US_ASCII).size},recentTx=recent.toList(),packetPathDiagnostics=packetDiagnostics.toList())
-    }
-    private fun cancelTransports(){dedicatedClient.close();udpClient.close();tcpServer.stop()}
+    private fun cancelTransports(){dedicatedClient.close();udpClient.close()}
     private fun closeLocked(){cancelTransports();consecutiveFailures=0;nextDedicatedAttemptElapsed=0L;dedicatedCircuitOpen=false}
     private fun appendPacketDiagnosticLocked(value:NmeaPacketPathDiagnostic){packetDiagnostics.addLast(value);while(packetDiagnostics.size>PACKET_DIAGNOSTIC_LIMIT)packetDiagnostics.removeFirst()}
     private fun destinationLocked(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):String{val endpoint=NmeaOutputEndpointPolicy.resolved(settings,input);return "${endpoint.first}:${endpoint.second}"}

@@ -46,6 +46,7 @@ sealed interface RuntimeCommand {
     data object StopAlarmTest:RuntimeCommand
     data class SetSharing(val enabled:Boolean,val port:Int):RuntimeCommand
     data object RefreshPhoneSensorOutput:RuntimeCommand
+    data object RefreshLocalNmeaServer:RuntimeCommand
     data class StartTrip(val name:String,val phoneMotionEnabled:Boolean=true,val positionPreference:VesselSourcePreference=VesselSourcePreference.AUTO):RuntimeCommand
     data object PauseTrip:RuntimeCommand
     data object ResumeTrip:RuntimeCommand
@@ -101,6 +102,7 @@ object RuntimeCommandParser {
             AnchorForegroundService.STOP_ALARM_TEST->RuntimeCommand.StopAlarmTest
             AnchorForegroundService.SET_NMEA_SHARING->RuntimeCommand.SetSharing(intent.getBooleanExtra("enabled",false),intent.getIntExtra("port",10111))
             AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT->RuntimeCommand.RefreshPhoneSensorOutput
+            AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER->RuntimeCommand.RefreshLocalNmeaServer
             AnchorForegroundService.START_TRIP->RuntimeCommand.StartTrip(intent.getStringExtra("name").orEmpty(),intent.getBooleanExtra("phoneMotionEnabled",true),enum(intent,"positionPreference",VesselSourcePreference.AUTO))
             AnchorForegroundService.PAUSE_TRIP->RuntimeCommand.PauseTrip
             AnchorForegroundService.RESUME_TRIP->RuntimeCommand.ResumeTrip

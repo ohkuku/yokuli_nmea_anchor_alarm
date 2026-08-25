@@ -40,6 +40,7 @@ import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.SharingServerState
+import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerSettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
@@ -114,12 +115,13 @@ class AnchorSafetyFlowTest {
     private lateinit var acceptedPosition:AcceptedPositionRepository
     private lateinit var runtimeDiagnostics:RuntimeDiagnosticsRepository
     private lateinit var outputSettings:OutputSettingsRepository
+    private lateinit var localNmeaServerSettings:LocalNmeaServerSettingsRepository
 
     @Before fun prepare() = runBlocking<Unit> {
         MapRuntimePolicy.renderGoogleEngine=false
         context = InstrumentationRegistry.getInstrumentation().targetContext
         val entry = EntryPointAccessors.fromApplication(context.applicationContext, AnchorWatchEntryPoint::class.java)
-        dao = entry.dao();sonarDao=entry.sonarDao();tripDao=entry.tripDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition();runtimeDiagnostics=entry.runtimeDiagnostics();outputSettings=entry.outputSettings();preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
+        dao = entry.dao();sonarDao=entry.sonarDao();tripDao=entry.tripDao();sonarRecorder=entry.sonarRecorder();acceptedPosition=entry.acceptedPosition();runtimeDiagnostics=entry.runtimeDiagnostics();outputSettings=entry.outputSettings();localNmeaServerSettings=entry.localNmeaServerSettings();preferences = entry.preferences(); navigation = entry.navigation();alarmUi=entry.alarmUi();sharingServer=entry.sharingServer()
         val serviceWasRunning = context.stopService(Intent(context, AnchorForegroundService::class.java))
         if (serviceWasRunning) {
             withTimeout(5_000) { runtimeDiagnostics.state.first { !it.serviceReady } }
@@ -404,6 +406,8 @@ class AnchorSafetyFlowTest {
             compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_rx_port").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_rx_port").assertExists()
             compose.onNodeWithTag("data_tab_output").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_product_boat_network",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("nmea_product_boat_network").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_output_route",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_output_route").performScrollTo().assertIsDisplayed()
             compose.onNodeWithTag("nmea_output_tx_host").assertExists()
@@ -1002,15 +1006,17 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun legacySharingRequestMigratesToAStoppedCanonicalDestinationWithoutOpeningASocket() = runBlocking<Unit> {
+    @Test fun legacySharingRequestMigratesToIndependentStoppedPhoneServiceWithoutOpeningASocket() = runBlocking<Unit> {
         TestNmeaServer().use{boat->
             val profile=liveProfile(boat,true);preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA));connectAndAwaitFix(profile)
             val upstreamConnections=boat.accepted.get();val port=ServerSocket(0).use{it.localPort}
             preferences.save(preferences.settings.first().copy(nmeaSharingEnabled=true,nmeaSharingPort=port))
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.SET_NMEA_SHARING).putExtra("enabled",true).putExtra("port",port))
             withTimeout(5_000){preferences.settings.first{!it.nmeaSharingEnabled}}
-            val migrated=withTimeout(5_000){outputSettings.settings.first{it.transportConfigured&&it.transportMode==NmeaOutputTransportMode.TCP_SERVER&&it.outputPort==port}}
-            assertFalse(migrated.publicationEnabled)
+            val migrated=withTimeout(5_000){localNmeaServerSettings.settings.first{it.configured&&it.port==port}}
+            assertFalse(migrated.serverRequested)
+            assertFalse(outputSettings.settings.first().publicationEnabled)
+            assertFalse(outputSettings.settings.first().transportMode==NmeaOutputTransportMode.TCP_SERVER)
             assertEquals(SharingServerState.STOPPED,sharingServer.status.value.state)
             assertEquals(0,sharingServer.status.value.clientCount)
             assertEquals(upstreamConnections,boat.accepted.get())

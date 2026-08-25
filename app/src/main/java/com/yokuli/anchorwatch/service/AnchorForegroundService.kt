@@ -101,6 +101,7 @@ class AnchorForegroundService : Service() {
         const val STOP_ALARM_TEST = "com.yokuli.anchorwatch.STOP_ALARM_TEST"
         const val SET_NMEA_SHARING = "com.yokuli.anchorwatch.SET_NMEA_SHARING"
         const val REFRESH_PHONE_SENSOR_OUTPUT = "com.yokuli.anchorwatch.REFRESH_PHONE_SENSOR_OUTPUT"
+        const val REFRESH_LOCAL_NMEA_SERVER = "com.yokuli.anchorwatch.REFRESH_LOCAL_NMEA_SERVER"
         const val START_TRIP = "com.yokuli.anchorwatch.START_TRIP"
         const val PAUSE_TRIP = "com.yokuli.anchorwatch.PAUSE_TRIP"
         const val RESUME_TRIP = "com.yokuli.anchorwatch.RESUME_TRIP"

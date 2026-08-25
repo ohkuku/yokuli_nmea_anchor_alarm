@@ -23,6 +23,18 @@ class NmeaSharingServerTest {
         try{server.start(port);waitUntil{server.status.value.state==SharingServerState.RUNNING};assertEquals(0,server.publish("\$IIHDT,123.4,T*00\r\n"));Thread.sleep(50);assertEquals(0,server.status.value.sentSentences)}finally{server.stop()}
     }
 
+    @Test fun rapidDuplicateStartIsIdempotentAndCannotCreateAOneMillisecondSession(){
+        val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider())
+        try{
+            val starters=List(8){thread(start=true){repeat(20){server.start(port)}}}
+            starters.forEach{it.join()}
+            waitUntil{server.status.value.state==SharingServerState.RUNNING}
+            Thread.sleep(250)
+            assertEquals(SharingServerState.RUNNING,server.status.value.state)
+            Socket("127.0.0.1",port).use{client->waitUntil{server.status.value.clientCount==1};server.publish("\$IIHDT,123.40,T*00\r\n");assertEquals("\$IIHDT,123.40,T*00",client.getInputStream().bufferedReader().readLine())}
+        }finally{server.stop()}
+    }
+
     @Test fun stoppedServerAcceptsNoClientsAndQueuesNoData(){
         val server=NmeaSharingServer(NetworkAddressProvider())
         repeat(60_000){assertEquals(0,server.publish("\$IIHDT,123.4,T*00\r\n"))}

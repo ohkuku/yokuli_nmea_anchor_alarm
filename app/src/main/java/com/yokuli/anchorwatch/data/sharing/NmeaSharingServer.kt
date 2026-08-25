@@ -5,6 +5,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
+import kotlin.concurrent.withLock
 
 enum class SharingServerState { STOPPED, STARTING, RUNNING, ERROR }
 
@@ -51,6 +53,10 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
     private data class Client(val socket: Socket, val queue: Channel<String>, val job: Job, val connectedAtMillis:Long, val address:String, val sent:AtomicLong=AtomicLong())
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Serializes Start/Stop as one lifecycle transaction. The old check →
+     * stop → launch sequence allowed two rapid Start requests to stop each
+     * other's freshly-created listener, which presented as a 1 ms session. */
+    private val lifecycle = ReentrantLock(true)
     private val clients = ConcurrentHashMap<Long, Client>()
     private val ids = AtomicLong()
     private var serverSocket: ServerSocket? = null
@@ -60,11 +66,12 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
 
     fun start(port: Int) {
         val safePort = port.takeIf { it in 1024..65535 } ?: 10111
-        synchronized(this){if(acceptJob?.isActive==true&&_status.value.port==safePort)return}
-        stop()
-        synchronized(this){
-        _status.value=NmeaSharingStatus(SharingServerState.STARTING,safePort,addresses=addresses.localAddresses())
-        acceptJob=scope.launch {
+        lifecycle.withLock {
+            synchronized(this){if(acceptJob?.isActive==true&&_status.value.port==safePort)return}
+            joinStoppedJobs(synchronized(this){stopLocked()})
+            synchronized(this){
+                _status.value=NmeaSharingStatus(SharingServerState.STARTING,safePort,addresses=addresses.localAddresses())
+                acceptJob=scope.launch {
             while(isActive){
                 try {
                     val server = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress("0.0.0.0", safePort), 16) }
@@ -80,14 +87,18 @@ class NmeaSharingServer @Inject constructor(private val addresses: NetworkAddres
                     runCatching{serverSocket?.close()};serverSocket=null
                 }
             }
-        }
+                }
+            }
         }
     }
 
     /** Hard stop: close the listener and every client socket, then wait for all
      * old writer jobs to leave their OutputStream before returning. */
     fun stop(){
-        val jobs=synchronized(this){stopLocked()}
+        lifecycle.withLock { joinStoppedJobs(synchronized(this){stopLocked()}) }
+    }
+
+    private fun joinStoppedJobs(jobs:List<Job>){
         // Socket close/cancellation interrupts every accept/write first. Do not
         // turn a timeout into a false OFF acknowledgement: STOP may return only
         // after every old client writer has actually left its OutputStream.

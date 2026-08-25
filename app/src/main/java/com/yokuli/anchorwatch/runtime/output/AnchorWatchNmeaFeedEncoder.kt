@@ -17,7 +17,6 @@ import com.yokuli.anchorwatch.domain.vessel.VesselSourceType
 import com.yokuli.anchorwatch.domain.vessel.persistentKey
 import com.yokuli.anchorwatch.domain.vessel.toLegacySource
 import javax.inject.Inject
-import javax.inject.Singleton
 
 enum class AnchorWatchNmeaStream(val periodMillis:Long){
     POSITION(1_000L),
@@ -108,7 +107,6 @@ class PhoneAppNmeaMetricLeaseBank @Inject constructor(){
  * Every destination receives only provenance-proven Phone sensors or values
  * explicitly computed by Anchor Watch. Raw/re-encoded Boat measurements and
  * legacy BACKUP ownership state never enter this boundary. */
-@Singleton
 class AnchorWatchNmeaFeedEncoder @Inject constructor(
     private val mux:NmeaOutputMux,
     private val leases:PhoneAppNmeaMetricLeaseBank=PhoneAppNmeaMetricLeaseBank(),

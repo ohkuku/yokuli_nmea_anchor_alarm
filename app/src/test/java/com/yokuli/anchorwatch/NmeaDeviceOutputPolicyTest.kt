@@ -169,12 +169,12 @@ class NmeaDeviceOutputPolicyTest{
         }
     }
 
-    @Test fun tcpServerIsOneCanonicalOutputTransportAndDoesNotReuseInput(){
+    @Test fun tcpServerIsNotABoatNetworkOutputTransport(){
         val server=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.TCP_SERVER,outputPort=10111,transportConfigured=true)
-        assertTrue(NmeaOutputEndpointPolicy.isValid(server,input))
+        assertFalse(NmeaOutputEndpointPolicy.isValid(server,input))
         assertFalse(NmeaOutputEndpointPolicy.needsInputTransport(server))
         assertFalse(NmeaOutputEndpointPolicy.duplicateEndpointRisk(server,input))
-        assertEquals("0.0.0.0" to 10111,NmeaOutputEndpointPolicy.resolved(server,input))
+        assertEquals("local-service" to 10111,NmeaOutputEndpointPolicy.resolved(server,input))
     }
 
     @Test fun echoedOutboundSentenceIsQuarantinedOnlyForTheShortWindow(){

@@ -39,6 +39,8 @@ import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingStatus
+import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerSettings
+import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerSettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.data.sonar.SonarIncrementalGridUpdater
@@ -86,6 +88,8 @@ import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputReadinessPolicy
 import com.yokuli.anchorwatch.runtime.nmea.NmeaManualDisconnectRepository
+import com.yokuli.anchorwatch.runtime.sharing.LocalNmeaServerRuntime
+import com.yokuli.anchorwatch.runtime.sharing.LocalNmeaServerRuntimeStatus
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnostics
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
@@ -189,6 +193,8 @@ data class MainUiState(
     val eventsBySession:Map<Long,List<AlarmEventEntity>> = emptyMap(),
     val positionHealth:com.yokuli.anchorwatch.domain.model.PositionHealth=com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST,
     val nmeaSharing:NmeaSharingStatus=NmeaSharingStatus(),
+    val localNmeaServerSettings:LocalNmeaServerSettings=LocalNmeaServerSettings(),
+    val localNmeaServerRuntime:LocalNmeaServerRuntimeStatus=LocalNmeaServerRuntimeStatus(),
     val acceptedPosition:AcceptedPositionState=AcceptedPositionState(),
     val sonarSurveys:List<SonarSurveyEntity> = emptyList(),
     val selectedSonarSurveyId:Long? = null,
@@ -257,6 +263,8 @@ class MainViewModel @Inject constructor(
     private val endpointPreflight:NmeaEndpointPreflight,
     private val alarmUi:AlarmUiRepository,
     private val sharingServer:NmeaSharingServer,
+    private val localNmeaServerSettingsRepository:LocalNmeaServerSettingsRepository,
+    private val localNmeaServerRuntime:LocalNmeaServerRuntime,
     private val acceptedPosition:AcceptedPositionRepository,
     private val phoneHeadingRepository:PhoneHeadingRepository,
     private val sonarDao:SonarDao,
@@ -383,6 +391,8 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
         viewModelScope.launch{sharingServer.status.collect{status->_ui.update{it.copy(nmeaSharing=status)}}}
+        viewModelScope.launch{localNmeaServerSettingsRepository.settings.collect{value->_ui.update{it.copy(localNmeaServerSettings=value)}}}
+        viewModelScope.launch{localNmeaServerRuntime.status.collect{value->_ui.update{it.copy(localNmeaServerRuntime=value)}}}
         viewModelScope.launch{sonarDao.surveys().collect{surveys->
             val selected=_ui.value.selectedSonarSurveyId?.takeIf{selectedId->selectedId==CORRECTED_SONAR_HISTORY_ID||surveys.any{it.id==selectedId}}?:surveys.firstOrNull()?.id
             _ui.update{it.copy(sonarSurveys=surveys,selectedSonarSurveyId=selected)}
@@ -703,13 +713,44 @@ class MainViewModel @Inject constructor(
         val safePort=port.takeIf{it in 1024..65535}
         if(safePort==null){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"NMEA Sharing port must be between 1024 and 65535."))};return}
         viewModelScope.launch{
-            val legacy=_ui.value.settings.copy(nmeaSharingEnabled=false,nmeaSharingPort=safePort);prefs.save(legacy)
-            if(enabled){
-                val output=_ui.value.outputSettings.copy(transportMode=NmeaOutputTransportMode.TCP_SERVER,outputHost="",outputPort=safePort,transportConfigured=true,publicationEnabled=false)
-                outputSettingsRepository.save(output)
-                _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"NMEA Sharing is now the TCP-server destination in Data → NMEA output. Review it there, then explicitly press Start."))}
-            }
+            val current=_ui.value.localNmeaServerSettings
+            localNmeaServerSettingsRepository.saveConfiguration(current.copy(port=safePort,configured=true,serverRequested=false))
+            if(enabled)localNmeaServerSettingsRepository.requestStart() else localNmeaServerSettingsRepository.requestStop()
+            ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
         }
+    }
+
+    fun saveLocalNmeaServerConfiguration(port:Int,includePressure:Boolean,includeDerivedWind:Boolean)=viewModelScope.launch{
+        if(_ui.value.localNmeaServerSettings.serverRequested){
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop the Phone NMEA service before changing its listening port or feed."))}
+            return@launch
+        }
+        if(port !in 1024..65535){
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Phone NMEA service port must be between 1024 and 65535."))}
+            return@launch
+        }
+        localNmeaServerSettingsRepository.saveConfiguration(LocalNmeaServerSettings(port,includePressure,includeDerivedWind,configured=true,serverRequested=false))
+        _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+    }
+
+    fun startLocalNmeaServer()=viewModelScope.launch{
+        val state=_ui.value
+        fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
+        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){
+            fail("Complete vessel zero, explicitly confirm the current mount, and confirm heading alignment before starting the Phone NMEA service.")
+            return@launch
+        }
+        if(!state.localNmeaServerSettings.configured||state.localNmeaServerSettings.port !in 1024..65535){
+            fail("Save a valid Phone NMEA service listening port first.")
+            return@launch
+        }
+        localNmeaServerSettingsRepository.requestStart();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
+    }
+
+    fun stopLocalNmeaServer(){
+        localNmeaServerSettingsRepository.requestStop();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
     }
     fun deleteHistorySession(session:AnchorSessionEntity){if(session.active)return;viewModelScope.launch{dao.deleteCompletedSession(session.id)}}
     fun setMapType(mapType:Int){val value=mapType.takeIf{it in 1..3}?:1;val updated=_ui.value.settings.copy(mapType=value);_ui.update{it.copy(settings=updated)};viewModelScope.launch{prefs.save(updated)}}
@@ -777,8 +818,7 @@ class MainViewModel @Inject constructor(
     fun calibrateVesselMount(axis:DeviceBowAxis)=viewModelScope.launch{
         if(_ui.value.activeTrip!=null){_ui.update{it.copy(vesselCalibrationFeedback="End the active trip before changing vessel zero.")};return@launch}
         if(_ui.value.outputSettings.publicationEnabled){
-            val stopped=_ui.value.outputSettings.copy(publicationEnabled=false)
-            outputSettingsRepository.save(stopped)
+            outputSettingsRepository.requestStop()
             ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
             val stoppedInTime=withTimeoutOrNull(5_000){phonePositionNmeaOutputRuntime.status.first{!it.enabled&&it.connectionState==com.yokuli.anchorwatch.data.nmea.output.NmeaTxConnectionState.OFF}}!=null
             if(!stoppedInTime){_ui.update{it.copy(vesselCalibrationFeedback="NMEA output did not confirm a hard stop. Calibration was not changed.")};return@launch}
@@ -812,8 +852,8 @@ class MainViewModel @Inject constructor(
     fun setNmeaOutputEndpoint(mode:NmeaOutputTransportMode,host:String,port:Int)=viewModelScope.launch{
         val current=_ui.value.outputSettings
         if(current.publicationEnabled){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop NMEA output before changing its destination."))};return@launch}
-        if(mode==NmeaOutputTransportMode.TCP_SERVER&&port !in 1024..65535){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"The TCP output server needs a listening port from 1024 to 65535."))}
+        if(mode==NmeaOutputTransportMode.TCP_SERVER){
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Use Phone NMEA service to host a TCP server. Boat-network supplement only writes into the boat network."))}
             return@launch
         }
         if(mode !in setOf(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportMode.TCP_SERVER)&&(host.isBlank()||port !in 1..65535)){
@@ -825,7 +865,7 @@ class MainViewModel @Inject constructor(
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))}
             return@launch
         }
-        outputSettingsRepository.save(proposed)
+        outputSettingsRepository.saveConfiguration(proposed.copy(publicationEnabled=false))
         _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     }
     fun startNmeaOutput()=viewModelScope.launch{
@@ -840,30 +880,32 @@ class MainViewModel @Inject constructor(
         if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Complete vessel zero, explicitly confirm the current mount, and confirm heading alignment for this calibration before sharing NMEA data.");return@launch}
         if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,state.settings.profile)){fail(NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE);return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
-        val started=value.copy(publicationEnabled=true);outputSettingsRepository.save(started);_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        outputSettingsRepository.requestStart();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
     }
     fun stopNmeaOutput()=viewModelScope.launch{
-        val stopped=_ui.value.outputSettings.copy(publicationEnabled=false)
-        outputSettingsRepository.save(stopped);_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        outputSettingsRepository.requestStop();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
         // The foreground coordinator is the only production lifecycle owner.
         // Its command actor performs the hard stop and invalidates queued bytes.
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
     }
     private fun isOutputDestinationReady(value:NmeaDeviceOutputSettings,state:MainUiState)=value.transportConfigured&&!NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,state.settings.profile)&&when(value.transportMode){
         NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->state.settings.profile.protocol==Protocol.TCP&&state.settings.profile.host.isNotBlank()&&state.settings.profile.port in 1..65535&&state.connection in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
-        NmeaOutputTransportMode.TCP_SERVER->value.outputPort in 1024..65535
+        NmeaOutputTransportMode.TCP_SERVER->false
         NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->value.outputHost.isNotBlank()&&value.outputPort in 1..65535
     }
     private fun outputDestinationError(value:NmeaDeviceOutputSettings)=if(!value.transportConfigured)"Choose an NMEA output destination before enabling a stream." else when(value.transportMode){
         NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Connect a writable TCP NMEA input endpoint before enabling same-socket output."
         NmeaOutputTransportMode.DEDICATED_TCP->"Enter a valid dedicated TCP output host and port first."
-        NmeaOutputTransportMode.TCP_SERVER->"Enter a valid TCP server listening port from 1024 to 65535."
+        NmeaOutputTransportMode.TCP_SERVER->"Use the separate Phone NMEA service page to host a TCP listener."
         NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->"Enter a valid UDP output host and port first."
     }
     fun testNmeaDeviceOutput(result:(Boolean)->Unit)=viewModelScope.launch{
         val state=_ui.value
         val settings=state.outputSettings;val profile=state.settings.profile
+        if(settings.transportMode==NmeaOutputTransportMode.TCP_SERVER){
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"A phone-hosted listener belongs to Phone NMEA service, not Boat-network supplement."))};result(false);return@launch
+        }
         if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(settings,profile)){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))};result(false);return@launch
         }
@@ -873,6 +915,7 @@ class MainViewModel @Inject constructor(
     fun testKnownGoodHdgOutput(result:(Boolean)->Unit)=viewModelScope.launch{
         val state=_ui.value
         val settings=state.outputSettings;val profile=state.settings.profile
+        if(settings.transportMode==NmeaOutputTransportMode.TCP_SERVER){result(false);return@launch}
         if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(settings,profile)){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))};result(false);return@launch
         }

@@ -1,6 +1,7 @@
 package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
+import com.yokuli.anchorwatch.data.nmea.output.NmeaOutputEndpointPolicy
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.domain.model.NavigationFix
@@ -307,13 +308,14 @@ class AnchorWatchNmeaPublisherTest{
         assertTrue(productFeed.all{it.startsWith("$")&&it.endsWith("\r\n")})
     }
 
-    @Test fun tcpServerAndTcpClient_useSameFeedScheduler(){
+    @Test fun phoneServiceAndBoatClient_canEncodeTheSameOwnedFeedWithoutSharingLifecycle(){
         val snapshot=VesselDataSnapshot(headingTrueDegrees=heading(83.0))
         val tcpClient=NmeaPublisherConfig(transportMode=com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode.DEDICATED_TCP,transportConfigured=true,publicationEnabled=true).asOutputSettings()
         val tcpServer=NmeaPublisherConfig(transportMode=com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode.TCP_SERVER,transportConfigured=true,publicationEnabled=true).asOutputSettings()
         encoder.reset();val clientFeed=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,tcpClient,1_000).sentences
         encoder.reset();val serverFeed=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,tcpServer,1_000).sentences
         assertEquals(clientFeed,serverFeed);assertEquals(1,clientFeed.size)
+        assertFalse(NmeaOutputEndpointPolicy.isValid(tcpServer,com.yokuli.anchorwatch.data.nmea.ConnectionProfile()))
     }
 
     @Test fun stopInvalidatesEveryOldPublicationGeneration(){
