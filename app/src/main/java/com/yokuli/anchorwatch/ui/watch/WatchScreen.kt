@@ -114,22 +114,13 @@ private data class SonarMapInspection(
 internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel){
     val target=state.anchorageApproach.target
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
-    var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
     var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
     var showPreflight by remember{mutableStateOf(false)}
     var showSetup by remember{mutableStateOf(false)}
 
-    fun openDetails(cluster:com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster){
-        when(val resolved=com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy.resolve(cluster)){
-            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.SavedAnchorage->{
-                val saved=state.savedAnchorages.firstOrNull{it.id==resolved.id}
-                if(saved!=null){anchorageListDetails=null;anchorageDetails=saved}
-                else{anchorageDetails=null;anchorageListDetails=listOf(resolved.id)}
-            }
-            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.AnchorageList->{
-                anchorageDetails=null;anchorageListDetails=resolved.ids
-            }
-        }
+    fun openDetails(target:com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachTarget){
+        val saved=state.savedAnchorages.firstOrNull{it.id==target.spotId}
+        if(saved!=null)anchorageDetails=saved
     }
 
     BackHandler(enabled=target!=null){vm.cancelAnchorageApproach()}
@@ -145,7 +136,6 @@ internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel
                 setAnchorWatch={reference->
                     if(state.activeTrip==null){
                         setupReference=reference
-                        vm.cancelAnchorageApproach()
                         showPreflight=true
                     }
                 },
@@ -160,43 +150,16 @@ internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel
         approach={anchorageDetails=null;vm.approachSavedAnchorage(saved.id)},
         approachEnabled=state.active==null,
     )}
-    anchorageListDetails?.let{ids->AnchorageListDialog(
-        members=ids.mapNotNull{id->state.savedAnchorages.firstOrNull{it.id==id}},
-        dismiss={anchorageListDetails=null},
-        actions=SavedAnchorageCardActions(
-            approach={saved->anchorageListDetails=null;vm.approachSavedAnchorage(saved.id)},
-            openGoogleMaps=vm::openAnchorageInGoogleMaps,
-            shareQr=vm::shareAnchorageQr,
-            approachEnabled=state.active==null,
-        ),
-    )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false;setupReference=null}){showPreflight=false;showSetup=true}
-    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input)}
+    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input.copy(anchoragePlaceId=setupReference?.placeId,anchorageSpotId=setupReference?.spotId))}
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
 internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     var showSetup by remember { mutableStateOf(false) };var showPreflight by remember { mutableStateOf(false) };var showAdjust by remember { mutableStateOf(false) };var confirmLift by remember { mutableStateOf(false) };var showLayers by remember{mutableStateOf(false)};var showLinzDisclaimer by remember{mutableStateOf(false)};var showSonarDisclaimer by remember{mutableStateOf(false)};var showNauticalDisclaimer by remember{mutableStateOf(false)}
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
-    var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
     var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
-    val openAnchorageList:(List<Long>)->Unit={ids->anchorageDetails=null;anchorageListDetails=ids.distinct()}
-    val nearbyActions=SavedAnchorageCardActions(
-        approach={saved->anchorageListDetails=null;vm.approachSavedAnchorage(saved.id)},
-        openGoogleMaps=vm::openAnchorageInGoogleMaps,
-        shareQr=vm::shareAnchorageQr,
-        approachEnabled=state.active==null,
-    )
-    val openAnchorageDetails:(List<com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster>)->Unit={clusters->
-        when(val target=com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy.resolve(clusters)){
-            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.SavedAnchorage->{
-                val saved=state.savedAnchorages.firstOrNull{it.id==target.id}
-                if(saved!=null){anchorageListDetails=null;anchorageDetails=saved}else openAnchorageList(listOf(target.id))
-            }
-            is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.AnchorageList->openAnchorageList(target.ids)
-        }
-    }
     val fix = state.fix; val active = state.active
     // Map, instruments and NMEA output consume the same canonical presentation
     // selection. Safety/evidence applies stricter quality gates downstream, but
@@ -314,7 +277,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         // vertical drag without a parent horizontal pager stealing the map.
         sheetSwipeEnabled=true,
         sheetDragHandle={Box(Modifier.fillMaxWidth().clickable{bottomSheetScope.launch{if(bottomSheetState.currentValue==SheetValue.Expanded)bottomSheetState.partialExpand()else bottomSheetState.expand()}}.testTag("watch_sheet_toggle"),contentAlignment=Alignment.Center){BottomSheetDefaults.DragHandle()}},
-        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},{vm.openDataSection(0)},{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
+        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},{vm.openDataSection(0)},{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -339,34 +302,34 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
                         if(mapChartUiState.localDepthVisible)linzTileProviders.forEach{provider->TileOverlay(tileProvider=provider,fadeIn=true,transparency=LinzHydroConfiguration.transparency(mapChartUiState.localDepthOpacity),visible=true,zIndex=MapOverlayZ.LINZ_CHART)}
                         if(sonarOverlayMounted)TileOverlay(tileProvider=sonarTileProvider,state=sonarTileOverlayState,fadeIn=false,transparency=.25f,visible=true,zIndex=MapOverlayZ.SONAR)
                         if(baseMapPolicy.showSeamarks)TileOverlay(tileProvider=nauticalTileProvider,fadeIn=true,transparency=0f,visible=true,zIndex=MapOverlayZ.NAUTICAL_SEAMARKS)
-                        state.anchorageClusters.forEach{cluster->
-                            val centre=LatLng(cluster.centerLatitude,cluster.centerLongitude)
-                            val selected=cluster.id==state.anchorageApproach.selectedClusterId
+                        state.anchorageTargets.forEach{target->
+                            val centre=LatLng(target.latitude,target.longitude)
+                            val selected=target.spotId==state.anchorageApproach.target?.spotId
                             Circle(
                                 center=centre,
-                                radius=cluster.radiusMeters,
+                                radius=target.areaRadiusMeters,
                                 strokeColor=Color(0xFF087F8C).copy(alpha=if(selected).90f else .55f),
                                 fillColor=Color(0xFF087F8C).copy(alpha=if(selected).10f else .045f),
                                 strokeWidth=if(selected)4f else 2f,
                                 zIndex=MapOverlayZ.HISTORICAL_AREA,
                                 visible=selected||camera.position.zoom>=13f,
-                                strokePattern=if(cluster.radiusEstimated)listOf(Dash(16f),Gap(10f))else emptyList(),
+                                strokePattern=if(target.coordinateEstimated)listOf(Dash(16f),Gap(10f))else emptyList(),
                             )
                             Marker(
-                                state=remember(cluster.id,cluster.centerLatitude,cluster.centerLongitude){MarkerState(centre)},
-                                title=if(cluster.savedPointCount==1)cluster.displayName else "${cluster.displayName} · ⚓ ×${cluster.savedPointCount}",
-                                snippet=if(cluster.coordinateEstimated)tr("Approximate saved anchorage reference","估算的收藏锚地参考")else tr("Saved anchorage reference","收藏锚地参考"),
+                                state=remember(target.spotId,target.latitude,target.longitude){MarkerState(centre)},
+                                title=target.placeName,
+                                snippet="${target.spotName} · "+if(target.coordinateEstimated)tr("approximate reference","估算参考")else tr("saved anchoring Spot","收藏锚点"),
                                 icon=savedAnchorIcon,
-                                alpha=if(selected)1f else if(cluster.coordinateEstimated).62f else .78f,
+                                alpha=if(selected)1f else if(target.coordinateEstimated).62f else .78f,
                                 anchor=Offset(.5f,.5f),
                                 zIndex=MapOverlayZ.HISTORICAL_ANCHOR,
-                                onClick={openAnchorageDetails(listOf(cluster));true},
+                                onClick={state.savedAnchorages.firstOrNull{it.id==target.spotId}?.let{saved->anchorageDetails=saved};true},
                             )
                         }
                         state.anchorageApproach.target?.let{target->
                             fix?.takeIf{it.valid}?.let{position->
                                 Polyline(
-                                    points=listOf(LatLng(position.latitude,position.longitude),LatLng(target.centerLatitude,target.centerLongitude)),
+                                    points=listOf(LatLng(position.latitude,position.longitude),LatLng(target.latitude,target.longitude)),
                                     color=Color(0xFF087F8C).copy(alpha=.85f),
                                     width=4f,
                                     pattern=listOf(Dash(24f),Gap(14f)),
@@ -446,17 +409,12 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input)}
+        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference){lat,lon,input->vm.arm(lat,lon,input.copy(anchoragePlaceId=setupReference?.placeId,anchorageSpotId=setupReference?.spotId))}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
     if (confirmLift) AlertDialog({ confirmLift = false }, confirmButton = { Button({ vm.liftAnchor(); confirmLift = false },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text(tr("Lift anchor","起锚")) } }, dismissButton = { TextButton({ confirmLift = false }) { Text(tr("Cancel","取消")) } }, title = { Text(tr("End this anchoring session?","结束本次锚泊？")) }, text = { Text(tr("Lift anchor permanently closes this session. Its track remains in History, but it cannot be resumed.","起锚会永久结束本次锚泊。轨迹仍保留在历史记录中，但不能再恢复。")) })
     anchorageDetails?.let{saved->AnchorageDetailDialog(saved,{anchorageDetails=null},{vm.openAnchorageInGoogleMaps(saved)},{vm.shareAnchorageQr(saved)},{anchorageDetails=null;vm.approachSavedAnchorage(saved.id)},approachEnabled=state.active==null)}
-    anchorageListDetails?.let{ids->AnchorageListDialog(
-        members=ids.mapNotNull{id->state.savedAnchorages.firstOrNull{it.id==id}},
-        dismiss={anchorageListDetails=null},
-        actions=nearbyActions,
-    )}
     AnchorCentreRecalculationDialog(state.centreRecalculation,vm)
     if(showLayers)MapLayersSheet(state,mapChartUiState,{showLayers=false},{mapType->if(mapType==BaseMapStyle.NAUTICAL.persistedValue&&!state.settings.nauticalDisclaimerAccepted)showNauticalDisclaimer=true else vm.setMapType(mapType)},{enabled->vm.setOfflineMapEnabled(enabled)},{enabled->if(enabled&&!state.settings.linzHydroDisclaimerAccepted)showLinzDisclaimer=true else vm.updateSettings(state.settings.copy(linzHydroEnabled=enabled))},{opacity->vm.updateSettings(state.settings.copy(linzHydroOpacity=opacity))},{enabled->if(enabled&&!state.settings.sonarDisclaimerAccepted)showSonarDisclaimer=true else vm.setSonarLayerEnabled(enabled)},{enabled->vm.updateSettings(state.settings.copy(showLinzDepthReference=enabled))},{enabled->vm.updateSettings(state.settings.copy(showPersonalMapReference=enabled))},{showLayers=false;vm.page(3)})
     if(showNauticalDisclaimer)AlertDialog(onDismissRequest={showNauticalDisclaimer=false},title={Text(tr("Nautical map is a visual aid","航海底图仅供辅助"))},text={Text(tr("OpenSeaMap seamarks and the quiet base style can be incomplete, delayed or unavailable. They do not replace official charts, Notices to Mariners, depth instruments or a passage plan. Anchor alarms continue independently if map tiles fail.","OpenSeaMap 航标和清淡底图可能不完整、延迟或不可用，不能替代官方海图、航海通告、测深仪或航行计划。即使地图瓦片失败，锚警仍会独立运行。"))},confirmButton={Button({vm.updateSettings(state.settings.copy(mapType=BaseMapStyle.NAUTICAL.persistedValue,nauticalDisclaimerAccepted=true));showNauticalDisclaimer=false}){Text(tr("I understand · Use Nautical","我已了解 · 使用航海图"))}},dismissButton={TextButton({showNauticalDisclaimer=false}){Text(tr("Cancel","取消"))}})

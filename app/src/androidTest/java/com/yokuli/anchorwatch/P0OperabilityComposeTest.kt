@@ -5,7 +5,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -38,8 +37,7 @@ class P0OperabilityComposeTest{
     @Test fun setAnchorPrimaryActionShowsAVisibleBlockerInsteadOfDoingNothing(){
         compose.setContent{
             YokuliTheme{WatchPanel(
-                state=MainUiState(settingsReady=false),boatHeading=null,arm={},adjust={},manageVesselData={},resetCentreAnalysis={},conditionUpdate={_ ->},resetWindBaseline={},viewNearby={_ ->},
-                nearbyActions=SavedAnchorageCardActions({_ ->},{_ ->},{_ ->}),pause={},resume={},lift={},openAnchorMap={},recalculateCentre={},reconnectNmea={},openNmea={},switchToSystemGps={},
+                state=MainUiState(settingsReady=false),boatHeading=null,arm={},adjust={},manageVesselData={},resetCentreAnalysis={},conditionUpdate={_ ->},resetWindBaseline={},pause={},resume={},lift={},openAnchorMap={},recalculateCentre={},reconnectNmea={},openNmea={},switchToSystemGps={},
             )}
         }
         compose.onNodeWithTag("set_anchor_primary").assertIsDisplayed().assertIsEnabled().performClick()

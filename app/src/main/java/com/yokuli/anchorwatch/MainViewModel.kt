@@ -132,17 +132,17 @@ import com.yokuli.anchorwatch.runtime.output.PhonePositionNmeaOutputRuntime
 import com.yokuli.anchorwatch.runtime.output.PhonePositionOutputStatus
 import com.yokuli.anchorwatch.runtime.condition.ConditionRuntime
 import com.yokuli.anchorwatch.data.anchorage.AnchorageApproachRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageExperienceRepository
 import com.yokuli.anchorwatch.data.anchorage.AnchorageQrImageGenerator
 import com.yokuli.anchorwatch.data.anchorage.AnchorageShareContent
 import com.yokuli.anchorwatch.data.anchorage.DuplicateAnchorageException
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.localization.usesChinese
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachEngine
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachState
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterDistance
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyEpisodeTracker
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyPolicy
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageExperienceEvent
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageExperienceState
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachEngine
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachState
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachTarget
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionPolicy
 import com.yokuli.anchorwatch.domain.anchorage.ApproachHeadingMode
 import com.yokuli.anchorwatch.domain.navigation.NmeaCourseTrustGate
@@ -229,9 +229,9 @@ data class MainUiState(
     val liveWind:LiveWindState=LiveWindState(),
     val conditions:ConditionRuntimeSnapshot=ConditionRuntimeSnapshot(),
     val savedAnchorages:List<SavedAnchorageEntity> = emptyList(),
-    val anchorageClusters:List<AnchorageCluster> = emptyList(),
-    val anchorageApproach:AnchorageApproachState = AnchorageApproachState(),
-    val nearbyAnchoragePrompt:List<AnchorageClusterDistance> = emptyList(),
+    val anchorageTargets:List<AnchorageSpotApproachTarget> = emptyList(),
+    val anchorageExperience:AnchorageExperienceState = AnchorageExperienceState.Browsing,
+    val anchorageApproach:AnchorageSpotApproachState = AnchorageSpotApproachState(),
     val approachDisclaimerTargetId:String?=null,
     val anchorageDuplicateExisting:SavedAnchorageEntity?=null,
     val anchorageOperationError:String?=null,
@@ -253,7 +253,7 @@ data class MainUiState(
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
 private data class AvailablePositions(val nmea:NavigationFix?,val system:NavigationFix?,val demo:NavigationFix?,val demoStatus:DemoGpsStatus)
-data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=true,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig())
+data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=true,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig(),val anchoragePlaceId:Long?=null,val anchorageSpotId:Long?=null)
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -284,6 +284,7 @@ class MainViewModel @Inject constructor(
     private val liveWindRepository:LiveWindRepository,
     private val conditionRuntime:ConditionRuntime,
     private val anchorageApproachRepository:AnchorageApproachRepository,
+    private val anchorageExperienceRepository:AnchorageExperienceRepository,
     private val anchorageSpotRepository:com.yokuli.anchorwatch.data.anchorage.AnchorageSpotRepository,
     private val anchorageQrImageGenerator:AnchorageQrImageGenerator,
     private val vesselDataHub:VesselDataHub,
@@ -307,11 +308,8 @@ class MainViewModel @Inject constructor(
     private var observedSessionId:Long?=null
     private var sonarSamplesJob:Job?=null
     private var observedSonarSurveyId:Long?=null
-    private val anchorageNearbyTracker=AnchorageNearbyEpisodeTracker()
     private val nmeaCourseTrustGate=NmeaCourseTrustGate()
-    private var selectedApproachClusterId:String?=null
-    private var selectedApproachMemberIds:Set<Long> = emptySet()
-    private var gisApproachTarget:AnchorageCluster?=null
+    private var lastExperienceAnchor:AnchorSessionEntity?=null
     private var lastApproachHeadingRefreshElapsed=0L
     private var nmeaAutoPromotionJob:Job?=null
 
@@ -348,7 +346,8 @@ class MainViewModel @Inject constructor(
                 val trustedNmeaCourse=nmeaCourseTrustGate.update(position.nmea,nowElapsed)
                 _ui.update{it.copy(nmeaFix=position.nmea,trustedNmeaCourse=trustedNmeaCourse,nmeaConnectionStartedElapsed=values[2] as Long?,systemFix=position.system,connection=connection,diagnostics=values[3] as NmeaDiagnostics,settings=position.settings,settingsReady=true,sessions=sessions,active=active,demoGps=sourceAndDemo.second)}
                 observePoints(active)
-                if(selectedApproachClusterId!=null)refreshAnchorageApproach(nowElapsed)
+                syncAnchorageExperience(active)
+                if(anchorageExperienceRepository.state.value is AnchorageExperienceState.Approaching || anchorageExperienceRepository.state.value is AnchorageExperienceState.Arrived)refreshAnchorageApproach(nowElapsed)
             }
         }
         viewModelScope.launch{acceptedPosition.state.map{accepted->delay(UI_POSITION_FRAME_MILLIS);accepted}.collect{accepted->_ui.update{it.copy(fix=accepted.acceptedFix,positionHealth=accepted.health,acceptedPosition=accepted)};refreshDepthUi()}}
@@ -358,7 +357,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{phoneHeadingRepository.sample.collect{sample->
             _ui.update{it.copy(phoneHeading=sample)}
             val nowElapsed=android.os.SystemClock.elapsedRealtime()
-            if(selectedApproachClusterId!=null&&nowElapsed-lastApproachHeadingRefreshElapsed>=100L){
+            if((anchorageExperienceRepository.state.value is AnchorageExperienceState.Approaching || anchorageExperienceRepository.state.value is AnchorageExperienceState.Arrived)&&nowElapsed-lastApproachHeadingRefreshElapsed>=100L){
                 lastApproachHeadingRefreshElapsed=nowElapsed
                 refreshAnchorageApproach(nowElapsed)
             }
@@ -379,14 +378,14 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{vesselAttitudeRepository.mountState.collect{value->_ui.update{it.copy(phoneVesselMountState=value)}}}
         viewModelScope.launch{conditionRuntime.state.collect{value->_ui.update{it.copy(conditions=value)}}}
         viewModelScope.launch{anchorageApproachRepository.anchorages.collect{value->_ui.update{it.copy(savedAnchorages=value)}}}
-        viewModelScope.launch{anchorageApproachRepository.clusters.collect{clusters->
-            if(selectedApproachClusterId!=null&&gisApproachTarget==null){
-                val resolved=com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterIdentityResolver.resolve(selectedApproachClusterId,selectedApproachMemberIds,clusters)
-                selectedApproachClusterId=resolved?.id
-                selectedApproachMemberIds=resolved?.savedAnchorageIds?.toSet().orEmpty()
-                if(resolved==null)phoneHeadingRepository.setApproachDemand(false)
-            }
-            _ui.update{it.copy(anchorageClusters=clusters)}
+        viewModelScope.launch{anchorageApproachRepository.targets.collect{targets->
+            anchorageExperienceRepository.resetIfTargetMissing(targets.mapTo(mutableSetOf()){it.placeId},targets.mapTo(mutableSetOf()){it.spotId})
+            _ui.update{it.copy(anchorageTargets=targets)}
+            refreshAnchorageApproach()
+        }}
+        viewModelScope.launch{anchorageExperienceRepository.state.collect{experience->
+            _ui.update{it.copy(anchorageExperience=experience)}
+            phoneHeadingRepository.setApproachDemand(experience is AnchorageExperienceState.Approaching || experience is AnchorageExperienceState.Arrived)
             refreshAnchorageApproach()
         }}
         viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{source->systemLocation.setAppEnabled(source==GpsDataSource.SYSTEM||source==GpsDataSource.DEMO)}}
@@ -431,7 +430,6 @@ class MainViewModel @Inject constructor(
 
     private fun refreshAnchorageApproach(nowElapsed:Long=android.os.SystemClock.elapsedRealtime()){
         val state=_ui.value
-        if(state.active!=null&&selectedApproachClusterId!=null){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();gisApproachTarget=null;phoneHeadingRepository.setApproachDemand(false)}
         val accepted=state.fix?.takeIf{
             it.valid&&state.positionHealth!=com.yokuli.anchorwatch.domain.model.PositionHealth.GPS_LOST
         }
@@ -452,9 +450,15 @@ class MainViewModel @Inject constructor(
             trustedCourseAvailable=trustedNmeaCourse!=null,
         )
         val headingMode=if(state.approachHeadingMode==ApproachHeadingMode.VESSEL&&!vesselHeadingAvailable)ApproachHeadingMode.PHONE else state.approachHeadingMode
-        val approach=AnchorageApproachEngine.evaluate(
-            clusters=availableApproachClusters(),
-            selectedClusterId=selectedApproachClusterId,
+        val experience=anchorageExperienceRepository.state.value
+        val selectedSpotId=when(experience){
+            is AnchorageExperienceState.Approaching->experience.spotId
+            is AnchorageExperienceState.Arrived->experience.spotId
+            else->null
+        }
+        val approach=AnchorageSpotApproachEngine.evaluate(
+            targets=state.anchorageTargets,
+            selectedSpotId=selectedSpotId,
             positionLatitude=accepted?.latitude,
             positionLongitude=accepted?.longitude,
         ){bearing->
@@ -476,15 +480,22 @@ class MainViewModel @Inject constructor(
                 cogTrustedBySourcePolicy=trustedNmeaCourse!=null,
             )
         }
-        val allDistances=if(accepted==null)emptyList() else AnchorageNearbyPolicy.distances(
-            accepted.latitude,accepted.longitude,state.anchorageClusters,
-        )
-        val promptIds=anchorageNearbyTracker.update(
-            allDistances,
-            automaticPromptEnabled=state.active==null&&selectedApproachClusterId==null,
-        )
-        val prompt=allDistances.filter{it.cluster.id in promptIds}
-        _ui.update{it.copy(anchorageApproach=approach,nearbyAnchoragePrompt=prompt,approachHeadingMode=headingMode,vesselApproachHeadingAvailable=vesselHeadingAvailable)}
+        if(approach.phase==com.yokuli.anchorwatch.domain.anchorage.ApproachPhase.INSIDE_AREA&&experience is AnchorageExperienceState.Approaching){
+            anchorageExperienceRepository.dispatch(AnchorageExperienceEvent.TargetAreaEntered)
+        }
+        _ui.update{it.copy(anchorageApproach=approach,approachHeadingMode=headingMode,vesselApproachHeadingAvailable=vesselHeadingAvailable)}
+    }
+
+    private fun syncAnchorageExperience(active:AnchorSessionEntity?){
+        val previous=lastExperienceAnchor
+        if(active!=null){
+            if(previous?.id!=active.id||anchorageExperienceRepository.state.value !is AnchorageExperienceState.Anchored){
+                anchorageExperienceRepository.dispatch(AnchorageExperienceEvent.AnchorStarted(active.id,active.anchoragePlaceId,active.anchorageSpotId))
+            }
+        }else if(previous!=null){
+            anchorageExperienceRepository.dispatch(AnchorageExperienceEvent.AnchorLifted(setOfNotNull(previous.anchoragePlaceId)))
+        }
+        lastExperienceAnchor=active
     }
 
     private fun refreshStorageHealth()=viewModelScope.launch{
@@ -908,6 +919,7 @@ class MainViewModel @Inject constructor(
             .putExtra("antennaOffset",if(input.positionSource==GpsDataSource.NMEA)_ui.value.settings.nmeaGpsAntennaToBowMeters else 0.0)
             .putExtra("warning",maxOf(input.alarmRadiusMeters*.8,input.alarmRadiusMeters-10).coerceAtMost(input.alarmRadiusMeters-.1)).putExtra("alarm",input.alarmRadiusMeters).putExtra("placement",input.placement.name).putExtra("rangeMode",input.rangeMode.name).putExtra("safetyPreset",input.safetyPreset.name).putExtra("positionSource",input.positionSource.name).putExtra("centerSource",input.centerSource.name).putExtra("usePhoneHeading",true)
             .putExtra("depthSource",input.depthSource.name)
+            .putExtra("anchoragePlaceId",input.anchoragePlaceId?:-1L).putExtra("anchorageSpotId",input.anchorageSpotId?:-1L)
             .putExtra("depthGuard",input.conditions.depthGuardEnabled).putExtra("shallowDepth",input.conditions.shallowDepthAlarmMeters?:Double.NaN).putExtra("deepDepth",input.conditions.deepDepthAlarmMeters?:Double.NaN).putExtra("windGuard",input.conditions.windGuardEnabled).putExtra("windWarning",input.conditions.windWarningKnots?:Double.NaN).putExtra("windAlarm",input.conditions.windAlarmKnots?:Double.NaN).putExtra("windShift",input.conditions.windShiftEnabled).putExtra("windShiftDegrees",input.conditions.windShiftThresholdDegrees?:Double.NaN).putExtra("apparentFallback",input.conditions.windAllowApparentFallback)
         ContextCompat.startForegroundService(app,intent)
     }
@@ -996,27 +1008,25 @@ class MainViewModel @Inject constructor(
     fun openAnchorageInGoogleMaps(value:SavedAnchorageEntity)=openCoordinatesInGoogleMaps(value.latitude,value.longitude)
     fun openAnchorageCoordinates(latitude:Double,longitude:Double)=openCoordinatesInGoogleMaps(latitude,longitude)
     fun approachAnchorageSpot(spotId:Long)=viewModelScope.launch{
-        val spot=anchorageSpotRepository.get(spotId)?:run{runtimeDiagnostics.recordUserFeedback("Approach unavailable","That saved anchoring spot no longer exists. Refresh the library or restore it from backup.",true);return@launch}
-        if(_ui.value.anchorageClusters.any{spot.id in it.savedAnchorageIds}){approachSavedAnchorage(spot.id);return@launch}
-        val radius=maxOf(40.0,spot.preferredAlarmRadiusMeters?.takeIf{it.isFinite()&&it>0}?:0.0,spot.coordinateUncertaintyMeters?.takeIf{it.isFinite()&&it>0}?:0.0)
-        val target=AnchorageCluster("spot:${spot.id}",spot.latitude,spot.longitude,radius,emptyList(),spot.name,1,spot.typicalWaterDepthMeters,spot.typicalWaterDepthMeters,spot.typicalRodeLengthMeters,spot.typicalRodeLengthMeters,spot.preferredAlarmRadiusMeters,spot.preferredAlarmRadiusMeters,spot.lastVisitedAt,spot.preferredAlarmRadiusMeters==null,spot.coordinateSource!="CONFIRMED_ANCHOR")
-        gisApproachTarget=target;approachAnchorage(target.id)
+        if(_ui.value.anchorageTargets.none{it.spotId==spotId}){runtimeDiagnostics.recordUserFeedback("Approach unavailable","That saved anchoring Spot no longer exists. Refresh the library or restore it from backup.",true);return@launch}
+        requestAnchorageApproach(spotId)
     }
-    fun approachSavedAnchorage(savedAnchorageId:Long){
-        val cluster=_ui.value.anchorageClusters.firstOrNull{savedAnchorageId in it.savedAnchorageIds}?:run{runtimeDiagnostics.recordUserFeedback("Approach unavailable","The selected saved anchorage is not present in the current spatial index. Open its details and verify the saved coordinates.",true);return}
-        approachAnchorage(cluster.id)
+    fun approachSavedAnchorage(savedAnchorageId:Long)=requestAnchorageApproach(savedAnchorageId)
+    fun approachAnchorage(targetId:String){
+        val spotId=targetId.removePrefix("spot:").toLongOrNull()?:return
+        requestAnchorageApproach(spotId)
     }
-    fun approachAnchorage(clusterId:String){
-        if(availableApproachClusters().none{it.id==clusterId}){runtimeDiagnostics.recordUserFeedback("Approach unavailable","The selected anchorage target could not be resolved. The current Anchor Watch state was not changed.",true);return}
+    private fun requestAnchorageApproach(spotId:Long){
+        if(_ui.value.anchorageTargets.none{it.spotId==spotId}){runtimeDiagnostics.recordUserFeedback("Approach unavailable","The selected Place/Spot target could not be resolved. The current Anchor Watch state was not changed.",true);return}
         if(_ui.value.active!=null){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Lift anchor before starting saved-anchorage approach guidance. The active alarm session remains unchanged."))}
             return
         }
-        if(_ui.value.settings.anchorageApproachDisclaimerAccepted)startAnchorageApproach(clusterId)
-        else _ui.update{it.copy(page=0,approachDisclaimerTargetId=clusterId)}
+        if(_ui.value.settings.anchorageApproachDisclaimerAccepted)startAnchorageApproach(spotId)
+        else _ui.update{it.copy(page=0,approachDisclaimerTargetId=spotId.toString())}
     }
     fun confirmAnchorageApproachDisclaimer(){
-        val target=_ui.value.approachDisclaimerTargetId?:return
+        val target=_ui.value.approachDisclaimerTargetId?.toLongOrNull()?:return
         if(_ui.value.active!=null){
             _ui.update{it.copy(approachDisclaimerTargetId=null,connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Lift anchor before starting saved-anchorage approach guidance. The active alarm session remains unchanged."))}
             return
@@ -1027,30 +1037,26 @@ class MainViewModel @Inject constructor(
         startAnchorageApproach(target)
     }
     fun dismissAnchorageApproachDisclaimer()=_ui.update{it.copy(approachDisclaimerTargetId=null)}
-    private fun startAnchorageApproach(clusterId:String){
+    private fun startAnchorageApproach(spotId:Long){
         if(_ui.value.active!=null){runtimeDiagnostics.recordUserFeedback("Approach not started","Lift the active anchor before starting saved-anchorage approach guidance.",true);return}
-        val target=availableApproachClusters().firstOrNull{it.id==clusterId}?:run{runtimeDiagnostics.recordUserFeedback("Approach unavailable","The selected target is no longer available.",true);return}
-        selectedApproachClusterId=target.id
-        selectedApproachMemberIds=target.savedAnchorageIds.toSet()
-        phoneHeadingRepository.setApproachDemand(true)
-        anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
-        _ui.update{it.copy(page=0,anchorSection=0,approachDisclaimerTargetId=null,nearbyAnchoragePrompt=emptyList(),approachHeadingMode=if(it.vesselApproachHeadingAvailable)ApproachHeadingMode.VESSEL else ApproachHeadingMode.PHONE)}
+        val target=_ui.value.anchorageTargets.firstOrNull{it.spotId==spotId}?:run{runtimeDiagnostics.recordUserFeedback("Approach unavailable","The selected target is no longer available.",true);return}
+        anchorageExperienceRepository.dispatch(AnchorageExperienceEvent.StartApproach(anchorageExperienceRepository.nextEpisodeId(),target.placeId,target.spotId,System.currentTimeMillis()))
+        _ui.update{it.copy(page=0,anchorSection=0,approachDisclaimerTargetId=null,approachHeadingMode=if(it.vesselApproachHeadingAvailable)ApproachHeadingMode.VESSEL else ApproachHeadingMode.PHONE)}
         refreshAnchorageApproach()
     }
     fun setApproachHeadingMode(mode:ApproachHeadingMode){
         val state=_ui.value
-        if(selectedApproachClusterId==null)return
+        if(state.anchorageExperience !is AnchorageExperienceState.Approaching&&state.anchorageExperience !is AnchorageExperienceState.Arrived)return
         if(mode==ApproachHeadingMode.VESSEL&&!state.vesselApproachHeadingAvailable)return
         _ui.update{it.copy(approachHeadingMode=mode)}
         refreshAnchorageApproach()
     }
-    fun cancelAnchorageApproach(){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();gisApproachTarget=null;phoneHeadingRepository.setApproachDemand(false);refreshAnchorageApproach()}
-    private fun availableApproachClusters()=_ui.value.anchorageClusters+listOfNotNull(gisApproachTarget).filter{target->_ui.value.anchorageClusters.none{it.id==target.id}}
-    fun setMapHeadingDisplayActive(active:Boolean){phoneHeadingRepository.setDisplayDemand(active)}
-    fun dismissNearbyAnchorage(){
-        anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
-        _ui.update{it.copy(nearbyAnchoragePrompt=emptyList())}
+    fun cancelAnchorageApproach(){
+        val placeId=when(val current=anchorageExperienceRepository.state.value){is AnchorageExperienceState.Approaching->current.placeId;is AnchorageExperienceState.Arrived->current.placeId;else->null}
+        anchorageExperienceRepository.dispatch(AnchorageExperienceEvent.CancelApproach(setOfNotNull(placeId)))
+        refreshAnchorageApproach()
     }
+    fun setMapHeadingDisplayActive(active:Boolean){phoneHeadingRepository.setDisplayDemand(active)}
     private fun openCoordinatesInGoogleMaps(latitude:Double,longitude:Double){
         val uri=android.net.Uri.parse(AnchorageShareContent.googleMapsUrl(latitude,longitude))
         val google=Intent(Intent.ACTION_VIEW,uri).setPackage("com.google.android.apps.maps").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

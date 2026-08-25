@@ -50,7 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageApproachState
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachState
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachTarget
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterDistance
 import com.yokuli.anchorwatch.domain.anchorage.ApproachDirectionPolicy
@@ -64,12 +65,22 @@ data class AnchorageSetupReference(
     val alarmRadiusMeters: Double?,
     val waterDepthMeters: Double?,
     val rodeMeters: Double?,
+    val placeId:Long?=null,
+    val spotId:Long?=null,
 )
 
 fun AnchorageCluster.setupReference() = AnchorageSetupReference(
     alarmRadiusMeters = maxAlarmRadiusMeters,
     waterDepthMeters = maxDepthMeters,
     rodeMeters = maxRodeMeters,
+)
+
+fun AnchorageSpotApproachTarget.setupReference() = AnchorageSetupReference(
+    alarmRadiusMeters = alarmRadiusMeters,
+    waterDepthMeters = waterDepthMeters,
+    rodeMeters = rodeMeters,
+    placeId=placeId,
+    spotId=spotId,
 )
 
 @Composable
@@ -126,11 +137,11 @@ internal fun NearbyAnchorageCard(
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 internal fun AnchorageApproachOverlay(
-    state: AnchorageApproachState,
+    state: AnchorageSpotApproachState,
     headingMode: ApproachHeadingMode,
     vesselHeadingAvailable: Boolean,
     setHeadingMode: (ApproachHeadingMode) -> Unit,
-    details: (AnchorageCluster) -> Unit,
+    details: (AnchorageSpotApproachTarget) -> Unit,
     cancel: () -> Unit,
     setAnchorWatch: (AnchorageSetupReference) -> Unit,
     modifier: Modifier = Modifier,
@@ -169,8 +180,8 @@ internal fun AnchorageApproachOverlay(
                     state.phase == ApproachPhase.INSIDE_AREA -> {
                         Icon(Icons.Default.CheckCircle, null, Modifier.size(112.dp), tint = SafetyColors.Safe)
                         Text(tr("SAVED ANCHORING AREA", "已进入收藏锚地参考范围"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                        Text(target.displayName, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
-                        Text(tr("${target.savedPointCount} saved anchor points", "${target.savedPointCount} 个收藏锚点"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(target.placeName, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                        Text(target.spotName, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         HistoricalReferenceSummary(target)
                         Text(
                             tr(
@@ -215,7 +226,8 @@ internal fun AnchorageApproachOverlay(
                         state.distanceToAreaMeters?.let {
                             Text(ApproachDistanceFormatter.format(it), style = MaterialTheme.typography.displayMedium, color = approachColor, fontWeight = FontWeight.Bold)
                         }
-                        Text(target.displayName.uppercase(), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                        Text(target.placeName.uppercase(), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                        Text(target.spotName, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
                         Text(tr("TO SAVED ANCHORING AREA", "前往收藏锚地参考范围"), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                         Text(directionReferenceLabel(state.directionReference), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         FilledTonalButton({ details(target) }) { Text(tr("Details", "详情")) }
@@ -304,11 +316,11 @@ internal fun AnchorageListDialog(
 }
 
 @Composable
-private fun HistoricalReferenceSummary(cluster: AnchorageCluster) {
+private fun HistoricalReferenceSummary(target: AnchorageSpotApproachTarget) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        ReferenceLine(tr("Saved depth reference", "收藏水深参考"), range(cluster.minDepthMeters, cluster.maxDepthMeters, "m"))
-        ReferenceLine(tr("Saved rode", "收藏锚链"), range(cluster.minRodeMeters, cluster.maxRodeMeters, "m", whole = true))
-        ReferenceLine(tr("Saved radius", "收藏范围"), range(cluster.minAlarmRadiusMeters, cluster.maxAlarmRadiusMeters, "m", whole = true))
+        ReferenceLine(tr("Saved depth reference", "收藏水深参考"), target.waterDepthMeters?.let { "%.1f m".format(it) } ?: "—")
+        ReferenceLine(tr("Saved rode", "收藏锚链"), target.rodeMeters?.let { "${it.toInt()} m" } ?: "—")
+        ReferenceLine(tr("Saved radius", "收藏范围"), target.alarmRadiusMeters?.let { "${it.toInt()} m" } ?: "—")
     }
 }
 

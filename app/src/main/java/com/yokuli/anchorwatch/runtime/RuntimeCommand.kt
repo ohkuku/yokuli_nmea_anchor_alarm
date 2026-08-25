@@ -25,6 +25,8 @@ sealed interface RuntimeCommand {
         val usePhoneHeading:Boolean,
         val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,
         val conditions:ConditionGuardConfig=ConditionGuardConfig(),
+        val anchoragePlaceId:Long?=null,
+        val anchorageSpotId:Long?=null,
     ):RuntimeCommand
     data object SnoozeAlarm:RuntimeCommand
     data object PauseWatch:RuntimeCommand
@@ -75,7 +77,7 @@ object RuntimeCommandParser {
                     windShiftEnabled=intent.getBooleanExtra("windShift",false),
                     windShiftThresholdDegrees=intent.getDoubleExtra("windShiftDegrees",Double.NaN).takeUnless(Double::isNaN),
                     windAllowApparentFallback=intent.getBooleanExtra("apparentFallback",true),
-                ).validated())
+                ).validated(),intent.getLongExtra("anchoragePlaceId",-1L).takeIf{it>0},intent.getLongExtra("anchorageSpotId",-1L).takeIf{it>0})
             }
             AnchorForegroundService.ACK,AnchorForegroundService.SNOOZE->RuntimeCommand.SnoozeAlarm
             AnchorForegroundService.STOP_WATCH,AnchorForegroundService.PAUSE_WATCH->RuntimeCommand.PauseWatch

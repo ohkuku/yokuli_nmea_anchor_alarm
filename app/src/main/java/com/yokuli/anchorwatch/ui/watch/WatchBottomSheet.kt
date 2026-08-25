@@ -75,7 +75,7 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthPresentation
 import com.yokuli.anchorwatch.data.linz.LinzDepthStatus
 
 @Composable
-internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit, adjust:()->Unit,manageVesselData:()->Unit,resetCentreAnalysis:()->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewNearby:(List<Long>)->Unit,nearbyActions:SavedAnchorageCardActions,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit,recalculateCentre:()->Unit,reconnectNmea:()->Unit,openNmea:()->Unit,switchToSystemGps:()->Unit) {
+internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit, adjust:()->Unit,manageVesselData:()->Unit,resetCentreAnalysis:()->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit,recalculateCentre:()->Unit,reconnectNmea:()->Unit,openNmea:()->Unit,switchToSystemGps:()->Unit) {
     val fix = state.fix; val active = state.active; val now=android.os.SystemClock.elapsedRealtime()
     var showHealth by remember{mutableStateOf(false)};var showDepthDetails by remember{mutableStateOf(false)};var showConditions by remember{mutableStateOf(false)};var confirmAnalysisReset by remember{mutableStateOf(false)}
     var startBlocker by remember{mutableStateOf<String?>(null)}
@@ -116,7 +116,6 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
     // but Watch must retain a discoverable reference while the boat remains within
     // the same 1 NM policy used by the approach engine. Do not reintroduce the old
     // 250 m point-distance rule here: the saved object is an anchoring area.
-    val nearby=if(active==null)state.anchorageApproach.nearbyClusters else emptyList()
     Surface(tonalElevation = 3.dp) { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) {
             Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
@@ -162,13 +161,6 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
             }}
         }
         if(active!=null&&(active.depthGuardEnabled||active.windGuardEnabled||active.windShiftEnabled)){val conditions=state.conditions;val depthStatus=depthGuardLabel(conditions.depth.status);val windStatus=windGuardLabel(conditions.windSpeed.status);val shiftStatus=shiftGuardLabel(conditions.windShift.status);Text(buildString{if(active.depthGuardEnabled)append(tr("Depth","水深")+" ${conditions.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:"—"} · $depthStatus");if(active.windGuardEnabled){if(isNotEmpty())append("\n");append(tr("Wind","风速")+" ${conditions.windSpeed.filteredSpeedKnots?.let{"%.1f kn".format(it)}?:"—"} ${conditions.windSpeed.source?:""} · $windStatus")};if(active.windShiftEnabled){if(isNotEmpty())append("\n");append(tr("Shift","风向变化")+" ${conditions.windShift.shiftDegrees?.let{"${it.toInt()}°"}?:"—"} · $shiftStatus")}},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        if(nearby.isNotEmpty())NearbyAnchorageCard(
-            nearby=nearby,
-            savedAnchorages=state.savedAnchorages,
-            actions=nearbyActions,
-            openList=viewNearby,
-            modifier=Modifier.testTag("watch_nearby_anchorage"),
-        )
         val quality=gpsQualityMetric(state.settings.gpsDataSource,fix)
         HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Metric(tr("SOG","航速"), fix?.sogKnots?.let { "%.1f kn".format(it) } ?: "—"); Metric(tr("Heading","艏向"), boatHeading?.let { "${it.toInt()}°" } ?: "—"); Metric(quality.first,quality.second) }
         DepthSummary(state){showDepthDetails=true}

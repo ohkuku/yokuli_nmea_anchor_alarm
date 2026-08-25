@@ -4,9 +4,8 @@ import com.yokuli.anchorwatch.data.database.AppDatabase
 import com.yokuli.anchorwatch.data.database.SavedAnchorageEntity
 import com.yokuli.anchorwatch.data.database.entity.AnchoragePlaceEntity
 import com.yokuli.anchorwatch.data.database.entity.AnchorageSpotEntity
-import com.yokuli.anchorwatch.domain.anchorage.AnchorageClusterer
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageSaveDraft
-import com.yokuli.anchorwatch.domain.anchorage.SavedAnchorageReference
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageSpotApproachTarget
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -34,9 +33,35 @@ class AnchorageApproachRepository @Inject constructor(
         spotRows.mapNotNull{spot->placeById[spot.placeId]?.let{place->spot.toPresentation(place,ratingByPlace[place.id]?.legacyOverallRating,latestSessionBySpot[spot.id])}}
     }.distinctUntilChanged()
 
-    val clusters = anchorages
-        .map { saved -> AnchorageClusterer.cluster(saved.map(SavedAnchorageEntity::toApproachReference)) }
-        .distinctUntilChanged()
+    /** Canonical live guidance targets. These IDs survive
+     * map zoom, edits and process recreation. */
+    val targets = combine(
+        database.anchoragePlaceDao().observeActive(),
+        database.anchorageSpotDao().observeAll(),
+    ) { placeRows, spotRows ->
+        val placesById = placeRows.associateBy { it.id }
+        spotRows.mapNotNull { spot ->
+            placesById[spot.placeId]?.let { place ->
+                AnchorageSpotApproachTarget(
+                    placeId = place.id,
+                    spotId = spot.id,
+                    placeName = place.displayName,
+                    spotName = spot.name,
+                    latitude = spot.latitude,
+                    longitude = spot.longitude,
+                    areaRadiusMeters = maxOf(
+                        40.0,
+                        spot.preferredAlarmRadiusMeters?.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
+                        spot.coordinateUncertaintyMeters?.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
+                    ),
+                    coordinateEstimated = spot.coordinateSource != "CONFIRMED_ANCHOR",
+                    alarmRadiusMeters = spot.preferredAlarmRadiusMeters,
+                    waterDepthMeters = spot.typicalWaterDepthMeters,
+                    rodeMeters = spot.typicalRodeLengthMeters,
+                )
+            }
+        }
+    }.distinctUntilChanged()
 
     suspend fun save(value:SavedAnchorageEntity):Long{
         val current=value.id.takeIf{it>0}?.let{database.anchorageSpotDao().get(it)}
@@ -47,12 +72,10 @@ class AnchorageApproachRepository @Inject constructor(
             return current.id
         }
         val draft=AnchorageSaveDraft(value.sourceSessionId,value.latitude,value.longitude,value.coordinateSource,value.coordinateUncertaintyMeters,value.typicalWaterDepthMeters,value.typicalRodeLengthMeters,value.preferredAlarmRadiusMeters,value.seabedType)
-        val duplicate=saver.nearbyPlaceMatches(draft,null,value.name).firstOrNull{it.distanceMeters<=75.0}
-        if(duplicate!=null){
-            val duplicatePlace=database.anchoragePlaceDao().get(duplicate.place.id)
-            val duplicateSpot=database.anchorageSpotDao().forPlaceNow(duplicate.place.id).minByOrNull{spot->com.yokuli.anchorwatch.domain.anchorage.AnchorageGeometryOps.distance(com.yokuli.anchorwatch.domain.anchorage.AnchorageGeoPoint(value.latitude,value.longitude),com.yokuli.anchorwatch.domain.anchorage.AnchorageGeoPoint(spot.latitude,spot.longitude))}
-            if(duplicatePlace!=null&&duplicateSpot!=null)throw DuplicateAnchorageException(duplicateSpot.toPresentation(duplicatePlace))
-        }
+        // This compatibility entry creates a distinct Place/Spot. A fixed
+        // distance must never silently merge or reject an anchoring position;
+        // the stepped save flow exposes uncertainty-aware matches for the user
+        // to decide explicitly.
         return saver.save(AnchorageSaveRequest(draft,AnchorageSavePlaceInput(displayName=value.name.trim().ifBlank{"Saved anchorage"},personalNotes=value.notes),AnchorageSaveSpotInput(name="Main spot",personalNotes=value.notes))).spotId
     }
 
@@ -83,22 +106,4 @@ private fun AnchorageSpotEntity.toPresentation(place:AnchoragePlaceEntity,rating
     sourceSessionId=sourceSessionId,
     coordinateSource=coordinateSource,
     coordinateUncertaintyMeters=coordinateUncertaintyMeters,
-)
-
-private fun SavedAnchorageEntity.toApproachReference() = SavedAnchorageReference(
-    id = id,
-    name = name,
-    latitude = latitude,
-    longitude = longitude,
-    preferredAlarmRadiusMeters = preferredAlarmRadiusMeters,
-    typicalWaterDepthMeters = typicalWaterDepthMeters,
-    typicalRodeLengthMeters = typicalRodeLengthMeters,
-    seabedType = seabedType,
-    rating = rating,
-    notes = notes,
-    sourceSessionId = sourceSessionId,
-    updatedAt = updatedAt,
-    lastVisitedAt = lastVisitedAt,
-    coordinateSource = coordinateSource,
-    coordinateUncertaintyMeters = coordinateUncertaintyMeters,
 )

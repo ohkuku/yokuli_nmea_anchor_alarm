@@ -246,7 +246,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   // and stop the Service before Android sees its foreground acknowledgement.
   idleStopJob?.cancel();idleStopJob=null
   when(command){
-   is RuntimeCommand.ArmWatch->{armPending=true;val request=ArmRequest(command.config,command.placement,command.rangeMode,command.safetyPreset,command.boatLength,command.positionSource,command.centerSource,command.usePhoneHeading,command.depthSource,command.conditions);launchCommand{try{
+   is RuntimeCommand.ArmWatch->{armPending=true;val request=ArmRequest(command.config,command.placement,command.rangeMode,command.safetyPreset,command.boatLength,command.positionSource,command.centerSource,command.usePhoneHeading,command.depthSource,command.conditions,command.anchoragePlaceId,command.anchorageSpotId);launchCommand{try{
     val now=monotonicClock.elapsedRealtime();val demo=command.positionSource==GpsDataSource.DEMO
     val sensors=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.Sensors(
      instrumentStream=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.hasInstrumentTraffic(navigation.connectionState.value),

@@ -17,7 +17,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yokuli.anchorwatch.data.anchorage.AnchorageLibraryRepository
+import com.yokuli.anchorwatch.data.anchorage.AnchorageExperienceRepository
 import com.yokuli.anchorwatch.data.anchorage.AnchorageNearbyPlace
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageExperienceEvent
+import com.yokuli.anchorwatch.domain.anchorage.AnchorageExperienceState
 import com.yokuli.anchorwatch.domain.anchorage.AnchorageNearbyPolicy
 import com.yokuli.anchorwatch.tr
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,10 +34,10 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class AnchorageNearbyViewModel @Inject constructor(
     private val library: AnchorageLibraryRepository,
+    private val experience: AnchorageExperienceRepository,
 ) : ViewModel() {
     private val mutable = MutableStateFlow<List<AnchorageNearbyPlace>>(emptyList())
     val visible = mutable.asStateFlow()
-    private val dismissed = mutableSetOf<Long>()
     private var job: Job? = null
 
     fun update(latitude: Double?, longitude: Double?, enabled: Boolean) {
@@ -44,13 +47,29 @@ class AnchorageNearbyViewModel @Inject constructor(
             delay(300)
             val candidates = library.nearby(latitude, longitude, AnchorageNearbyPolicy.REARM_DISTANCE_METERS)
             val known = candidates.mapTo(mutableSetOf()) { it.place.id }
-            dismissed.retainAll(known)
-            candidates.filter { it.distanceMeters > AnchorageNearbyPolicy.REARM_DISTANCE_METERS }.forEach { dismissed -= it.place.id }
-            mutable.value = candidates.filter { it.distanceMeters <= AnchorageNearbyPolicy.TRIGGER_DISTANCE_METERS && it.place.id !in dismissed }
+            when(val current=experience.state.value){
+                is AnchorageExperienceState.Nearby->{
+                    val exited=current.placeIds-known
+                    if(exited.isNotEmpty())experience.dispatch(AnchorageExperienceEvent.RearmZoneExited(exited))
+                }
+                is AnchorageExperienceState.DepartureCooldown->{
+                    val exited=current.suppressedPlaceIds-known
+                    if(exited.isNotEmpty())experience.dispatch(AnchorageExperienceEvent.RearmZoneExited(exited))
+                }
+                else->Unit
+            }
+            val inside=candidates.filter{it.distanceMeters<=AnchorageNearbyPolicy.TRIGGER_DISTANCE_METERS}
+            when(val current=experience.state.value){
+                AnchorageExperienceState.Browsing->if(inside.isNotEmpty())experience.dispatch(AnchorageExperienceEvent.NearbyDetected(experience.nextEpisodeId(),inside.mapTo(linkedSetOf()){it.place.id}))
+                is AnchorageExperienceState.Nearby->experience.dispatch(AnchorageExperienceEvent.NearbyDetected(current.episodeId,inside.mapTo(linkedSetOf()){it.place.id}))
+                else->Unit
+            }
+            val visibleIds=(experience.state.value as? AnchorageExperienceState.Nearby)?.placeIds.orEmpty()
+            mutable.value=inside.filter{it.place.id in visibleIds}
         }
     }
 
-    fun dismiss() { dismissed += mutable.value.map { it.place.id }; mutable.value = emptyList() }
+    fun dismiss() { experience.dispatch(AnchorageExperienceEvent.NearbyCleared); mutable.value = emptyList() }
 }
 
 @Composable
