@@ -143,7 +143,8 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         input:ConnectionProfile=inputProfile,
         knownReadiness:PhoneVesselOutputReadiness?=null,
     ){
-        val requested=NmeaPublisherConfig.from(value);val requestedSettings=requested.asOutputSettings()
+        val automaticValue=NmeaOutputEndpointPolicy.automatic(value,input)
+        val requested=NmeaPublisherConfig.from(automaticValue);val requestedSettings=requested.asOutputSettings()
         // Readiness is a hard gate for beginning a formal publication session.
         // Once that session exists, a transient mount warning degrades only the
         // affected local streams below; it must not flap the shared socket or

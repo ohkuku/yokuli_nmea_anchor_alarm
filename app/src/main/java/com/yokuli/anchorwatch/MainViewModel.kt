@@ -551,7 +551,7 @@ class MainViewModel @Inject constructor(
         // slowly, which made the test socket consume the stream while the real
         // App socket appeared quiet. The long-lived RX transport is the only
         // endpoint connection; traffic/fix health continues asynchronously.
-        _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.TESTING,"Opening one formal NMEA input connection…"))}
+        _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.TESTING,"Connecting to NMEA input…"))}
         val previous=_ui.value.settings
         nmeaManualDisconnectRepository.clear()
         nav.clearUserDisconnectLatch()
@@ -867,35 +867,37 @@ class MainViewModel @Inject constructor(
     fun clearVesselCalibrationFeedback()=_ui.update{it.copy(vesselCalibrationFeedback=null)}
     fun setNmeaOutputEndpoint(mode:NmeaOutputTransportMode,host:String,port:Int)=viewModelScope.launch{
         val current=_ui.value.outputSettings
+        val input=_ui.value.settings.profile
         if(current.publicationEnabled){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop NMEA output before changing its destination."))};return@launch}
         if(mode==NmeaOutputTransportMode.TCP_SERVER){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Use Phone NMEA service to host a TCP server. Phone/App boat output only writes locally-owned data into the boat network."))}
             return@launch
         }
-        if(mode !in setOf(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportMode.TCP_SERVER)&&(host.isBlank()||port !in 1..65535)){
+        if(mode!=NmeaOutputTransportMode.TCP_SERVER&&(host.isBlank()||port !in 1..65535)){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"This NMEA output destination needs a valid host and port from 1 to 65535."))}
             return@launch
         }
-        val proposed=current.copy(transportMode=mode,outputHost=host.trim(),outputPort=port,transportConfigured=true)
-        if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(proposed,_ui.value.settings.profile)){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))}
-            return@launch
+        val proposed=when(mode){
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaOutputEndpointPolicy.tcpDestination(current,input,input.host,input.port)
+            NmeaOutputTransportMode.DEDICATED_TCP->NmeaOutputEndpointPolicy.tcpDestination(current,input,host,port)
+            NmeaOutputTransportMode.TCP_SERVER->current
+            NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->current.copy(transportMode=mode,outputHost=host.trim(),outputPort=port)
         }
-        outputSettingsRepository.saveConfiguration(proposed.copy(publicationEnabled=false))
+        outputSettingsRepository.saveConfiguration(proposed.copy(transportConfigured=true,publicationEnabled=false))
         _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     }
     fun startNmeaOutput()=viewModelScope.launch{
         val state=_ui.value
         // Destination changes only transport ownership. Every route publishes
         // the same Phone/App-owned feed and can never republish Boat input.
-        val value=state.outputSettings.copy(
+        val value=NmeaOutputEndpointPolicy.automatic(state.outputSettings,state.settings.profile).copy(
             purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
             autoStartOutput=false,
         )
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
         if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Confirm the one-time phone-to-vessel heading alignment before sharing NMEA data.");return@launch}
-        if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,state.settings.profile)){fail(NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE);return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
+        if(value!=state.outputSettings)outputSettingsRepository.saveConfiguration(value.copy(publicationEnabled=false))
         outputSettingsRepository.requestStart()
         _ui.update{it.copy(outputSettings=it.outputSettings.copy(publicationEnabled=true),connectionAttempt=ConnectionAttempt())}
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
@@ -906,36 +908,36 @@ class MainViewModel @Inject constructor(
         // Its command actor performs the hard stop and invalidates queued bytes.
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
     }
-    private fun isOutputDestinationReady(value:NmeaDeviceOutputSettings,state:MainUiState)=value.transportConfigured&&!NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,state.settings.profile)&&when(value.transportMode){
-        NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->state.settings.profile.protocol==Protocol.TCP&&state.settings.profile.host.isNotBlank()&&state.settings.profile.port in 1..65535&&state.connection in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
-        NmeaOutputTransportMode.TCP_SERVER->false
-        NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->value.outputHost.isNotBlank()&&value.outputPort in 1..65535
+    private fun isOutputDestinationReady(value:NmeaDeviceOutputSettings,state:MainUiState):Boolean{
+        val effective=NmeaOutputEndpointPolicy.automatic(value,state.settings.profile)
+        return effective.transportConfigured&&when(effective.transportMode){
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->state.settings.profile.protocol==Protocol.TCP&&state.settings.profile.host.isNotBlank()&&state.settings.profile.port in 1..65535&&state.connection in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
+            NmeaOutputTransportMode.TCP_SERVER->false
+            NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
+        }
     }
-    private fun outputDestinationError(value:NmeaDeviceOutputSettings)=if(!value.transportConfigured)"Choose an NMEA output destination before enabling a stream." else when(value.transportMode){
-        NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Connect a writable TCP NMEA input endpoint before enabling same-socket output."
-        NmeaOutputTransportMode.DEDICATED_TCP->"Enter a valid dedicated TCP output host and port first."
-        NmeaOutputTransportMode.TCP_SERVER->"Use the separate Phone NMEA service page to host a TCP listener."
-        NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->"Enter a valid UDP output host and port first."
+    private fun outputDestinationError(value:NmeaDeviceOutputSettings):String{
+        val effective=NmeaOutputEndpointPolicy.automatic(value,_ui.value.settings.profile)
+        return if(!effective.transportConfigured)"Choose an NMEA output destination before enabling a stream." else when(effective.transportMode){
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Connect the matching TCP NMEA input endpoint before starting output. The App will reuse that connection automatically."
+            NmeaOutputTransportMode.DEDICATED_TCP->"Enter a valid TCP output host and port first."
+            NmeaOutputTransportMode.TCP_SERVER->"Use the separate Phone NMEA service page to host a TCP listener."
+            NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->"Enter a valid UDP output host and port first."
+        }
     }
     fun testNmeaDeviceOutput(result:(Boolean)->Unit)=viewModelScope.launch{
         val state=_ui.value
-        val settings=state.outputSettings;val profile=state.settings.profile
+        val profile=state.settings.profile;val settings=NmeaOutputEndpointPolicy.automatic(state.outputSettings,profile)
         if(settings.transportMode==NmeaOutputTransportMode.TCP_SERVER){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"A phone-hosted listener belongs to Phone NMEA service, not Phone/App boat output."))};result(false);return@launch
-        }
-        if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(settings,profile)){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))};result(false);return@launch
         }
         val success=withContext(Dispatchers.IO){phonePositionNmeaOutputRuntime.testOutput(settings,profile)}
         result(success)
     }
     fun testKnownGoodHdgOutput(result:(Boolean)->Unit)=viewModelScope.launch{
         val state=_ui.value
-        val settings=state.outputSettings;val profile=state.settings.profile
+        val profile=state.settings.profile;val settings=NmeaOutputEndpointPolicy.automatic(state.outputSettings,profile)
         if(settings.transportMode==NmeaOutputTransportMode.TCP_SERVER){result(false);return@launch}
-        if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(settings,profile)){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))};result(false);return@launch
-        }
         val success=withContext(Dispatchers.IO){phonePositionNmeaOutputRuntime.testKnownGoodHdg(settings,profile)}
         result(success)
     }

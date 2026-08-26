@@ -602,8 +602,9 @@ class YokuliRuntimeCoordinator @Inject constructor(
   if(!result.started)notifySeparate(result.title?:"Sonar survey not started",result.message?:"Sonar runtime rejected the request.",true)
   refreshNotification()
  }
- private suspend fun configurePhoneOutput(requested:NmeaDeviceOutputSettings,knownReadiness:PhoneVesselOutputReadiness?=null){
+ private suspend fun configurePhoneOutput(rawRequested:NmeaDeviceOutputSettings,knownReadiness:PhoneVesselOutputReadiness?=null){
   val appSettings=preferences.settings.first()
+  val requested=NmeaOutputEndpointPolicy.automatic(rawRequested,appSettings.profile)
   if(!requested.anyEnabled){phonePositionOutput.configure(requested,appSettings.profile,knownReadiness);nmeaRuntime.releaseIfUnowned();return}
   if(requested.transportMode==NmeaOutputTransportMode.TCP_SERVER){
    outputSettings.requestStop();phonePositionOutput.configure(requested.copy(publicationEnabled=false),appSettings.profile,knownReadiness)
@@ -620,10 +621,6 @@ class YokuliRuntimeCoordinator @Inject constructor(
    phonePositionOutput.configure(requested,appSettings.profile,readiness)
    notifySeparate("Phone vessel output degraded","Phone vessel heading is waiting for a confirmed alignment. Phone GPS and pressure continue without reconnecting the NMEA server.",true)
    refreshNotification();return
-  }
-  if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requested,appSettings.profile)){
-   val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile,readiness);outputSettings.requestStop()
-   notifySeparate("NMEA output endpoint blocked",NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE,true);return
   }
   val effective=requested
   if(effective.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){

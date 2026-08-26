@@ -12,7 +12,7 @@ data class ConnectionProfile(val name:String="Boat",val protocol:Protocol=Protoc
 
 data class NmeaConnectionRetryPolicy(
  val openFailureRetryMillis:Long=15_000L,
- val peerDisconnectRetryMillis:Long=2_000L,
+ val peerDisconnectRetryMillis:Long=15_000L,
  val reconnectCoalesceMillis:Long=1_500L,
  val manualReconnectCooldownMillis:Long=15_000L,
  val maxContinuousFailures:Int=3,
@@ -68,12 +68,10 @@ class NmeaConnectionManager(
  private val _lines=MutableSharedFlow<String>(extraBufferCapacity=256); val lines=_lines.asSharedFlow()
  private val _diagnostics=MutableStateFlow(NmeaTransportDiagnostics());val diagnostics=_diagnostics.asStateFlow()
  fun connect(p:ConnectionProfile):Boolean=synchronized(guard){
-  // A Connect action never replaces an owned generation. Replacing an open or
-  // retrying socket is an explicit Reconnect/Stop decision, not a side effect
-  // of saving another profile. ERROR is terminal and owns no usable socket;
-  // an explicit Connect may replace the coroutine during its tiny ERROR →
-  // finally race instead of forcing the user to tap Stop first.
-  if(job?.isActive==true&&_state.value!=NmeaConnectionState.ERROR)return@synchronized false
+  // Connect is the one live transport attempt, not a disposable test followed
+  // by a second socket. Even a coroutine already reporting ERROR must finish
+  // closing its transport before another generation is allowed to start.
+  if(job?.isActive==true)return@synchronized false
   startLocked(p,operation="USER_CONNECT")
  }
  /** Starts [p] only when there is no live connection job. Unlike [connect], this

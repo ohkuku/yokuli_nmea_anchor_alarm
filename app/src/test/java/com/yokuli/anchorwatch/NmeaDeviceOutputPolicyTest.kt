@@ -98,15 +98,21 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(canonical.proprietaryStatusEnabled);assertFalse(canonical.autoStartOutput)
     }
 
-    @Test fun sameConnectionAndDuplicateDedicatedEndpointAreWarned(){
+    @Test fun matchingTcpEndpointIsAutomaticallyNormalisedToTheExistingInputConnection(){
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(),input))
         val duplicate=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port)
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(duplicate,input))
+        val automatic=NmeaOutputEndpointPolicy.automatic(duplicate,input)
+        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,automatic.transportMode)
+        assertEquals(input.host to input.port,NmeaOutputEndpointPolicy.resolved(automatic,input))
+        assertTrue(NmeaOutputEndpointPolicy.needsInputTransport(automatic))
+        assertTrue(NmeaOutputEndpointPolicy.isValid(duplicate,input))
+        // A raw dedicated writer still has a defensive guard. Product callers
+        // normalise first and therefore never reach it as a second connection.
         assertTrue(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(duplicate,input))
-        assertFalse(NmeaOutputEndpointPolicy.isValid(duplicate,input))
     }
 
-    @Test fun duplicateIndependentTxIsBlockedByConfigurationEvenBeforeRxEverOpened(){
+    @Test fun matchingEndpointChoosesReuseByConfigurationEvenBeforeRxEverOpened(){
         val neverStartedRx=ConnectionProfile(protocol=Protocol.TCP,host="Fragile-Gateway.local.",port=10110)
         val tx=NmeaDeviceOutputSettings(
             transportMode=NmeaOutputTransportMode.DEDICATED_TCP,
@@ -116,8 +122,10 @@ class NmeaDeviceOutputPolicyTest{
             publicationEnabled=true,
             phoneHeadingEnabled=true,
         )
-        assertTrue(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,neverStartedRx))
-        assertFalse("No RX runtime state is needed to reject a second transport",NmeaOutputEndpointPolicy.isValid(tx,neverStartedRx))
+        val automatic=NmeaOutputEndpointPolicy.automatic(tx,neverStartedRx)
+        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,automatic.transportMode)
+        assertTrue("Endpoint equality chooses reuse without consulting RX runtime state",NmeaOutputEndpointPolicy.isValid(tx,neverStartedRx))
+        assertTrue("Unnormalised direct dedicated writers remain guarded",NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,neverStartedRx))
     }
 
     @Test fun explicitSameSocketModeNeverRepresentsASecondTransport(){

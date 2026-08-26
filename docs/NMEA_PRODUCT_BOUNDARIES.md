@@ -7,7 +7,7 @@ Scope: Phone/App-created NMEA only. Direct Boat input is never repeated.
 
 | Product | User goal | Network role | Opens | Depends on Boat RX | Start/Stop owner |
 |---|---|---|---|---|---|
-| Phone/App boat output | Publish every currently valid Phone/App-owned value to the boat network | TCP/UDP writer | Existing full-duplex input Socket by default; explicit separate gateway RX endpoint only as Advanced | Same-socket mode: yes; separate gateway endpoint: no | `OutputSettingsRepository` + `AnchorWatchNmeaPublisher` |
+| Phone/App boat output | Publish every currently valid Phone/App-owned value to the boat network | TCP/UDP writer | User enters the TX endpoint; matching TCP RX/TX is automatically coalesced to the existing connection, while a different endpoint gets one independent writer | Matching endpoint: yes; different endpoint: no | `OutputSettingsRepository` + `AnchorWatchNmeaPublisher` |
 | Phone NMEA service | Let another phone/tablet/laptop/dashboard consume this phone's data | TCP listener/server | A listening Socket on this phone; downstream clients connect to it | No | `LocalNmeaServerSettingsRepository` + `LocalNmeaServerRuntime` + `NmeaSharingServer` |
 
 They may run together. They share the Phone/App-owned encoder rules, but **not**
@@ -18,8 +18,9 @@ history or Stop behavior.
 flowchart LR
     P[Phone/App evidence] --> E1[Phone/App boat-output encoder]
     P --> E2[Phone service encoder]
-    E1 --> B1[Existing full-duplex Boat TCP]
-    E1 --> B2[Explicit advanced Boat RX port / UDP]
+    E1 --> R{TX endpoint = TCP RX?}
+    R -->|Yes| B1[Reuse existing full-duplex Boat TCP]
+    R -->|No| B2[One independent Boat TX / UDP]
     E2 --> S[Phone TCP listening server]
     S --> C1[Second phone]
     S --> C2[Tablet / dashboard]
@@ -32,11 +33,12 @@ flowchart LR
 
 ### Contract
 
-- Normal route: write through the already-open full-duplex TCP input Socket.
-  This never creates a second connection to a fragile single-client gateway.
-- Advanced route: create a separate TCP client only when the gateway documents
-  a different receive port; UDP unicast/broadcast remain explicit advanced
-  choices.
+- Socket selection is not a user-facing mode. The user enters the output host
+  and port. When they match the configured TCP input endpoint, the App
+  automatically writes through the already-open full-duplex connection and
+  never creates a second client on a fragile gateway.
+- A different TCP host or port automatically uses one independent write-only
+  connection. UDP unicast/broadcast remain explicit advanced protocol choices.
 - A TCP listener is not a valid destination here. Historical `TCP_SERVER`
   settings migrate, stopped, to Phone NMEA service.
 - Formal Start requires the durable phone-to-bow heading alignment. A Trip
@@ -87,9 +89,10 @@ flowchart LR
 
 这是“手机主动写入已有船载 NMEA 网络”的功能。它的目标不是转发船网已有
 数据，而是持续发送手机 / Boat Watch 自己能够提供的所有有效数据。即使船网
-同时出现同类数据，App 也不会自动让位；最终选择和切换来源由接收端仪表负责。默认
-复用已连接的全双工 TCP；只有网关明确提供另一个接收端口时，用户才应开启
-独立 TCP 客户端。它没有监听端口，也不会供其他设备来连接。
+同时出现同类数据，App 也不会自动让位；最终选择和切换来源由接收端仪表负责。用户
+只填写发送地址：若 TCP 输入与输出的主机、端口相同，App 自动复用已连接的全双工
+连接；地址不同时才自动建立一条独立的只写连接。用户无需选择或理解“同 Socket
+模式”。它没有监听端口，也不会供其他设备来连接。
 
 ### 本机 NMEA 服务
 
@@ -101,8 +104,9 @@ Dashboard App 主动连接本手机的 IP 与监听端口。它不依赖船载 N
 ## Lifecycle invariants / 生命周期硬约束
 
 1. Saving either configuration never starts either runtime.
-2. Stopping Boat RX stops same-socket Phone/App output only through the guarded
-   dependency story; it never stops Phone NMEA service.
+2. Matching TCP RX/TX endpoints always resolve to one connection internally.
+   Stopping that Boat RX affects its dependent output but never stops Phone NMEA
+   service.
 3. Stopping Phone NMEA service closes its listener/clients and cannot stop Boat
    RX or Phone/App boat output.
 4. Starting one product cannot overwrite the other's port or running state.
@@ -145,8 +149,9 @@ KC-2W 的 NMEA 0183 端配置成了 **4800 baud**。Raymarine 开机后，KC-2W 
 - Run Boat RX alone; confirm one formal gateway connection.
 - Before a complete Phone/App feed test, verify the KC-2W 0183 baud is 38400;
   record the setting in the QA result.
-- Start same-socket Phone/App output; confirm connection count remains one and 1 Hz
-  Phone fields remain stable when Raymarine joins.
+- Enter the same host/port for RX and TX, start Phone/App output, and confirm the
+  gateway connection count remains one. Repeat with a distinct documented TX
+  port and confirm exactly one additional write-only client is created.
 - Capture the first returned HDT/HDG immediately after Start. A matching echo
   should appear as `Echoed App TX`; a different physical source must remain
   visible after the short bounded quarantine.

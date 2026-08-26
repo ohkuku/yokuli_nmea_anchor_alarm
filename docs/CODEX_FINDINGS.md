@@ -425,18 +425,18 @@
 - Real hardware verified: **Yes — user verified 4800 failed and 38400 worked with the KC-2W/Raymarine installation.**
 - Status: **ROOT CAUSE CONFIRMED AND RESOLVED IN HARDWARE — DOCUMENTED; DEFENSIVE APP BARRIER COMPILED, TESTS NOT RUN**
 
-## Finding P0-029 — Terminal NMEA input error could not be connected again
+## Finding P0-029 — NMEA input test and live connection ownership were inconsistent
 
 - Severity: **P0 / formal RX unavailable**
-- User story: after one refused/failed formal input connection, the exact error remains visible and one later Connect action may replace that terminal generation without requiring repeated Stop/Connect taps.
-- Evidence: `NmeaConnectionManager.connect()` rejected every request while its old coroutine remained active, including the short `ERROR → finally` interval. `MainViewModel.saveAndConnect()` and the Data input UI also treated `ERROR` as an existing active connection.
-- Reproduction steps: connect once to an endpoint that refuses, then press Save & Connect again as soon as ERROR is shown. Before the fix the action was rejected even though no usable transport existed.
-- Root cause: terminal presentation state and coroutine lifetime were conflated at three layers.
-- Failing test: `NmeaConnectionManagerTest.explicitConnectMayReplaceATerminalErrorBeforeTheOldCoroutineFinallyRuns`.
+- User story: Connect itself is the only input test and becomes the live connection. A successful connection is retained; a transport error closes it. No disposable test Socket and no replacement Socket may overlap the previous attempt's close path.
+- Evidence: old `main` opened `endpointPreflight.check()` and then a second live connection. That was removed, but the later `ERROR` exception allowed Connect to cancel/replace a still-active terminal coroutine before its transport-finally completed.
+- Reproduction steps: connect to a refusing endpoint and press Connect as soon as ERROR appears, or inspect the old preflight flow. The unsafe variants either consumed two server sessions or allowed the next generation to begin before the prior coroutine completed closing.
+- Root cause: “endpoint test” was modelled as a separate transport, then terminal presentation state was incorrectly treated as proof that transport ownership had already ended.
+- Failing test: `NmeaConnectionManagerTest.explicitConnectAfterTerminalErrorWaitsForTheOldAttemptToCloseBeforeOpeningReplacement`, plus the existing one-connection preflight story.
 - Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
-- Verification result: **ERROR is now an editable/disconnected form state, and an explicit Connect may replace only that terminal coroutine; CONNECTING/CONNECTED/RECONNECTING ownership remains protected. Test written but NOT RUN.**
+- Verification result: **Save & Connect performs syntax validation and opens exactly one long-lived input transport. TCP-open/no-data remains on that connection, network errors close it, and Connect never replaces any active coroutine, including the short terminal-error close path. Default peer-close auto-retry was raised from 2 seconds to 15 seconds. Main and unit-test Kotlin compilation passed; tests were updated but not run.**
 - Real hardware verified: **No — use one controlled attempt against the fragile endpoint.**
-- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TEST NOT RUN; GATEWAY QA PENDING**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TEST NOT RUN; FRAGILE-GATEWAY QA PENDING**
 
 ## Finding P1-030 — Share Start and stopped route presentation contradicted saved configuration
 
@@ -476,3 +476,16 @@
 - Verification result: **The runtime supplement gate and policy class are removed. Persisted legacy policies normalize to ALWAYS for every enabled locally-owned family. Runtime suppression is limited to unavailable/stale local evidence and manually paused Trip Motion. UI and product documentation now state that receivers choose source priority. The complete Debug JVM suite passed 571 tests with 0 failures and 1 existing conditional skip; Debug APK assembly passed.**
 - Real hardware verified: **No — verify on the vessel with KC-2W at the already-confirmed 38400 baud setting.**
 - Status: **FIXED IN CODE — 571 DEBUG UNIT TESTS + DEBUG APK PASSED; HARDWARE QA PENDING**
+
+## Finding P1-033 — Output Socket ownership was exposed as a user configuration choice
+
+- Severity: **P1 / confusing NMEA setup and duplicate-connection risk**
+- User story: the user enters the boat gateway RX and TX addresses. If they are identical, Boat Watch must internally reuse the existing full-duplex TCP connection; if they differ, it creates one independent write-only TX connection. The user must not choose or understand a “same Socket” implementation mode.
+- Evidence: the output page presented “use connected NMEA TCP Socket” and “Dedicated TCP client” as separate choices. Saving an independent TCP route equal to RX was rejected as an error even though endpoint equality is enough for the App to select safe reuse automatically.
+- Reproduction steps: configure RX and TX with the same TCP host/port, then open Phone/App boat output. Before the fix the user had to choose a Socket ownership mode, and the wrong choice produced a duplicate-endpoint blocker instead of deterministic reuse.
+- Root cause: internal transport ownership was persisted and exposed as product configuration rather than derived from the two endpoints.
+- Failing test: `NmeaDeviceOutputPolicyTest.matchingTcpEndpointIsAutomaticallyNormalisedToTheExistingInputConnection` and `matchingEndpointChoosesReuseByConfigurationEvenBeforeRxEverOpened`; the raw dedicated writer guard remains as defence in depth.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **`NmeaOutputEndpointPolicy.automatic()` now canonicalises matching TCP endpoints to the existing input connection before readiness, runtime ownership, tests or writes. Different TCP endpoints remain an independent writer. UI exposes only TCP destination host/port plus optional UDP protocol choices; same-Socket wording and blockers are removed. `:app:compileDebugKotlin` passed in 30 seconds and `:app:compileDebugUnitTestKotlin` passed in 26 seconds. Tests were not run, and no real endpoint was contacted.**
+- Real hardware verified: **No — verify one accepted gateway client for equal RX/TX and exactly one additional client for a documented different TX port.**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TEST AND HARDWARE QA PENDING**

@@ -51,7 +51,7 @@ class NmeaConnectionManagerTest {
         }finally{manager.disconnect();managerScope.cancel()}
     }
 
-    @Test fun explicitConnectAfterTerminalErrorCanOpenAReplacementEndpointWithoutAStopTap() = runBlocking {
+    @Test fun explicitConnectAfterTerminalErrorWaitsForTheOldAttemptToCloseBeforeOpeningReplacement() = runBlocking {
         val closedPort=ServerSocket(0).use{it.localPort}
         val liveServer=ServerSocket(0);val accepted=CompletableDeferred<Socket>()
         val serverJob=launch(Dispatchers.IO){runCatching{accepted.complete(liveServer.accept())}}
@@ -60,7 +60,8 @@ class NmeaConnectionManagerTest {
         try{
             assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=closedPort)))
             withTimeout(3_000){manager.state.first{it==NmeaConnectionState.ERROR}}
-            assertTrue("ERROR is terminal; the next explicit Connect must replace it",manager.connect(ConnectionProfile(host="127.0.0.1",port=liveServer.localPort)))
+            val replacement=ConnectionProfile(host="127.0.0.1",port=liveServer.localPort)
+            withTimeout(3_000){while(!manager.connect(replacement))yield()}
             client=withTimeout(3_000){accepted.await()}
             withTimeout(3_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
             Unit // Keep the JUnit4 method's generated JVM return type void.
@@ -247,7 +248,7 @@ class NmeaConnectionManagerTest {
     @Test fun automaticReconnectCreatesANewTransportGeneration() = runBlocking {
         val server=ServerSocket(0);val accepted=AtomicInteger();val clients=CopyOnWriteArrayList<Socket>()
         val serverJob=launch(Dispatchers.IO){runCatching{while(isActive){val socket=server.accept();clients+=socket;val count=accepted.incrementAndGet();if(count==1)socket.close()}}}
-        val boundaries=AtomicInteger();val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope){boundaries.incrementAndGet()}
+        val boundaries=AtomicInteger();val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope,NmeaConnectionRetryPolicy(openFailureRetryMillis=80,peerDisconnectRetryMillis=80,reconnectCoalesceMillis=20,manualReconnectCooldownMillis=100,maxContinuousFailures=3)){boundaries.incrementAndGet()}
         try{
             assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort,autoReconnect=true)))
             withTimeout(6_000){while(accepted.get()<2)delay(20)}

@@ -64,19 +64,39 @@ data class NmeaPacketPathDiagnostic(
 
 object NmeaOutputEndpointPolicy{
     fun resolved(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.host to input.port;NmeaOutputTransportMode.TCP_SERVER->"local-service" to settings.outputPort;else->settings.outputHost.trim() to settings.outputPort}
-    fun isValid(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=!opensSecondTransportOnInputEndpoint(settings,input)&&when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.protocol==Protocol.TCP&&input.host.isNotBlank()&&input.port in 1..65535;NmeaOutputTransportMode.TCP_SERVER->false;NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->settings.outputHost.isNotBlank()&&settings.outputPort in 1..65535}
+    private fun sameTcpEndpoint(host:String,port:Int,input:ConnectionProfile)=input.protocol==Protocol.TCP&&host.trim().trimEnd('.').equals(input.host.trim().trimEnd('.'),true)&&port==input.port&&host.isNotBlank()
+    /** Socket ownership is an implementation detail. A TCP destination matching
+     * RX automatically leases the already-open full-duplex connection; a
+     * different TCP destination remains an independent write-only transport. */
+    fun automatic(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):NmeaDeviceOutputSettings{
+        if(settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
+            return settings.copy(outputHost=input.host.trim(),outputPort=input.port)
+        }
+        if(settings.transportMode==NmeaOutputTransportMode.DEDICATED_TCP&&sameTcpEndpoint(settings.outputHost,settings.outputPort,input)){
+            return settings.copy(transportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,outputHost=input.host.trim(),outputPort=input.port)
+        }
+        return settings
+    }
+    fun tcpDestination(settings:NmeaDeviceOutputSettings,input:ConnectionProfile,host:String,port:Int)=automatic(settings.copy(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=host.trim(),outputPort=port),input)
+    fun isValid(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):Boolean{
+        val effective=automatic(settings,input)
+        return when(effective.transportMode){
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.protocol==Protocol.TCP&&input.host.isNotBlank()&&input.port in 1..65535
+            NmeaOutputTransportMode.TCP_SERVER->false
+            NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
+        }
+    }
     fun needsInputTransport(settings:NmeaDeviceOutputSettings)=settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
     fun duplicateEndpointRisk(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):Boolean{val resolved=resolved(settings,input);return when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->true;NmeaOutputTransportMode.TCP_SERVER->false;else->resolved.first.equals(input.host,true)&&resolved.second==input.port}}
-    /** Independent TX may never open another client on the formal RX endpoint.
-     * The rule is configuration based, so it also applies before RX has ever
-     * been opened. SAME_AS_INPUT_CONNECTION is not a second transport: it may
-     * write only through an already-owned RX socket and never opens one. */
+    /** Defensive detector for an unnormalised legacy call site. Production code
+     * passes settings through [automatic], so a matching endpoint is reused
+     * rather than rejected or opened twice. */
     fun opensSecondTransportOnInputEndpoint(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):Boolean{
         if(settings.transportMode in setOf(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportMode.TCP_SERVER))return false
         val outputHost=settings.outputHost.trim().trimEnd('.');val inputHost=input.host.trim().trimEnd('.')
         return outputHost.isNotBlank()&&inputHost.isNotBlank()&&outputHost.equals(inputHost,true)&&settings.outputPort==input.port
     }
-    const val DUPLICATE_ENDPOINT_MESSAGE="Independent TX cannot use the formal RX host and port. Choose the server's separate receive port, or explicitly use the existing same-socket mode on a gateway that supports bidirectional traffic."
+    const val DUPLICATE_ENDPOINT_MESSAGE="The output endpoint matches NMEA input and must reuse the App's existing connection."
 }
 
 data class NmeaTxStatus(
@@ -348,7 +368,8 @@ class NmeaDeviceOutputConnection @Inject constructor(
         abortGeneration?.let{generation->navigation.abortBoatWriteStall(generation,"Shared NMEA output write exceeded ${NmeaWriteBackpressurePolicy.STALLED_AFTER_MILLIS} ms.")}
     }
 
-    fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile,generation:Long=publicationGeneration+1,newSessionId:String?=null){
+    fun configure(requested:NmeaDeviceOutputSettings,input:ConnectionProfile,generation:Long=publicationGeneration+1,newSessionId:String?=null){
+        val value=NmeaOutputEndpointPolicy.automatic(requested,input)
         lastInputProfile=input
         if(!value.anyOutputEnabled){
             synchronized(guard){_status.value=_status.value.copy(connectionState=NmeaTxConnectionState.STOPPING,message="Stopping Phone/App boat output…")}
