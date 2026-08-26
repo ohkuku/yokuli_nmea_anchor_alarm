@@ -220,6 +220,21 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(guard.isRecentOutbound("\$HCHDT,123.02,T*7F",7_100))
     }
 
+    @Test fun firstFullDuplexEchoIsBlockedBeforeSocketWriteReturns(){
+        val guard=NmeaOutboundLoopGuard()
+        val attempt=guard.beginWrite(listOf("\$IIHDT,123.00,T*00"),1_000)
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_001))
+        guard.completeWrite(attempt,true,1_100)
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_101))
+    }
+
+    @Test fun failedSocketAttemptImmediatelyReleasesItsEchoBarrier(){
+        val guard=NmeaOutboundLoopGuard()
+        val attempt=guard.beginWrite(listOf("\$IIHDT,123.00,T*00"),1_000)
+        assertTrue(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_001))
+        guard.completeWrite(attempt,false,1_100)
+        assertFalse(guard.isRecentOutbound("\$HCHDT,123.01,T*7F",1_101))
+    }
 
     @Test fun dedicatedWriterUsesOnlyItsOwnTxPort(){
         ServerSocket(0).use{rx->ServerSocket(0).use{tx->

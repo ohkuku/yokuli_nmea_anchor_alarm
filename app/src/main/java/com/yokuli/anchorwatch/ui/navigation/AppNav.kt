@@ -56,7 +56,7 @@ fun AnchorApp(vm:MainViewModel){
             if(!introComplete)OnboardingMakerScreen({introComplete=true}){language->vm.updateSettings(state.settings.copy(appLanguage=language))}
             else FirstRunSetupScreen(
                 initialBoatLengthMeters=state.settings.boatLengthMeters,initialDraftMeters=state.vesselSettings.draftMeters,
-                nmeaConnection=state.connection,mountState=state.phoneVesselMountState,mountCalibrated=state.vesselMountCalibration.calibratedAt>0,
+                nmeaConnection=state.connection,headingAligned=state.vesselMountCalibration.headingAligned,
                 positionPreference=state.vesselSettings.positionPreference,headingPreference=state.vesselSettings.headingPreference,output=state.outputSettings,
                 alarmState=state.alarmSnapshot.state,alarmType=state.alarmSnapshot.type,
                 saveVessel={length,draft->vm.updateSettings(state.settings.copy(boatLengthMeters=length));vm.updateVesselDataSettings(state.vesselSettings.copy(draftMeters=draft))},

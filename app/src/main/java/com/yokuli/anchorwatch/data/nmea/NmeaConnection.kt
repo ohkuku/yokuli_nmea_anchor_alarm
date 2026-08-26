@@ -70,8 +70,10 @@ class NmeaConnectionManager(
  fun connect(p:ConnectionProfile):Boolean=synchronized(guard){
   // A Connect action never replaces an owned generation. Replacing an open or
   // retrying socket is an explicit Reconnect/Stop decision, not a side effect
-  // of saving another profile.
-  if(job?.isActive==true)return@synchronized false
+  // of saving another profile. ERROR is terminal and owns no usable socket;
+  // an explicit Connect may replace the coroutine during its tiny ERROR →
+  // finally race instead of forcing the user to tap Stop first.
+  if(job?.isActive==true&&_state.value!=NmeaConnectionState.ERROR)return@synchronized false
   startLocked(p,operation="USER_CONNECT")
  }
  /** Starts [p] only when there is no live connection job. Unlike [connect], this
@@ -154,8 +156,8 @@ class NmeaConnectionManager(
     if(!currentCoroutineContext().isActive||!isCurrent(mine))break
     continuousFailures++
     recordDisconnectReason(mine,error,continuousFailures)
-    if(!p.autoReconnect){stopAfterFailure(mine,continuousFailures);setState(mine,NmeaConnectionState.ERROR);break}
-    if(continuousFailures>=retryPolicy.maxContinuousFailures){openCircuit(mine,continuousFailures);setState(mine,NmeaConnectionState.ERROR);break}
+    if(!p.autoReconnect){stopAfterFailure(mine,continuousFailures);break}
+    if(continuousFailures>=retryPolicy.maxContinuousFailures){openCircuit(mine,continuousFailures);break}
     val retryDelay=if(opened)retryPolicy.peerDisconnectRetryMillis else retryPolicy.openFailureRetryMillis
     scheduleRetry(mine,retryDelay,continuousFailures);setState(mine,NmeaConnectionState.RECONNECTING)
     delay(retryDelay);attempt++
@@ -227,8 +229,8 @@ class NmeaConnectionManager(
  private fun setReconnectAttempt(mine:Long,value:Int){synchronized(guard){if(mine==generation)_diagnostics.value=_diagnostics.value.copy(reconnectAttempt=value)}}
  private fun scheduleRetry(mine:Long,delayMillis:Long,attempt:Int){synchronized(guard){if(mine==generation)_diagnostics.value=_diagnostics.value.copy(reconnectAttempt=attempt,nextRetryElapsedRealtime=monotonicMillis()+delayMillis,circuitOpen=false)}}
  private fun clearScheduledRetry(mine:Long){synchronized(guard){if(mine==generation)_diagnostics.value=_diagnostics.value.copy(nextRetryElapsedRealtime=null)}}
- private fun openCircuit(mine:Long,attempt:Int){synchronized(guard){if(mine==generation)_diagnostics.value=_diagnostics.value.copy(reconnectAttempt=attempt,nextRetryElapsedRealtime=null,circuitOpen=true)}}
- private fun stopAfterFailure(mine:Long,attempt:Int){synchronized(guard){if(mine==generation)_diagnostics.value=_diagnostics.value.copy(reconnectAttempt=attempt,nextRetryElapsedRealtime=null,circuitOpen=false)}}
+ private fun openCircuit(mine:Long,attempt:Int){synchronized(guard){if(mine==generation){_diagnostics.value=_diagnostics.value.copy(reconnectAttempt=attempt,nextRetryElapsedRealtime=null,circuitOpen=true);_state.value=NmeaConnectionState.ERROR}}}
+ private fun stopAfterFailure(mine:Long,attempt:Int){synchronized(guard){if(mine==generation){_diagnostics.value=_diagnostics.value.copy(reconnectAttempt=attempt,nextRetryElapsedRealtime=null,circuitOpen=false);_state.value=NmeaConnectionState.ERROR}}}
  private fun beginAutomaticTransportGeneration(mine:Long,attempt:Int){synchronized(guard){if(mine!=generation)return;transportGeneration++;onGenerationStarted();_diagnostics.value=_diagnostics.value.copy(connectionGeneration=transportGeneration,reconnectAttempt=attempt,connectedAtElapsedRealtime=null,lastByteReceivedElapsedRealtime=null,lastSentenceReceivedElapsedRealtime=null,nextRetryElapsedRealtime=null,lastOperation="AUTO_RETRY")}}
  private fun resetAttempt(mine:Long){setReconnectAttempt(mine,0)}
  private fun finish(mine:Long){synchronized(guard){if(mine==generation){closeTransportLocked();job=null;if(_state.value!=NmeaConnectionState.ERROR){profile=null;_state.value=NmeaConnectionState.DISCONNECTED;_diagnostics.value=_diagnostics.value.copy(desiredConnected=false,nextRetryElapsedRealtime=null)}}}}

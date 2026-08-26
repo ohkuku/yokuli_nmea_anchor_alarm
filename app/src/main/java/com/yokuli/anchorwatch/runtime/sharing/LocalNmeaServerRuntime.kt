@@ -90,7 +90,7 @@ class LocalNmeaServerRuntime @Inject constructor(
         running=true
         if(portChanged||server.status.value.state==SharingServerState.STOPPED||server.status.value.state==SharingServerState.ERROR)server.start(value.port)
         heartbeat.reset();encoder.reset()
-        resources.set(RuntimeOwner.NMEA_SHARING,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=true,needsPhoneMotion=true,needsPhonePressure=value.includePressure))
+        resources.set(RuntimeOwner.NMEA_SHARING,RuntimeRequirement(needsSystemLocation=true,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=true,needsPhoneMotion=false,needsPhonePressure=value.includePressure))
         _status.value=LocalNmeaServerRuntimeStatus(requested=true,generation=_status.value.generation+1,message="Starting the phone NMEA service")
     }
 
@@ -132,8 +132,10 @@ class LocalNmeaServerRuntime @Inject constructor(
             batch.sentences.forEach{sentence->
                 recent.addLast("$timestamp  [${stream.name}] ${sentence.trim()}")
                 while(recent.size>RECENT_LIMIT)recent.removeFirst()
+                val echoAttempt=loopGuard.beginWrite(listOf(sentence),now)
                 val receivers=server.publish(sentence)
-                if(receivers>0){queuedCount++;loopGuard.record(listOf(sentence),now)}
+                loopGuard.completeWrite(echoAttempt,receivers>0,now)
+                if(receivers>0)queuedCount++
             }
         }
         _status.value=_status.value.copy(

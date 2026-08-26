@@ -539,7 +539,7 @@ class MainViewModel @Inject constructor(
     fun validateProfile(profile:ConnectionProfile)=endpointPreflight.validate(profile,_ui.value.settings.nmeaSharingEnabled,_ui.value.settings.nmeaSharingPort)
 
     fun saveAndConnect(profile:ConnectionProfile)=viewModelScope.launch{
-        if(_ui.value.connection!=NmeaConnectionState.DISCONNECTED){
+        if(_ui.value.connection !in setOf(NmeaConnectionState.DISCONNECTED,NmeaConnectionState.ERROR)){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.WARNING,"NMEA input is already running. Stop it before replacing the RX endpoint."))}
             return@launch
         }
@@ -737,20 +737,37 @@ class MainViewModel @Inject constructor(
         val state=_ui.value
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
         if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){
-            fail("Complete vessel zero, explicitly confirm the current mount, and confirm heading alignment before starting the Phone NMEA service.")
+            fail("Confirm the one-time phone-to-vessel heading alignment before starting the Phone NMEA service.")
             return@launch
         }
         if(!state.localNmeaServerSettings.configured||state.localNmeaServerSettings.port !in 1024..65535){
             fail("Save a valid Phone NMEA service listening port first.")
             return@launch
         }
-        localNmeaServerSettingsRepository.requestStart();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        localNmeaServerSettingsRepository.requestStart()
+        // Reflect the lease synchronously so one physical tap cannot enqueue
+        // several foreground-service starts while DataStore/Flow catches up.
+        _ui.update{it.copy(localNmeaServerSettings=it.localNmeaServerSettings.copy(serverRequested=true),connectionAttempt=ConnectionAttempt())}
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
     }
 
     fun stopLocalNmeaServer(){
-        localNmeaServerSettingsRepository.requestStop();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        localNmeaServerSettingsRepository.requestStop();_ui.update{it.copy(localNmeaServerSettings=it.localNmeaServerSettings.copy(serverRequested=false),connectionAttempt=ConnectionAttempt())}
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
+    }
+
+    /** Emergency master stop. Product-specific Stop buttons remain independent,
+     * while this action guarantees that "stop all sharing" revokes both live
+     * leases before one foreground command performs both hard-stop paths. */
+    fun stopAllNmeaSharing(){
+        outputSettingsRepository.requestStop()
+        localNmeaServerSettingsRepository.requestStop()
+        _ui.update{it.copy(
+            outputSettings=it.outputSettings.copy(publicationEnabled=false),
+            localNmeaServerSettings=it.localNmeaServerSettings.copy(serverRequested=false),
+            connectionAttempt=ConnectionAttempt(),
+        )}
+        ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.STOP_ALL_NMEA_SHARING))
     }
     fun deleteHistorySession(session:AnchorSessionEntity){if(session.active)return;viewModelScope.launch{dao.deleteCompletedSession(session.id)}}
     fun setMapType(mapType:Int){val value=mapType.takeIf{it in 1..3}?:1;val updated=_ui.value.settings.copy(mapType=value);_ui.update{it.copy(settings=updated)};viewModelScope.launch{prefs.save(updated)}}
@@ -815,45 +832,44 @@ class MainViewModel @Inject constructor(
     fun deleteTripDashboard(id:String)=viewModelScope.launch{tripDashboardRepository.delete(id)}
     fun reorderTripDashboards(ids:List<String>)=viewModelScope.launch{tripDashboardRepository.reorder(ids)}
     fun setTripLiveDisplayActive(active:Boolean){runtimeResources.set(RuntimeOwner.VESSEL_HUB_UI,if(active)RuntimeRequirement(needsSystemLocation=true,needsPhoneMotion=true,needsPhoneHeading=true,needsPhonePressure=true)else null)}
-    fun calibrateVesselMount(axis:DeviceBowAxis)=viewModelScope.launch{
-        if(_ui.value.activeTrip!=null){_ui.update{it.copy(vesselCalibrationFeedback="End the active trip before changing vessel zero.")};return@launch}
-        if(_ui.value.outputSettings.publicationEnabled){
-            outputSettingsRepository.requestStop()
-            ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
-            val stoppedInTime=withTimeoutOrNull(5_000){phonePositionNmeaOutputRuntime.status.first{!it.enabled&&it.connectionState==com.yokuli.anchorwatch.data.nmea.output.NmeaTxConnectionState.OFF}}!=null
-            if(!stoppedInTime){_ui.update{it.copy(vesselCalibrationFeedback="NMEA output did not confirm a hard stop. Calibration was not changed.")};return@launch}
-        }
+    fun confirmTripAttitudeFrame(axis:DeviceBowAxis)=viewModelScope.launch{
+        if(_ui.value.activeTrip?.paused==true){_ui.update{it.copy(vesselCalibrationFeedback="Resume the trip before confirming a new attitude segment.")};return@launch}
         runtimeResources.set(RuntimeOwner.VESSEL_HUB_UI,RuntimeRequirement(needsSystemLocation=true,needsPhoneMotion=true,needsPhoneHeading=true,needsPhonePressure=true))
-        delay(800)
+        delay(500)
         val saved=vesselAttitudeRepository.calibrate(axis)
-        _ui.update{it.copy(vesselCalibrationFeedback=if(saved)"Vessel zero saved." else "No rotation-vector sample is available on this phone.")}
-        val keep=_ui.value.activeTrip?.paused==false
-        if(!keep)runtimeResources.release(RuntimeOwner.VESSEL_HUB_UI)
+        if(saved){
+            vesselAttitudeRepository.setMounted(true)
+            _ui.update{it.copy(vesselCalibrationFeedback="Trip attitude frame confirmed.")}
+            if(_ui.value.activeTrip!=null)ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.CONFIRM_TRIP_ATTITUDE_FRAME))
+        }else _ui.update{it.copy(vesselCalibrationFeedback="No rotation-vector sample is available on this phone.")}
+        // TripWatchPage owns the preview lease while visible; a running Trip
+        // takes over through its own runtime owner. Do not tear down the shared
+        // sensor preview between confirmation and the Start command.
     }
+    /** Source-compatible entry point retained for old UI/tests. */
+    fun calibrateVesselMount(axis:DeviceBowAxis)=confirmTripAttitudeFrame(axis)
     fun setPhoneVesselMounted(mounted:Boolean)=viewModelScope.launch{
         if(mounted&&_ui.value.vesselMountCalibration.calibratedAt<=0L){
-            _ui.update{it.copy(vesselCalibrationFeedback="Set vessel zero before declaring this phone vessel-mounted.")}
+            _ui.update{it.copy(vesselCalibrationFeedback="Confirm the phone-to-vessel attitude frame during Trip Watch first.")}
+            return@launch
+        }
+        if(mounted&&!_ui.value.vesselMountCalibration.attitudeFrameConfirmed){
+            _ui.update{it.copy(vesselCalibrationFeedback="The previous attitude segment was invalidated. Place the phone flat relative to the vessel and confirm a new segment.")}
             return@launch
         }
         vesselAttitudeRepository.setMounted(mounted)
-        _ui.update{it.copy(vesselCalibrationFeedback=if(mounted)"Phone marked as vessel-mounted." else "Phone returned to handheld mode.")}
-    }
-    fun setAutomaticMountRecovery(enabled:Boolean)=viewModelScope.launch{
-        vesselMountCalibrationRepository.setAutomaticRecovery(enabled)
-        _ui.update{it.copy(vesselCalibrationFeedback=if(enabled)"Automatic mount recovery enabled." else "Mount recovery now requires confirmation.")}
+        _ui.update{it.copy(vesselCalibrationFeedback=if(mounted)"Trip attitude capture resumed." else "Trip attitude capture paused. Heading, GPS and pressure continue.")}
     }
     fun setPhoneHeadingAlignment(offsetDegrees:Double)=viewModelScope.launch{
-        if(_ui.value.vesselMountCalibration.calibratedAt<=0L){_ui.update{it.copy(vesselCalibrationFeedback="Set vessel zero before confirming heading alignment.")};return@launch}
-        if(!_ui.value.vesselMountCalibration.mountConfirmed||_ui.value.phoneVesselMountState!=PhoneVesselMountState.VESSEL_MOUNTED){_ui.update{it.copy(vesselCalibrationFeedback="Confirm that the phone is fixed to the vessel before aligning its heading.")};return@launch}
         vesselAttitudeRepository.alignHeading(offsetDegrees)
-        _ui.update{it.copy(vesselCalibrationFeedback="Heading alignment saved.")}
+        _ui.update{it.copy(vesselCalibrationFeedback="Heading alignment saved. It remains valid until you deliberately change the phone-to-bow orientation.")}
     }
     fun clearVesselCalibrationFeedback()=_ui.update{it.copy(vesselCalibrationFeedback=null)}
     fun setNmeaOutputEndpoint(mode:NmeaOutputTransportMode,host:String,port:Int)=viewModelScope.launch{
         val current=_ui.value.outputSettings
         if(current.publicationEnabled){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Stop NMEA output before changing its destination."))};return@launch}
         if(mode==NmeaOutputTransportMode.TCP_SERVER){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Use Phone NMEA service to host a TCP server. Boat-network supplement only writes into the boat network."))}
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Use Phone NMEA service to host a TCP server. Phone/App boat output only writes locally-owned data into the boat network."))}
             return@launch
         }
         if(mode !in setOf(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportMode.TCP_SERVER)&&(host.isBlank()||port !in 1..65535)){
@@ -877,14 +893,15 @@ class MainViewModel @Inject constructor(
             autoStartOutput=false,
         )
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
-        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Complete vessel zero, explicitly confirm the current mount, and confirm heading alignment for this calibration before sharing NMEA data.");return@launch}
+        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Confirm the one-time phone-to-vessel heading alignment before sharing NMEA data.");return@launch}
         if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,state.settings.profile)){fail(NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE);return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
-        outputSettingsRepository.requestStart();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        outputSettingsRepository.requestStart()
+        _ui.update{it.copy(outputSettings=it.outputSettings.copy(publicationEnabled=true),connectionAttempt=ConnectionAttempt())}
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
     }
     fun stopNmeaOutput()=viewModelScope.launch{
-        outputSettingsRepository.requestStop();_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+        outputSettingsRepository.requestStop();_ui.update{it.copy(outputSettings=it.outputSettings.copy(publicationEnabled=false),connectionAttempt=ConnectionAttempt())}
         // The foreground coordinator is the only production lifecycle owner.
         // Its command actor performs the hard stop and invalidates queued bytes.
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
@@ -904,7 +921,7 @@ class MainViewModel @Inject constructor(
         val state=_ui.value
         val settings=state.outputSettings;val profile=state.settings.profile
         if(settings.transportMode==NmeaOutputTransportMode.TCP_SERVER){
-            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"A phone-hosted listener belongs to Phone NMEA service, not Boat-network supplement."))};result(false);return@launch
+            _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"A phone-hosted listener belongs to Phone NMEA service, not Phone/App boat output."))};result(false);return@launch
         }
         if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(settings,profile)){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,NmeaOutputEndpointPolicy.DUPLICATE_ENDPOINT_MESSAGE))};result(false);return@launch
@@ -982,6 +999,11 @@ class MainViewModel @Inject constructor(
     }
     fun pauseTrip()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.PAUSE_TRIP))
     fun resumeTrip()=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.RESUME_TRIP))
+    fun pauseTripAttitude()=viewModelScope.launch{
+        vesselAttitudeRepository.setMounted(false)
+        app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.PAUSE_TRIP_ATTITUDE))
+        _ui.update{it.copy(vesselCalibrationFeedback="Trip attitude capture paused. Heading, GPS and pressure continue.")}
+    }
     fun endTrip()=app.startService(Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.END_TRIP))
     fun markTripWaypoint(name:String,note:String,type:String)=ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.MARK_TRIP_WAYPOINT).putExtra("name",name).putExtra("note",note).putExtra("type",type))
     fun deleteTrip(session:TripSessionEntity){if(session.active)return;viewModelScope.launch{tripDao.deleteCompleted(session.id)}}

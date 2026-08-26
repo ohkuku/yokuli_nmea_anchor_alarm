@@ -47,9 +47,12 @@ sealed interface RuntimeCommand {
     data class SetSharing(val enabled:Boolean,val port:Int):RuntimeCommand
     data object RefreshPhoneSensorOutput:RuntimeCommand
     data object RefreshLocalNmeaServer:RuntimeCommand
+    data object StopAllNmeaSharing:RuntimeCommand
     data class StartTrip(val name:String,val phoneMotionEnabled:Boolean=true,val positionPreference:VesselSourcePreference=VesselSourcePreference.AUTO):RuntimeCommand
     data object PauseTrip:RuntimeCommand
     data object ResumeTrip:RuntimeCommand
+    data object ConfirmTripAttitudeFrame:RuntimeCommand
+    data object PauseTripAttitude:RuntimeCommand
     data object EndTrip:RuntimeCommand
     data class MarkTripWaypoint(val name:String,val note:String,val type:String):RuntimeCommand
     data class StartSonar(val name:String,val tideMode:TideMode,val manualTideOffsetMeters:Double,val tideStationId:String?):RuntimeCommand
@@ -103,9 +106,12 @@ object RuntimeCommandParser {
             AnchorForegroundService.SET_NMEA_SHARING->RuntimeCommand.SetSharing(intent.getBooleanExtra("enabled",false),intent.getIntExtra("port",10111))
             AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT->RuntimeCommand.RefreshPhoneSensorOutput
             AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER->RuntimeCommand.RefreshLocalNmeaServer
+            AnchorForegroundService.STOP_ALL_NMEA_SHARING->RuntimeCommand.StopAllNmeaSharing
             AnchorForegroundService.START_TRIP->RuntimeCommand.StartTrip(intent.getStringExtra("name").orEmpty(),intent.getBooleanExtra("phoneMotionEnabled",true),enum(intent,"positionPreference",VesselSourcePreference.AUTO))
             AnchorForegroundService.PAUSE_TRIP->RuntimeCommand.PauseTrip
             AnchorForegroundService.RESUME_TRIP->RuntimeCommand.ResumeTrip
+            AnchorForegroundService.CONFIRM_TRIP_ATTITUDE_FRAME->RuntimeCommand.ConfirmTripAttitudeFrame
+            AnchorForegroundService.PAUSE_TRIP_ATTITUDE->RuntimeCommand.PauseTripAttitude
             AnchorForegroundService.END_TRIP->RuntimeCommand.EndTrip
             AnchorForegroundService.MARK_TRIP_WAYPOINT->RuntimeCommand.MarkTripWaypoint(intent.getStringExtra("name").orEmpty(),intent.getStringExtra("note").orEmpty(),intent.getStringExtra("type")?:"GENERAL")
             AnchorForegroundService.START_SONAR_SURVEY->RuntimeCommand.StartSonar(intent.getStringExtra("name")?:"Sonar survey",enum(intent,"tideMode",TideMode.OFF),intent.getDoubleExtra("manualTideOffset",0.0),intent.getStringExtra("tideStationId"))

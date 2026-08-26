@@ -8,13 +8,11 @@ object NmeaStreamReadinessPolicy {
     fun position(freshGnss:Boolean)=if(freshGnss)NmeaStreamReadiness.READY else NmeaStreamReadiness.WAITING_POSITION
 
     fun heading(
-        mountCalibrated:Boolean,
         headingAligned:Boolean,
-        vesselMounted:Boolean,
         declinationReady:Boolean,
         freshCompass:Boolean,
     )=when{
-        !mountCalibrated||!headingAligned||!vesselMounted->NmeaStreamReadiness.WAITING_CALIBRATION
+        !headingAligned->NmeaStreamReadiness.WAITING_CALIBRATION
         !declinationReady->NmeaStreamReadiness.WAITING_POSITION
         !freshCompass->NmeaStreamReadiness.STANDBY
         else->NmeaStreamReadiness.READY

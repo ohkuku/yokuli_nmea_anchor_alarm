@@ -138,13 +138,22 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         scope.launch{while(isActive){delay(50L);publishDue(SystemClock.elapsedRealtime())}}
     }
 
-    @Synchronized fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile=inputProfile){
+    @Synchronized fun configure(
+        value:NmeaDeviceOutputSettings,
+        input:ConnectionProfile=inputProfile,
+        knownReadiness:PhoneVesselOutputReadiness?=null,
+    ){
         val requested=NmeaPublisherConfig.from(value);val requestedSettings=requested.asOutputSettings()
         // Readiness is a hard gate for beginning a formal publication session.
         // Once that session exists, a transient mount warning degrades only the
         // affected local streams below; it must not flap the shared socket or
         // make independent Phone GNSS/pressure data disappear.
-        val readinessBlocksNewSession=FormalOutputSessionReadinessPolicy.blocksStart(requested.running,enabled,PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState))
+        // The coordinator and ViewModel observe the same calibration streams,
+        // but their collectors are not ordered. Accept its atomic readiness
+        // snapshot so a valid first Start cannot be rejected by this runtime's
+        // one-emission-old cache and then require another tap.
+        val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState)
+        val readinessBlocksNewSession=FormalOutputSessionReadinessPolicy.blocksStart(requested.running,enabled,readiness)
         val safe=if(readinessBlocksNewSession||requested.running&&NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input))requested.copy(publicationEnabled=false) else requested
         if(safe==config&&input==inputProfile&&enabled==safe.running)return
         pending.clear().forEach{outputConnection.recordDropped(it.stream)}
@@ -152,7 +161,7 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         config=safe;inputProfile=input;enabled=safe.running;heartbeat.reset();encoder.reset()
         val effective=safe.asOutputSettings()
         outputConnection.configure(effective,input,generation,if(enabled)java.util.UUID.randomUUID().toString().take(8)else null)
-        if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=true,needsNmeaTransport=safe.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=true,needsPhoneMotion=true,needsPhonePressure=safe.includePressure))
+        if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=true,needsNmeaTransport=safe.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=true,needsPhoneMotion=false,needsPhonePressure=safe.includePressure))
         else resources.release(RuntimeOwner.PHONE_NMEA_OUTPUT)
     }
     @Synchronized fun configure(value:Boolean)=configure(NmeaDeviceOutputSettings(transportConfigured=value,publicationEnabled=value))
@@ -172,7 +181,12 @@ class AnchorWatchNmeaPublisher @Inject constructor(
             }
             val batch=encoder.encode(stream,snapshot,configured.asOutputSettings(),now,phoneFix,inputTransportGeneration,inputProfile.stableId)
             val ready=batch.sentences.isNotEmpty();val ownership=when{ready&&batch.sourceConflict->PublisherOwnershipState.SOURCE_CONFLICT;ready->PublisherOwnershipState.PHONE_ACTIVE;else->PublisherOwnershipState.SUPPRESSED}
-            outputConnection.recordDecision(name,PublicationPolicy.ALWAYS,PublicationDecision(ready,ownership),ready,NmeaStreamReadinessPolicy.sensor(ready))
+            val publicationDecision=PublicationDecision(ready,ownership)
+            // Locally-owned Phone/App values never yield merely because the
+            // receiving boat network also has a value for the same field. The
+            // receiving instrument owns source selection; this publisher owns
+            // only validity, provenance and a stable heartbeat.
+            outputConnection.recordDecision(name,PublicationPolicy.ALWAYS,publicationDecision,ready,NmeaStreamReadinessPolicy.sensor(ready))
             if(ready)prepare(generation,name,batch.sentences,now,batch.sourceStableKey,inputTransportGeneration)else{outputConnection.recordSuppressed(name,batch.suppressionReason?:"NO_COMPLETE_VALUE");null}
         }
         prepared.forEach{batch->pending.offer(batch)?.let{outputConnection.recordDropped(it.stream,"A newer 1 Hz value replaced this blocked stream batch.")}}
@@ -205,13 +219,15 @@ object FormalOutputSessionReadinessPolicy{
     fun blocksStart(requestedRunning:Boolean,currentlyEnabled:Boolean,readiness:PhoneVesselOutputReadiness)=requestedRunning&&!currentlyEnabled&&!readiness.ready
 }
 
-/** Runtime degradation is stream-local. It is intentionally separate from the
- * formal Start gate so a suspect handset heading cannot flap GPS/pressure or
- * the shared TCP transport. */
+/** Runtime degradation is stream-local. Heading alignment is independent from
+ * Trip attitude capture: moving the handset may make the user-aligned heading
+ * temporarily represent the handset, but it must not flap the transport.
+ * Only vessel-frame Motion is suppressed when no confirmed Trip segment is
+ * active. */
 object PhoneOwnedRuntimeSafety{
     fun suppression(mode:NmeaOutputTransportMode,stream:AnchorWatchNmeaStream,mountState:PhoneVesselMountState):String?{
         @Suppress("UNUSED_VARIABLE") val destinationOnly=mode
-        if(stream !in setOf(AnchorWatchNmeaStream.HEADING,AnchorWatchNmeaStream.MOTION))return null
+        if(stream!=AnchorWatchNmeaStream.MOTION)return null
         if(mountState==PhoneVesselMountState.VESSEL_MOUNTED)return null
         return if(mountState==PhoneVesselMountState.MOUNT_SUSPECT)"MOUNT_SUSPECT" else "PHONE_NOT_MOUNTED"
     }

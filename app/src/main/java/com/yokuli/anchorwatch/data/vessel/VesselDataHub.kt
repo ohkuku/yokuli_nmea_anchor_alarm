@@ -44,7 +44,7 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
     @Volatile private var pinnedPositionSourceId:String?=null;@Volatile private var pinnedHeadingSourceId:String?=null;@Volatile private var allowPinnedFallback=false
     @Volatile private var vesselDraftMeters=0.0
     @Volatile private var depthReference:DepthReference?=null
-    @Volatile private var mountState=PhoneVesselMountState.UNCALIBRATED;@Volatile private var calibration=VesselMountCalibration()
+    @Volatile private var calibration=VesselMountCalibration()
     init{
         scope.launch{positions.boat.collect{boatPosition=it}};scope.launch{positions.phone.collect{value->phonePosition=value;value.value?.let{position->sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.POSITION,position,PHONE_GNSS_ID,VesselSourceClass.PHONE_GNSS,receivedElapsedRealtime=value.receivedElapsedRealtime?:SystemClock.elapsedRealtime(),observedAtUtcMillis=value.observedAtUtcMillis,quality=value.quality,provenance=VesselProvenance.PhoneSensor("Android GNSS")))}}}
         scope.launch{navigation.transportDiagnostics.map{it.connectionGeneration}.distinctUntilChanged().drop(1).collect{clearBoatGeneration()}}
@@ -58,17 +58,17 @@ class VesselDataHub @Inject constructor(navigation:NavigationRepository,depth:Li
         scope.launch{phoneHeading.sample.collect{sample->val quality=if(sample.presentationQuality==com.yokuli.anchorwatch.location.PhoneHeadingPresentationQuality.GOOD)VesselDataQuality.GOOD else VesselDataQuality.DEGRADED;val received=sample.receivedElapsedRealtime?:return@collect
             sample.liveTrueHeadingDegrees?.let{value->
                 sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.DEVICE_HEADING_TRUE,value,PHONE_DEVICE_HEADING_ID,VesselSourceClass.PHONE_DEVICE_COMPASS,VesselReference.TrueNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Android device compass")))
-                if(mountState==PhoneVesselMountState.VESSEL_MOUNTED&&calibration.mountConfirmed&&calibration.headingAligned){val aligned=normalize(value+calibration.headingAlignmentOffsetDegrees);sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.HEADING_TRUE,aligned,PHONE_VESSEL_HEADING_ID,VesselSourceClass.PHONE_VESSEL_HEADING,VesselReference.TrueNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Mounted phone compass",calibration.version)));phoneHeadingValue=observation(aligned,VesselDataSource.PHONE_MAGNETOMETER,received,null,"mounted phone vessel heading",quality)}
+                if(calibration.headingAligned){val aligned=normalize(value+calibration.headingAlignmentOffsetDegrees);sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.HEADING_TRUE,aligned,PHONE_VESSEL_HEADING_ID,VesselSourceClass.PHONE_VESSEL_HEADING,VesselReference.TrueNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Heading-aligned phone compass",calibration.headingAlignmentVersion)));phoneHeadingValue=observation(aligned,VesselDataSource.PHONE_MAGNETOMETER,received,null,"heading-aligned phone vessel heading",quality)}
             }
-            sample.liveMagneticHeadingDegrees?.let{value->sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.DEVICE_HEADING_MAGNETIC,value,PHONE_DEVICE_HEADING_ID,VesselSourceClass.PHONE_DEVICE_COMPASS,VesselReference.MagneticNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Android device compass")));if(mountState==PhoneVesselMountState.VESSEL_MOUNTED&&calibration.mountConfirmed&&calibration.headingAligned){val aligned=normalize(value+calibration.headingAlignmentOffsetDegrees);sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.HEADING_MAGNETIC,aligned,PHONE_VESSEL_HEADING_ID,VesselSourceClass.PHONE_VESSEL_HEADING,VesselReference.MagneticNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Mounted phone compass",calibration.version)));phoneMagneticHeadingValue=observation(aligned,VesselDataSource.PHONE_MAGNETOMETER,received,null,"mounted phone vessel magnetic heading",quality)}}
+            sample.liveMagneticHeadingDegrees?.let{value->sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.DEVICE_HEADING_MAGNETIC,value,PHONE_DEVICE_HEADING_ID,VesselSourceClass.PHONE_DEVICE_COMPASS,VesselReference.MagneticNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Android device compass")));if(calibration.headingAligned){val aligned=normalize(value+calibration.headingAlignmentOffsetDegrees);sourceRegistry.publish(VesselSourceCandidate(VesselMetricId.HEADING_MAGNETIC,aligned,PHONE_VESSEL_HEADING_ID,VesselSourceClass.PHONE_VESSEL_HEADING,VesselReference.MagneticNorth,received,quality=quality,provenance=VesselProvenance.PhoneSensor("Heading-aligned phone compass",calibration.headingAlignmentVersion)));phoneMagneticHeadingValue=observation(aligned,VesselDataSource.PHONE_MAGNETOMETER,received,null,"heading-aligned phone vessel magnetic heading",quality)}}
         }}
         scope.launch{attitude.mountState.collect{state->
-            mountState=state
             if(state!=PhoneVesselMountState.VESSEL_MOUNTED){
-                // A picked-up or suspect phone stops representing the vessel
-                // immediately. Do not wait for the ordinary metric stale timer.
-                phoneHeadingValue=VesselObservation();phoneMagneticHeadingValue=VesselObservation();attitudeValue=VesselObservation();motionValue=VesselObservation()
-                sourceRegistry.removeSources(setOf(PHONE_VESSEL_HEADING_ID.id,PHONE_IMU_ID.id))
+                // The fixed-frame flag belongs only to Trip attitude. Heading
+                // has its own durable alignment and GNSS/pressure are device-
+                // frame independent, so a moved phone must not clear them.
+                attitudeValue=VesselObservation();motionValue=VesselObservation()
+                sourceRegistry.removeSources(setOf(PHONE_IMU_ID.id))
             }
         }}
         scope.launch{mountCalibration.calibration.collect{value->calibration=value;if(!value.headingAligned){phoneHeadingValue=VesselObservation();phoneMagneticHeadingValue=VesselObservation();sourceRegistry.removeSources(setOf(PHONE_VESSEL_HEADING_ID.id))}}}

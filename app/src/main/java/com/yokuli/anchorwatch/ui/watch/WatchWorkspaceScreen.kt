@@ -64,6 +64,8 @@ import com.yokuli.anchorwatch.data.trip.DashboardTileBinding
 import com.yokuli.anchorwatch.data.trip.InstrumentTileSize
 import com.yokuli.anchorwatch.data.trip.InstrumentSourceOverride
 import com.yokuli.anchorwatch.data.trip.TripDashboard
+import com.yokuli.anchorwatch.location.vessel.DeviceBowAxis
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -83,6 +85,7 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
     var manageDashboards by remember{mutableStateOf(false)}
     var moreActions by remember{mutableStateOf(false)}
     var pagePicker by remember{mutableStateOf(false)}
+    var attitudeFrameDialog by remember{mutableStateOf(false)}
     val trip=state.activeTrip
     val healthNow by produceState(android.os.SystemClock.elapsedRealtime()){while(true){kotlinx.coroutines.delay(1_000L);value=android.os.SystemClock.elapsedRealtime()}}
     val nmeaTrafficLive=state.connection!=com.yokuli.anchorwatch.domain.model.NmeaConnectionState.DISCONNECTED&&state.diagnostics.lastPacketElapsed?.let{healthNow-it in 0L..5_000L}==true
@@ -110,7 +113,8 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(tr("SAIL","帆航"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
-                    val issues=buildList{if(!nmeaTrafficLive)add(tr("NMEA stale","NMEA 已静默"));if(state.vesselData.position.freshness!=VesselDataFreshness.FRESH)add(tr("GPS unavailable","GPS 不可用"));if(!imuLive)add(tr("IMU unavailable","IMU 不可用"))}
+                    val attitudeExpected=trip?.phoneMotionEnabled==true
+                    val issues=buildList{if(!nmeaTrafficLive)add(tr("NMEA stale","NMEA 已静默"));if(state.vesselData.position.freshness!=VesselDataFreshness.FRESH)add(tr("GPS unavailable","GPS 不可用"));if(attitudeExpected&&!imuLive)add(tr("Attitude paused","姿态已暂停"))}
                     if(issues.isEmpty())Text(tr("● LIVE","● 实时"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
                     else Text(issues.joinToString(" · "),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.tertiary)
                 }
@@ -134,6 +138,9 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
             }else{
                 Row(Modifier.fillMaxWidth().height(44.dp),verticalAlignment=Alignment.CenterVertically){Box{TextButton({pagePicker=true},enabled=!touchLocked){Text(instrumentPages.getOrNull(instrumentPager.currentPage)?.let{(pagePreset,dashboard)->dashboard?.title?:presetName(pagePreset)}?:"—",fontWeight=FontWeight.SemiBold)};DropdownMenu(pagePicker,{pagePicker=false}){instrumentPages.forEachIndexed{index,(pagePreset,dashboard)->DropdownMenuItem({Text(dashboard?.title?:presetName(pagePreset))},{pagePicker=false;instrumentScope.launch{instrumentPager.animateScrollToPage(index)}})}}};Spacer(Modifier.weight(1f));Text("${instrumentPager.currentPage+1} / ${instrumentPages.size}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.width(10.dp));instrumentPages.forEachIndexed{index,_->Text(if(index==instrumentPager.currentPage)"●" else "○",Modifier.padding(horizontal=2.dp),color=if(index==instrumentPager.currentPage)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}
             }
+            if(!cockpitMode&&trip!=null&&(preset==TripInstrumentPreset.MOTION||trip.phoneMotionEnabled&&!imuLive)){
+                TripAttitudeStatusBar(state,openFrame={attitudeFrameDialog=true},pause=vm::pauseTripAttitude)
+            }
             HorizontalPager(instrumentPager,Modifier.fillMaxWidth().weight(1f),userScrollEnabled=!touchLocked){index->val (pagePreset,dashboard)=instrumentPages[index];TripInstrumentViewport(state,pagePreset,dashboard){if(!touchLocked)customizeLayout=true}}
             TripCompactControls(
                 state=state,
@@ -146,7 +153,8 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
             )
         }
     }
-    if(startDialog)TripStartDialog(state,{startDialog=false}){name,phoneMotion,positionPreference->startDialog=false;vm.startTrip(name,phoneMotion,positionPreference)}
+    if(startDialog)TripStartDialog(state,{startDialog=false;vm.setPhoneVesselMounted(false)},{axis->vm.confirmTripAttitudeFrame(axis)}){name,phoneMotion,positionPreference->startDialog=false;if(!phoneMotion)vm.setPhoneVesselMounted(false);vm.startTrip(name,phoneMotion,positionPreference)}
+    if(attitudeFrameDialog)TripAttitudeFrameDialog(state,{attitudeFrameDialog=false}){axis->vm.confirmTripAttitudeFrame(axis)}
     if(customizeLayout){
         val dashboard=instrumentPages.getOrNull(instrumentPager.currentPage)?.second
         val currentTiles=dashboard?.tiles?.filter{it.tileId!=null}?:state.vesselSettings.layout(preset).map{DashboardTileBinding(tileId=it)}
@@ -464,7 +472,7 @@ private fun TripPositionMap(state:MainUiState){
 }
 
 @Composable
-internal fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Boolean,VesselSourcePreference)->Unit){
+internal fun TripStartDialog(state:MainUiState,dismiss:()->Unit,confirmAttitude:(DeviceBowAxis)->Unit={},start:(String,Boolean,VesselSourcePreference)->Unit){
     var name by remember{mutableStateOf("")}
     var positionPreference by remember(state.vesselSettings.positionPreference){mutableStateOf(state.vesselSettings.positionPreference.takeUnless{it==VesselSourcePreference.DERIVED}?:VesselSourcePreference.AUTO)}
     val positionCandidates=state.vesselData.candidates[VesselMetricId.POSITION].orEmpty()
@@ -476,8 +484,10 @@ internal fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Bo
         VesselSourcePreference.PHONE->phonePositionReady
         VesselSourcePreference.DERIVED->false
     }
-    val phoneMotionReady=state.phoneSensorCapabilities.attitudeAvailable&&state.vesselMountCalibration.calibratedAt>0L&&state.phoneVesselMountState==com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState.VESSEL_MOUNTED
-    var phoneMotion by remember(phoneMotionReady){mutableStateOf(phoneMotionReady)}
+    val phoneMotionAvailable=state.phoneSensorCapabilities.attitudeAvailable
+    val phoneMotionReady=phoneMotionAvailable&&state.vesselMountCalibration.attitudeFrameConfirmed&&state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED
+    var phoneMotion by remember{mutableStateOf(false)}
+    var attitudeAxis by remember(state.vesselMountCalibration.bowAxis){mutableStateOf(state.vesselMountCalibration.bowAxis)}
     AlertDialog(
         onDismissRequest=dismiss,
         title={Text(tr("Start Trip Watch","开始航程监控"))},
@@ -503,18 +513,62 @@ internal fun TripStartDialog(state:MainUiState,dismiss:()->Unit,start:(String,Bo
                 TripReadinessRow(tr("Phone pressure","手机气压"),state.phoneSensorCapabilities.pressureAvailable,if(state.phoneSensorCapabilities.pressureAvailable)tr("Recorded independently","将独立记录") else tr("No barometer","没有气压计"))
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
                     Column(Modifier.weight(1f)){
-                        Text(tr("Phone vessel motion","手机船体运动"),style=MaterialTheme.typography.bodyMedium)
-                        Text(if(phoneMotionReady)tr("Mount calibration is ready","安装姿态已校准") else tr("Unavailable until the phone is mounted and calibrated in Settings","请先将手机固定，并在设置中完成安装校准"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(tr("Record sailing attitude","记录航行姿态"),style=MaterialTheme.typography.bodyMedium)
+                        Text(if(!phoneMotionAvailable)tr("This phone has no compatible rotation sensor","此手机没有兼容的旋转传感器") else if(phoneMotionReady)tr("Phone-to-vessel frame confirmed for this trip","已为本航程确认手机与船体坐标关系") else tr("Optional · confirm after placing the phone on the vessel","可选 · 将手机放到船上后再确认"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Switch(checked=phoneMotion,enabled=phoneMotionReady,onCheckedChange={phoneMotion=it},modifier=Modifier.testTag("trip_phone_motion"))
+                    Switch(checked=phoneMotion,enabled=phoneMotionAvailable,onCheckedChange={phoneMotion=it},modifier=Modifier.testTag("trip_phone_motion"))
+                }
+                if(phoneMotion){
+                    Surface(color=if(phoneMotionReady)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(10.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){
+                        Text(tr("Place the phone screen plane parallel to the vessel reference plane. Do not level the current boat attitude to zero; the App will retain the heel that exists now.","让手机屏幕平面与船体参考平面平行。不要把船此刻的倾斜归零；App 会保留当前真实横倾。"),style=MaterialTheme.typography.bodySmall)
+                        Text(tr("Which phone edge points to the bow?","手机哪一边指向船艏？"),style=MaterialTheme.typography.labelLarge)
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){DeviceBowAxis.entries.forEachIndexed{index,value->SegmentedButton(attitudeAxis==value,{attitudeAxis=value},shape=SegmentedButtonDefaults.itemShape(index,DeviceBowAxis.entries.size)){Text(tripBowAxisLabel(value))}}}
+                        Button({confirmAttitude(attitudeAxis)},Modifier.fillMaxWidth().testTag("trip_confirm_attitude_frame"),enabled=phoneMotionAvailable){Text(if(phoneMotionReady)tr("Confirm again","重新确认")else tr("Phone is placed · confirm","手机已放好 · 确认"))}
+                        Text(if(phoneMotionReady)tr("Ready. Before picking up the phone, tap Pause attitude; place it back and confirm to begin a new valid segment.","已就绪。拿起手机前请点“暂停姿态”；放回后重新确认即可开始新的有效段。") else tr("Confirmation is required before Start when attitude recording is selected.","选择记录姿态后，必须先确认才能开始航程。"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }}
                 }
                 Text(tr("You may start with missing optional instruments. Their gaps remain explicit; the app will not invent replacement values.","可在可选仪表缺失时开始；缺口会被明确保留，应用不会编造替代值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton={Button({start(name,phoneMotion,positionPreference)},enabled=positionReady,modifier=Modifier.testTag("start_trip_recording")){Text(tr("Start recording","开始记录"))}},
+        confirmButton={Button({start(name,phoneMotion,positionPreference)},enabled=positionReady&&(!phoneMotion||phoneMotionReady),modifier=Modifier.testTag("start_trip_recording")){Text(tr("Start recording","开始记录"))}},
         dismissButton={TextButton(dismiss){Text(tr("Cancel","取消"))}},
     )
 }
+
+@Composable
+private fun TripAttitudeStatusBar(state:MainUiState,openFrame:()->Unit,pause:()->Unit){
+    val trip=state.activeTrip?:return
+    val recording=trip.phoneMotionEnabled&&state.phoneVesselMountState==PhoneVesselMountState.VESSEL_MOUNTED&&state.vesselData.attitude.freshness==VesselDataFreshness.FRESH
+    val invalidated=state.phoneVesselMountState==PhoneVesselMountState.MOUNT_SUSPECT
+    Surface(Modifier.fillMaxWidth().padding(vertical=4.dp).testTag("trip_attitude_status"),color=when{recording->MaterialTheme.colorScheme.primaryContainer;invalidated->MaterialTheme.colorScheme.errorContainer;else->MaterialTheme.colorScheme.tertiaryContainer},shape=MaterialTheme.shapes.medium){
+        Row(Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=7.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            Column(Modifier.weight(1f)){
+                Text(when{recording->tr("Attitude segment recording","正在记录姿态段");invalidated->tr("Previous attitude frame invalid","上一个姿态参考已失效");else->tr("Attitude not entering Trip Report","姿态未计入航程报告")},fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.bodySmall)
+                Text(when{recording->tr("Heel, pitch and motion are valid for this segment","本段横倾、纵倾和运动数据有效");invalidated->tr("Place the phone back and confirm a new segment","请放回手机并确认新的姿态段");else->tr("Other trip data continues normally","其他航程数据继续正常记录")},style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if(recording)TextButton(pause){Text(tr("Pause","暂停"))}else Button(openFrame){Text(tr("Place & confirm","放好并确认"))}
+        }
+    }
+}
+
+@Composable
+private fun TripAttitudeFrameDialog(state:MainUiState,dismiss:()->Unit,confirm:(DeviceBowAxis)->Unit){
+    var axis by remember(state.vesselMountCalibration.bowAxis){mutableStateOf(state.vesselMountCalibration.bowAxis)}
+    AlertDialog(
+        onDismissRequest=dismiss,
+        title={Text(tr("Confirm Trip attitude frame","确认航程姿态坐标"))},
+        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text(tr("Place the phone screen plane parallel to the vessel reference plane. The App uses gravity to retain the vessel's current heel; this is not a zero adjustment.","让手机屏幕平面与船体参考平面平行。App 会根据重力保留船当前的真实横倾；这不是归零操作。"))
+            Text(tr("Which edge points to the bow?","哪一边指向船艏？"),fontWeight=FontWeight.SemiBold)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){DeviceBowAxis.entries.forEachIndexed{index,value->SegmentedButton(axis==value,{axis=value},shape=SegmentedButtonDefaults.itemShape(index,DeviceBowAxis.entries.size)){Text(tripBowAxisLabel(value))}}}
+            Text(tr("Before moving the phone, tap Pause attitude. Reconfirm after placing it again. The App does not guess pick-up from ordinary vessel motion.","移动手机前请先点“暂停姿态”，放回后重新确认。App 不会把船舶正常运动擅自判断为拿起手机。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }},
+        confirmButton={Button({confirm(axis);dismiss()},enabled=state.phoneSensorCapabilities.attitudeAvailable,modifier=Modifier.testTag("trip_reconfirm_attitude")){Text(tr("Phone is placed · confirm","手机已放好 · 确认"))}},
+        dismissButton={TextButton(dismiss){Text(tr("Not now","暂不"))}},
+    )
+}
+
+@Composable private fun tripBowAxisLabel(value:DeviceBowAxis)=when(value){DeviceBowAxis.TOP->tr("Top","上边");DeviceBowAxis.BOTTOM->tr("Bottom","下边");DeviceBowAxis.LEFT->tr("Left","左边");DeviceBowAxis.RIGHT->tr("Right","右边")}
 
 @Composable
 private fun TripReadinessRow(label:String,ready:Boolean,detail:String){

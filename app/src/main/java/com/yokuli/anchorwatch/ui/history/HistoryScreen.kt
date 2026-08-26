@@ -206,6 +206,7 @@ private fun TripReportDialog(session:TripSessionEntity,vm:MainViewModel,dismiss:
         else Column(Modifier.heightIn(max=590.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
             Text(value.session.name,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
             Text("${tr("Quality","质量")} ${reportQualityLabel(value.quality)} · ${tr("position","位置")} ${value.positionCoveragePercent.toInt()}% · ${tr("wind","风")} ${value.windCoveragePercent.toInt()}% · ${tr("depth","水深")} ${value.depthCoveragePercent.toInt()}% · ${tr("attitude","姿态")} ${value.attitudeCoveragePercent.toInt()}%",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            ReportHeading(tr("Sailing track","航行轨迹"))
             TripReportRouteMap(replay)
             if(value.sourceTimeline.isNotEmpty()){
                 ReportHeading(tr("Source timeline","来源时间线"))
@@ -223,6 +224,12 @@ private fun TripReportDialog(session:TripSessionEntity,vm:MainViewModel,dismiss:
             Text(tr("Moving time and average SOG use a 0.5 kn threshold.","航行时间和平均对地航速使用 0.5 节阈值。"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             ReportHeading(tr("Sailing","航行"))
             ReportLine(tr("Heel avg abs / RMS / P95","横倾绝对均值 / RMS / P95"),listOf(value.averageAbsHeelDegrees,value.rmsHeelDegrees,value.p95AbsHeelDegrees).joinToString(" / "){it?.let{"%.1f°".format(it)}?:"—"})
+            ReportLine(tr("Fastest synchronized SOG · heel","同步样本最快对地航速 · 横倾"),if(value.maximumSogWithAttitudeKnots!=null&&value.heelAtMaximumSogDegrees!=null)"%.1f kn · %+.1f°".format(value.maximumSogWithAttitudeKnots,value.heelAtMaximumSogDegrees) else "—")
+            value.speedHeelBands.filter{it.sampleCount>0}.forEach{band->
+                ReportLine(tr("Heel ${band.label} · SOG avg / max","横倾 ${band.label} · 对地航速平均 / 最大"),"${band.averageSogKnots?.let{"%.1f".format(it)}?:"—"} / ${band.maximumSogKnots?.let{"%.1f kn".format(it)}?:"—"} · n=${band.sampleCount}")
+                if(band.averageBoatSpeedKnots!=null||band.maximumBoatSpeedKnots!=null)ReportLine(tr("Heel ${band.label} · STW avg / max","横倾 ${band.label} · 对水航速平均 / 最大"),"${band.averageBoatSpeedKnots?.let{"%.1f".format(it)}?:"—"} / ${band.maximumBoatSpeedKnots?.let{"%.1f kn".format(it)}?:"—"}")
+            }
+            if(value.attitudeArtifactFilteredCount>0)Text(tr("${value.attitudeArtifactFilteredCount} isolated short attitude spikes were excluded from report statistics. Runtime recording was not stopped.","报告统计已排除 ${value.attitudeArtifactFilteredCount} 个孤立的短时姿态尖峰；运行时记录没有被自动停止。"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             ReportLine(tr("Port / starboard max","左舷 / 右舷最大横倾"),"${value.maxPortHeelDegrees?.let{"%.1f°".format(it)}?:"—"} / ${value.maxStarboardHeelDegrees?.let{"%+.1f°".format(it)}?:"—"}")
             ReportLine(tr("Heel distribution 0–10 / 10–20 / 20–30 / 30+","横倾分布 0–10 / 10–20 / 20–30 / 30+"),listOf(value.heelDistribution.zeroToTenPercent,value.heelDistribution.tenToTwentyPercent,value.heelDistribution.twentyToThirtyPercent,value.heelDistribution.overThirtyPercent).joinToString(" / "){"${it.toInt()}%"})
             ReportLine(tr("Pitch mean / P95 abs / bow up / bow down","纵倾均值 / 绝对 P95 / 艏升 / 艏沉"),listOf(value.meanPitchDegrees,value.p95AbsPitchDegrees,value.maxBowUpDegrees,value.maxBowDownDegrees).joinToString(" / "){it?.let{"%+.1f°".format(it)}?:"—"})

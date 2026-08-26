@@ -114,7 +114,7 @@ Before a frame reaches any destination, `NmeaGeneratedSentenceValidator` require
 The supplied analysis inspected an older `main` architecture. It was used as an audit checklist, not applied as a patch:
 
 - Already resolved in the current publisher: independent stream clocks, one production runtime owner, Phone/App-owned value encoding, no selected-Boat re-encoder or raw repeater, publication generation, hard Stop and real GNSS-based declination validity.
-- Adopted from the audit: input transport generation on queued writes, structured same-socket write failures, per-packet dropped diagnostics, occurrence-based echo quarantine, time-driven field expiry, PHONE_BARO XDR semantics, strict output validation and randomized TCP framing coverage.
+- Adopted from the audit: input transport generation on queued writes, structured same-socket write failures, per-packet dropped diagnostics, occurrence-bounded echo quarantine with a pre-socket in-flight barrier, time-driven field expiry, PHONE_BARO XDR semantics, strict output validation and randomized TCP framing coverage.
 - Current compatibility contract: every normal stream is 1 Hz. Unchanged valid Heading is still resent as one complete sentence every second; change-only output is forbidden.
 - Intentionally retained: retry on the next normal stream period. Immediate failure retry would recreate a connection/write storm; attempted and written clocks/counters remain separate.
 - Not enabled as a default: combined attitude+pressure XDR packing. Separate complete standard XDR frames remain the product output. Converter-specific combined packing needs one controlled Pi/MFD A/B capture and must also remain within the 82-byte sentence limit.

@@ -97,6 +97,10 @@ class TripRuntime @Inject constructor(
         active=restored
         resetRecordingEdges()
         if(!existing.paused){
+            // The App cannot prove that the phone stayed in its vessel frame
+            // while the process was absent. Preserve the trip, but require an
+            // explicit in-trip attitude confirmation before accepting motion.
+            vesselAttitude.setMounted(false)
             try{ownResources(restored);startTicker()}
             catch(cancelled:CancellationException){releaseOwnedResources();throw cancelled}
             catch(error:Exception){
@@ -115,7 +119,7 @@ class TripRuntime @Inject constructor(
         val app=appSettings.settings.first()
         val vessel=vesselSettings.settings.first()
         val calibration=mountCalibration.calibration.first()
-        val motionEnabled=TripStartSensorPolicy.phoneMotionEnabled(phoneMotionRequested,vesselAttitude.capabilities.attitudeAvailable,calibration.calibratedAt)&&vesselAttitude.mountState.value==PhoneVesselMountState.VESSEL_MOUNTED
+        val motionEnabled=TripStartSensorPolicy.phoneMotionEnabled(phoneMotionRequested,vesselAttitude.capabilities.attitudeAvailable,calibration.calibratedAt)&&calibration.attitudeFrameConfirmed&&vesselAttitude.mountState.value==PhoneVesselMountState.VESSEL_MOUNTED
         val now=System.currentTimeMillis()
         val safePositionPreference=positionPreference.takeUnless{it==VesselSourcePreference.DERIVED}?:VesselSourcePreference.AUTO
         val value=TripSessionEntity(
@@ -169,6 +173,7 @@ class TripRuntime @Inject constructor(
             catch(error:Exception){startTicker();throw error}
             active=updated
             releaseOwnedResources()
+            if(current.phoneMotionEnabled)vesselAttitude.setMounted(false)
             TripRuntimeResult(true,"Trip paused.",updated)
         }
     }
@@ -193,6 +198,35 @@ class TripRuntime @Inject constructor(
         TripRuntimeResult(true,"Trip resumed.",updated)
     }
 
+    /** Begins a new valid attitude segment inside the running trip. The UI has
+     * already asked the user to place the phone plane parallel to the vessel
+     * reference plane and select the bow-facing device edge. */
+    suspend fun confirmAttitudeFrame():TripRuntimeResult=mutex.withLock{
+        val current=active?:return@withLock TripRuntimeResult(false,"Start Trip Watch before confirming vessel attitude.")
+        if(current.paused)return@withLock TripRuntimeResult(false,"Resume Trip Watch before confirming a new attitude segment.",current)
+        val calibration=mountCalibration.calibration.first()
+        if(!vesselAttitude.capabilities.attitudeAvailable||!calibration.attitudeFrameConfirmed||vesselAttitude.mountState.value!=PhoneVesselMountState.VESSEL_MOUNTED)return@withLock TripRuntimeResult(false,"Place the phone parallel to the vessel reference plane, then confirm again.",current)
+        phoneMotionRecordingAllowed=true
+        setResourceRequirement(nmeaTransportOwned)
+        val now=System.currentTimeMillis()
+        val updated=current.copy(phoneMotionEnabled=true,mountCalibrationVersion=calibration.version,eventCount=current.eventCount+1)
+        dao.updateSessionAndInsertEvent(updated,TripEventEntity(tripId=current.id,timestamp=now,type="PHONE_ATTITUDE_SEGMENT_STARTED",severity="INFO",detailJson="{\"mountCalibrationVersion\":${calibration.version},\"bowAxis\":\"${calibration.bowAxis.name}\"}"))
+        active=updated
+        TripRuntimeResult(true,"A new Trip attitude segment is recording.",updated)
+    }
+
+    suspend fun pauseAttitude():TripRuntimeResult=mutex.withLock{
+        val current=active?:return@withLock TripRuntimeResult(false,"No active Trip Watch.")
+        if(!current.phoneMotionEnabled&&!phoneMotionRecordingAllowed)return@withLock TripRuntimeResult(true,"Trip attitude is already off.",current)
+        phoneMotionRecordingAllowed=false
+        setResourceRequirement(nmeaTransportOwned)
+        val now=System.currentTimeMillis()
+        val updated=current.copy(eventCount=current.eventCount+1)
+        dao.updateSessionAndInsertEvent(updated,TripEventEntity(tripId=current.id,timestamp=now,type="PHONE_ATTITUDE_SEGMENT_PAUSED",severity="INFO"))
+        active=updated
+        TripRuntimeResult(true,"Trip attitude paused; other trip data continues.",updated)
+    }
+
     suspend fun end():TripRuntimeResult{
         stopTicker()
         return mutex.withLock{
@@ -207,6 +241,7 @@ class TripRuntime @Inject constructor(
             active=null
             hub.setTripPositionPreference(null)
             releaseOwnedResources()
+            if(latest.phoneMotionEnabled)vesselAttitude.setMounted(false)
             eventTransitions.reset()
             nmeaExpected=false;depthExpected=false;windExpected=false
             TripRuntimeResult(true,"Trip ended and saved.",ended)
@@ -228,7 +263,7 @@ class TripRuntime @Inject constructor(
 
     fun shutdown(){
         stopTicker()
-        runBlocking(Dispatchers.IO){withTimeoutOrNull(2_000){mutex.withLock{flushLocked()}}}
+        runBlocking(Dispatchers.IO){withTimeoutOrNull(2_000){mutex.withLock{flushLocked()};vesselAttitude.setMounted(false)}}
         hub.setTripPositionPreference(null)
         releaseOwnedResources()
     }
@@ -251,7 +286,7 @@ class TripRuntime @Inject constructor(
 
     private suspend fun ownResources(session:TripSessionEntity){
         val calibration=mountCalibration.calibration.first()
-        val motionRuntimeEnabled=session.phoneMotionEnabled&&vesselAttitude.capabilities.attitudeAvailable&&calibration.calibratedAt>0L&&session.mountCalibrationVersion==calibration.version
+        val motionRuntimeEnabled=session.phoneMotionEnabled&&vesselAttitude.capabilities.attitudeAvailable&&calibration.attitudeFrameConfirmed&&session.mountCalibrationVersion==calibration.version
         phoneMotionRecordingAllowed=motionRuntimeEnabled
         // A trip that began phone-only may adopt live boat instruments later.
         // Pause/resume must preserve that expectation instead of falling back
@@ -320,7 +355,7 @@ class TripRuntime @Inject constructor(
         if(nmeaAvailable)nmeaExpected=true
         if(depthAvailable)depthExpected=true
         if(windAvailable)windExpected=true
-        eventTransitions.update(TripTransitionInput(now,nmeaExpected,nmeaAvailable,depthExpected,depthAvailable,windExpected,windAvailable,session.phoneMotionEnabled,phoneMotionAvailable,snapshot.attitude.provenance=="PHONE_MOVED_OR_MOUNT_SUSPECT",sample.motionScore)).forEach{event->
+        eventTransitions.update(TripTransitionInput(now,nmeaExpected,nmeaAvailable,depthExpected,depthAvailable,windExpected,windAvailable,session.phoneMotionEnabled,phoneMotionAvailable,vesselAttitude.mountState.value==PhoneVesselMountState.MOUNT_SUSPECT,sample.motionScore)).forEach{event->
             dao.insertEvent(TripEventEntity(tripId=session.id,timestamp=nowWall,type=event.type,severity=event.severity,latitude=sample.latitude,longitude=sample.longitude,detailJson=event.detailJson));newEvents++
         }
         var current=session.copy(eventCount=session.eventCount+newEvents)

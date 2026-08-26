@@ -178,7 +178,7 @@
 - Root cause: transport ownership, presentation state and retry policy were coupled in one loop without a latched failure state, monotonic transport-generation diagnostics or a bounded retry circuit.
 - Failing test: `NmeaConnectionManagerTest.refusedConnectionKeepsOneVisibleErrorAndDoesNotOpenAnotherSocket`; `automaticOpenFailuresBackOffAndStopAfterTheBoundedCircuitLimit`; `explicitReconnectReplacesSameProfileOnceAndRapidTapsAreDebounced`; `P0NmeaEndpointStoryTest.formalInputOwnsOneSocketWhileQuietThenReceivesLater`.
 - Fix commit: **`f22c8fe`**
-- Verification result: **Passed `NmeaConnectionManagerTest` (9/9) and `P0NmeaEndpointStoryTest` (2/2) using loopback fake endpoints. Final `assembleDebug` passed in 30s. No real endpoint was contacted.**
+- Verification result: **Passed the expanded `NmeaConnectionManagerTest` (14/14) inside the complete 571-test Debug JVM suite. Circuit-open diagnostics and terminal `ERROR` now publish atomically, so UI/tests cannot observe `circuitOpen=true` with `RECONNECTING`. Final `assembleDebug` passed. No real endpoint was contacted.**
 - Real hardware verified: **No — fragile NMEA gateway remains UNVERIFIED_HARDWARE.**
 - Status: **FIXED — TARGETED JVM + DEBUG BUILD PASSED; AWAITING GATEWAY QA**
 
@@ -290,6 +290,12 @@
 
 ## Finding P1-022 — Residual field/echo/framing gaps reduced output trust
 
+> **UPDATED 2026-08-26:** occurrence-consuming echo matching remains the
+> confirmed policy because it cannot indefinitely hide a genuinely independent
+> instrument with the same value. A short pre-socket barrier now closes only the
+> first-return race. The observed KC-2W/Raymarine dropout was not an App echo
+> loop; the vessel test confirmed a 4800-baud bottleneck resolved at 38400.
+
 - Severity: **P1 / interoperability and diagnostics**
 - User story: App output frames are valid and observable; echoes cannot become Boat evidence; held values disappear after source silence; App pressure is typed consistently.
 - Evidence: exact echo storage kept one timestamp per sentence, semantic matches were not occurrence-consuming, retained generic fields expired only when a later sentence arrived, XDR bar pressure remained RAW, and no final centralized 82-byte framing validator existed.
@@ -339,7 +345,7 @@
 - Fix commit: **UNCOMMITTED WORKTREE on `codex/nmea-publisher-hard-stop`**
 - Verification result: **All normal stream periods are now 1,000 ms. The publisher prepares every due stream, retains only its newest blocked value, and wakes the writer once after the complete tick is ready. The writer drains those values into one contiguous payload and invokes one Socket write/flush; stale publication/input generations are dropped and never replayed. A slow write cannot trigger a catch-up burst: after crossing 500 ms it receives a full one-second recovery window and the pending slots continue replacing in place. At 500 ms the live UI reports congestion; at three seconds the exact same-input transport generation is aborted once and only the existing bounded RX reconnect policy may recover it. Unchanged complete Heading remains a mandatory 1 Hz heartbeat. Tests and manuals were updated but deliberately NOT RUN.**
 - Real hardware verified: **No — post-fix KC-2W/Raymarine run pending.**
-- Status: **FIXED IN CODE — TESTS NOT RUN; BUILD AND CONTROLLED HARDWARE QA PENDING**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TESTS NOT RUN; CONTROLLED HARDWARE QA PENDING**
 
 ## Finding P0-026 — Boat-network injection and phone-hosted NMEA server shared one lifecycle
 
@@ -352,7 +358,7 @@
 - Fix commit: **`53bf3c2` — `feat(nmea): separate boat injection from phone server`**
 - Verification result: **Code written; tests deliberately NOT RUN. Boat supplement no longer injects/owns `NmeaSharingServer`. Phone NMEA service has a separate DataStore-backed configuration, process-local lease, runtime, encoder state, resource owner, diagnostics and UI destination. Both may run together. Legacy TCP-server routes migrate stopped and are rejected below UI.**
 - Real hardware verified: **No.**
-- Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL TWO-DEVICE QA REQUIRED**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TESTS NOT RUN; MANUAL TWO-DEVICE QA REQUIRED**
 
 ## Finding P0-027 — Rapid phone NMEA server Start requests could stop a fresh listener
 
@@ -365,7 +371,7 @@
 - Fix commit: **`53bf3c2` — `feat(nmea): separate boat injection from phone server`**
 - Verification result: **Code written; test deliberately NOT RUN. A fair lifecycle lock now serializes complete Start/Stop transactions. Same-port Start is idempotent inside that lock. Local service configuration saving cannot mutate its live lease.**
 - Real hardware verified: **No.**
-- Status: **FIXED IN CODE — TESTS NOT RUN; MANUAL START/SOAK QA REQUIRED**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TESTS NOT RUN; MANUAL START/SOAK QA REQUIRED**
 
 ## Finding P1-011 — Saved anchorage exposed two nearby surfaces and an internal GIS schema
 
@@ -405,3 +411,68 @@
 - Verification result: **Public identity is Boat Watch across every locale, About/onboarding/feedback, README/store copy, QR and trip exports, release scripts/workflows and new artifact labels. `docs/PRODUCT_IDENTITY.md` now states that Anchor Watch is the anchor-alarm feature. Package/application ID, Room/backup identity, `anchorwatch://` V1/V2 imports, provider/channel/DataStore identifiers and release signing remain unchanged for upgrades. Product policy guard passed; final `:app:compileDebugKotlin` passed in 31s before the 34s anchorage follow-up. Tests were updated but deliberately NOT RUN.**
 - Real hardware verified: **No — verify launcher name after in-place upgrade, old backup restore, old V1/V2 QR import and Android mock-location picker identity.**
 - Status: **FIXED IN CODE — COMPILE/POLICY CHECK PASSED; UPGRADE AND STORE QA REQUIRED**
+
+## Finding P0-028 — KC-2W 4800-baud bottleneck masqueraded as App feedback
+
+- Severity: **P0 / downstream NO HEADING and hardware interoperability**
+- User story: a KC-2W installation carrying the complete Phone/App feed and N2K→0183 converted traffic must have enough 0183 bandwidth; otherwise the App must not be blamed for gaps created after its socket write.
+- Evidence: vessel QA showed KC-2W Phone fields stable until Raymarine powered on, then all fields disappeared/reappeared and Raymarine reported `NO HEADING`. With no App code change, switching the KC-2W NMEA 0183 rate from 4800 to 38400 made the data stable. At 8-N-1, those settings provide roughly 480 versus 3840 payload bytes/second before protocol overhead.
+- Reproduction steps: configure KC-2W 0183 at 4800, publish the complete 1 Hz Phone/App batch, then power Raymarine/N2K conversion on; observe DataList/Heading gaps. Repeat at 38400; the reported vessel test remains stable.
+- Root cause: confirmed KC-2W 0183 serial-bandwidth bottleneck. Raymarine joining increased the aggregate conversion traffic crossing the low-rate leg. The earlier hypothesis that an App echo was causing the supplement to yield is rejected for this incident.
+- Failing test: **Manual hardware case `QA-NMEA-KC2W-BAUD`; not representable by a JVM socket test because the bottleneck is inside the converter's serial/N2K bridge.** Defensive regressions `firstFullDuplexEchoIsBlockedBeforeSocketWriteReturns` and `failedSocketAttemptImmediatelyReleasesItsEchoBarrier` cover only a separate first-return race.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **REAL HARDWARE CONFIRMED: KC-2W at 38400 resolved the reported disappearing DataList and `NO HEADING`. Documentation now makes 38400 a precondition for the complete feed. The speculative 30-second unlimited semantic filter was removed; the existing 5-second occurrence-bounded policy remains, with only a short pre-socket barrier added. Barrier tests were written but deliberately NOT RUN.**
+- Real hardware verified: **Yes — user verified 4800 failed and 38400 worked with the KC-2W/Raymarine installation.**
+- Status: **ROOT CAUSE CONFIRMED AND RESOLVED IN HARDWARE — DOCUMENTED; DEFENSIVE APP BARRIER COMPILED, TESTS NOT RUN**
+
+## Finding P0-029 — Terminal NMEA input error could not be connected again
+
+- Severity: **P0 / formal RX unavailable**
+- User story: after one refused/failed formal input connection, the exact error remains visible and one later Connect action may replace that terminal generation without requiring repeated Stop/Connect taps.
+- Evidence: `NmeaConnectionManager.connect()` rejected every request while its old coroutine remained active, including the short `ERROR → finally` interval. `MainViewModel.saveAndConnect()` and the Data input UI also treated `ERROR` as an existing active connection.
+- Reproduction steps: connect once to an endpoint that refuses, then press Save & Connect again as soon as ERROR is shown. Before the fix the action was rejected even though no usable transport existed.
+- Root cause: terminal presentation state and coroutine lifetime were conflated at three layers.
+- Failing test: `NmeaConnectionManagerTest.explicitConnectMayReplaceATerminalErrorBeforeTheOldCoroutineFinallyRuns`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **ERROR is now an editable/disconnected form state, and an explicit Connect may replace only that terminal coroutine; CONNECTING/CONNECTED/RECONNECTING ownership remains protected. Test written but NOT RUN.**
+- Real hardware verified: **No — use one controlled attempt against the fragile endpoint.**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TEST NOT RUN; GATEWAY QA PENDING**
+
+## Finding P1-030 — Share Start and stopped route presentation contradicted saved configuration
+
+- Severity: **P1 / repeated actions and misleading destination**
+- User story: one Start tap must immediately become pending/running, and a saved dedicated TX route must still be labelled dedicated while stopped; Phone NMEA service and Phone/App boat output require separate Stop controls plus an explicit emergency Stop both.
+- Evidence: runtime readiness collectors could lag the coordinator's valid readiness by one emission, and ViewModel presentation waited for asynchronous DataStore/runtime collection before disabling Start. When stopped, output status reset to default same-input mode, so UI said same socket despite a saved dedicated port.
+- Reproduction steps: finish calibration, tap Start once, or save Dedicated TCP then stop and reopen the status card. Before the fix a second tap could be required and the stopped route read as same-input.
+- Root cause: command-time readiness was not passed atomically to the runtime, optimistic UI lease state was absent, and inactive runtime defaults were shown instead of persisted configuration.
+- Failing test: existing readiness/start idempotency coverage plus updated product-boundary UI tests; no new device integration test was requested for this pass.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **Coordinator passes its atomic readiness snapshot, Start/Stop updates presentation immediately, stopped UI resolves the saved route, and emergency Stop both products has a single runtime command. Tests were updated but NOT RUN.**
+- Real hardware verified: **No.**
+- Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; UI QA PENDING**
+
+## Finding P1-031 — A global mount guard conflated heading with sailing attitude
+
+- Severity: **P1 / sensor truth and Trip Report integrity**
+- User story: the phone-to-bow heading offset is a durable user alignment; GNSS and pressure are mount-independent; heel/pitch/motion belong only to user-confirmed Trip attitude segments. Picking up the phone must not stop unrelated sensors or a NMEA transport, and a vessel already heeled at confirmation must not be recorded as level.
+- Evidence: `PhoneVesselOutputReadinessPolicy` required a version-matched neutral quaternion, mount confirmation and heading alignment as one gate. `VesselDataHub` removed Phone vessel heading whenever mount state was not `VESSEL_MOUNTED`. `PhoneVesselAttitudeRepository` subtracted `neutralQuaternion`, so confirming at 20° heel returned approximately 0°. Settings owned a permanent vessel-zero/mount workflow even though attitude is used for sailing reports.
+- Reproduction steps: save a heading offset; recalibrate the attitude mount or transition to handheld and observe heading/output eligibility disappear. Separately, confirm the old neutral quaternion while a test fixture is rolled 20°, then inspect reported heel. Start a Trip, pick up the phone without ending the Trip, and inspect whether invalid attitude samples can enter report statistics.
+- Root cause: device direction, vessel heading alignment and vessel-frame attitude were modeled as one calibration lifecycle. The implementation attempted to infer a permanent phone-to-vessel transform from sensors that only observe the phone relative to Earth.
+- Failing test: updated `NmeaStreamReadinessPolicyTest.formalOutputRequiresDurableHeadingAlignmentButNotTripAttitudeMount`; `invalidAttitudeSegmentSuppressesOnlyMotionOnEveryTransport`; `AnchorHeadingEvidenceRouterTest.phoneHeadingNeedsAlignmentButNotAnAttitudeMount`; new `PhoneSensorCoordinateFrameTest.confirmingWhileVesselIsHeeledDoesNotZeroTheCurrentHeel`; `headingAlignmentSurvivesAttitudeSegmentReconfirmationAndInvalidation`; report-only short-artifact regressions; updated Trip Start Compose story.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Heading alignment now survives attitude segment/version changes and is applied to anchor evidence. GNSS/pressure/heading no longer depend on the attitude flag. Trip Start and the running Trip UI own optional attitude placement, manual Pause-before-pick-up and reconfirmation. Current orientation is mapped to vessel axes without zeroing current heel. Trip pause/process restore require attitude reconfirmation. There is deliberately no automatic pick-up detector. Trip Report rejects null/stale/paused samples plus isolated short spikes whose neighbours agree, while retaining sustained heel and GPS-evidenced turns; it displays the recorded route and synchronized speed-versus-heel statistics. The complete Debug JVM suite passed 571 tests with 0 failures and 1 existing conditional skip; Debug APK assembly passed.**
+- Real hardware verified: **No — use a phone on a controllable tilted surface and then a sailing hardware run.**
+- Status: **FIXED IN CODE — 571 DEBUG UNIT TESTS + DEBUG APK PASSED; MANUAL TRIP QA PENDING**
+
+## Finding P1-032 — Hidden BACKUP arbitration stopped valid Phone/App NMEA fields
+
+- Severity: **P1 / incorrect publication contract**
+- User story: when Phone/App boat output is started, every currently valid value owned or explicitly derived by the phone must publish continuously. Raymarine, Simrad, KC-2W or another receiver—not an invisible App policy—selects its preferred source. Direct Boat input must still never be echoed.
+- Evidence: `AnchorWatchNmeaPublisher.publishDue()` evaluated `BoatNetworkSupplementPolicy` before encoding every family and returned without publishing when the Vessel Data Hub contained a healthy Boat candidate. Persisted and canonical stream policies were also restored as `PublicationPolicy.BACKUP`, while the UI gave the user no source-priority control.
+- Reproduction steps: start Phone/App output with valid aligned phone Heading, then introduce a fresh direct Boat Heading. The old runtime changed the Phone stream to standby after a hold and stopped putting it on the wire even though the user had explicitly started sharing.
+- Root cause: a previous “fill only missing instruments” product assumption was implemented as publisher-side source arbitration. That assumption conflicts with NMEA receivers that already own source selection and with the requested complete Phone/App feed.
+- Failing test: `NmeaDeviceOutputPolicyTest.legacySameSocketBackupPoliciesMigrateToAlwaysLocalInjection`, `livePublisherConfigCannotReadLegacyPerStreamOrBackupFlags`, plus encoder provenance tests proving Boat observations never enter the local feed.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **The runtime supplement gate and policy class are removed. Persisted legacy policies normalize to ALWAYS for every enabled locally-owned family. Runtime suppression is limited to unavailable/stale local evidence and manually paused Trip Motion. UI and product documentation now state that receivers choose source priority. The complete Debug JVM suite passed 571 tests with 0 failures and 1 existing conditional skip; Debug APK assembly passed.**
+- Real hardware verified: **No — verify on the vessel with KC-2W at the already-confirmed 38400 baud setting.**
+- Status: **FIXED IN CODE — 571 DEBUG UNIT TESTS + DEBUG APK PASSED; HARDWARE QA PENDING**

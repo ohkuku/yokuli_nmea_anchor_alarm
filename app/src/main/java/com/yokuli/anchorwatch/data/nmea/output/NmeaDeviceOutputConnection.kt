@@ -13,7 +13,7 @@ import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
 import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.PublisherOwnershipState
 import com.yokuli.anchorwatch.domain.vessel.NmeaStreamReadiness
-import com.yokuli.anchorwatch.runtime.output.PublicationDecision
+import com.yokuli.anchorwatch.domain.vessel.PublicationDecision
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
@@ -129,6 +129,32 @@ class NmeaOutboundLoopGuard @Inject constructor(){
     private val exactIdentityLastSent=linkedMapOf<String,Long>()
     private val semantic=ArrayDeque<NmeaSemanticFingerprint>()
     private val semanticQuarantineStarted=linkedMapOf<String,Pair<NmeaSemanticFingerprint,Long>>()
+    private val pending=linkedMapOf<Long,PendingOutboundAttempt>()
+    private var nextAttemptId=0L
+
+    /**
+     * Installs the quarantine before the bytes enter the socket. On a fast
+     * full-duplex gateway an echo can reach the RX coroutine before write()
+     * returns; recording only after flush therefore admits the first replay as
+     * apparent Boat data. Even though local publication no longer performs
+     * BACKUP arbitration, provenance must still keep that echo out of every
+     * Boat-data consumer and diagnostic source list.
+     */
+    @Synchronized fun beginWrite(sentences:List<String>,nowElapsed:Long=SystemClock.elapsedRealtime()):Long{
+        prune(nowElapsed)
+        val id=++nextAttemptId
+        pending[id]=PendingOutboundAttempt(sentences.map(::normalize),nowElapsed)
+        while(pending.size>MAX_PENDING_ATTEMPTS)pending.remove(pending.keys.first())
+        return id
+    }
+
+    /** Promote only bytes that really reached a transport. Failed attempts stop
+     * quarantining immediately, so a genuine Boat source with the same value is
+     * never hidden for the full converter replay window. */
+    @Synchronized fun completeWrite(attemptId:Long,written:Boolean,nowElapsed:Long=SystemClock.elapsedRealtime()){
+        val attempt=pending.remove(attemptId)?:return
+        if(written)record(attempt.sentences,nowElapsed)
+    }
     @Synchronized fun record(sentences:List<String>,nowElapsed:Long=SystemClock.elapsedRealtime()){
         prune(nowElapsed)
         sentences.forEach{sentence->
@@ -150,11 +176,23 @@ class NmeaOutboundLoopGuard @Inject constructor(){
                 return true
             }
         }
+        if(pending.values.any{attempt->nowElapsed-attempt.startedElapsedRealtime in 0L..PENDING_WRITE_MILLIS&&exactKey in attempt.sentences})return true
         // The exact App frame is known, but every transmitted occurrence has
         // already been matched. Do not let the broader semantic fallback hide
         // a third identical sentence from a real instrument.
         if(exactIdentityLastSent[exactKey]?.let{nowElapsed-it in 0L..QUARANTINE_MILLIS}==true)return false
         val candidate=semanticFingerprint(sentence,nowElapsed)?:return false
+        if(pending.values.any{attempt->
+            nowElapsed-attempt.startedElapsedRealtime in 0L..PENDING_WRITE_MILLIS&&
+                attempt.sentences.mapNotNull{semanticFingerprint(it,attempt.startedElapsedRealtime)}.any{it.matches(candidate)}
+        }){
+            // The first transformed echo can race ahead of write() returning.
+            // Start the same bounded semantic lease now; completeWrite() will
+            // promote only a successful transport attempt into the normal
+            // occurrence store, while a failed attempt leaves no occurrence.
+            semanticQuarantineStarted.putIfAbsent(candidate.quarantineKey(),candidate to nowElapsed)
+            return true
+        }
         // Require an established outbound heartbeat before quarantining a
         // talker/checksum-transformed sentence. The lease deliberately starts
         // at the first inbound match and is never extended by a constant-value
@@ -176,6 +214,7 @@ class NmeaOutboundLoopGuard @Inject constructor(){
         sent.entries.removeAll{it.value.isEmpty()&&it.key !in exactIdentityLastSent}
         while(semantic.firstOrNull()?.let{now-it.sentElapsedRealtime>QUARANTINE_MILLIS}==true)semantic.removeFirst()
         semanticQuarantineStarted.entries.removeAll{now-it.value.second>QUARANTINE_MILLIS*2}
+        pending.entries.removeAll{now-it.value.startedElapsedRealtime>PENDING_WRITE_MILLIS}
     }
     private fun normalize(value:String)=value.trim().removeSuffix("\r").removeSuffix("\n")
     private fun semanticFingerprint(value:String,now:Long):NmeaSemanticFingerprint?{
@@ -200,8 +239,15 @@ class NmeaOutboundLoopGuard @Inject constructor(){
         val lon=coordinate(fields.getOrNull(lonIndex),fields.getOrNull(lonHemisphereIndex))?:return null
         return listOf(lat,lon)
     }
-    companion object{const val QUARANTINE_MILLIS=5_000L;private const val MAX_ENTRIES=256}
+    companion object{
+        const val QUARANTINE_MILLIS=5_000L
+        const val PENDING_WRITE_MILLIS=5_000L
+        private const val MAX_ENTRIES=256
+        private const val MAX_PENDING_ATTEMPTS=16
+    }
 }
+
+private data class PendingOutboundAttempt(val sentences:List<String>,val startedElapsedRealtime:Long)
 
 enum class NmeaSemantic{TRUE_HEADING,MAGNETIC_HEADING,POSITION,ROT,XDR}
 data class NmeaSemanticFingerprint(
@@ -305,7 +351,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
     fun configure(value:NmeaDeviceOutputSettings,input:ConnectionProfile,generation:Long=publicationGeneration+1,newSessionId:String?=null){
         lastInputProfile=input
         if(!value.anyOutputEnabled){
-            synchronized(guard){_status.value=_status.value.copy(connectionState=NmeaTxConnectionState.STOPPING,message="Stopping boat-network supplement…")}
+            synchronized(guard){_status.value=_status.value.copy(connectionState=NmeaTxConnectionState.STOPPING,message="Stopping Phone/App boat output…")}
             // Close the registered connect candidate/active transports before
             // waiting for the writer lease. This is what makes Stop immediate
             // even when a fragile gateway never completes connect().
@@ -337,7 +383,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
                 configured=value;sessionId=newSessionId
                 if(value.transportMode==NmeaOutputTransportMode.TCP_SERVER){
                     endpointBlocked=true;closeLocked()
-                    _status.value=_status.value.copy(enabled=false,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=NmeaTxConnectionState.ERROR,lastError="A listening TCP server is configured in Phone NMEA service, not Boat-network supplement.",message="Legacy TCP-server route blocked.",publicationGeneration=generation,sessionId=null)
+                    _status.value=_status.value.copy(enabled=false,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=NmeaTxConnectionState.ERROR,lastError="A listening TCP server is configured in Phone NMEA service, not Phone/App boat output.",message="Legacy TCP-server route blocked.",publicationGeneration=generation,sessionId=null)
                     return@synchronized
                 }
                 if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(value,input)){
@@ -398,6 +444,9 @@ class NmeaDeviceOutputConnection @Inject constructor(
         // Network IO deliberately happens outside guard. A weak or silent
         // gateway may consume the full connect timeout, but it must never block
         // status reads, policy changes, Stop, or another runtime decision.
+        // Install an in-flight echo barrier before touching the socket. Some
+        // gateways return the converted first frame on RX before flush returns.
+        val echoAttempt=loopGuard.beginWrite(sentences,now)
         val result=when(settings.transportMode){
             NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->navigation.writeToBoatExpected(sentences,expectedInputTransportGeneration).let{write->TransportWriteResult(write.success,error=write.error,writtenSentenceCount=write.writtenSentenceCount,inputTransportGeneration=write.actualGeneration,failureReason=write.failure.name)}
             NmeaOutputTransportMode.DEDICATED_TCP->writeDedicated(settings,input,sentences)
@@ -406,13 +455,16 @@ class NmeaDeviceOutputConnection @Inject constructor(
             NmeaOutputTransportMode.UDP_BROADCAST->writeUdp(settings,input,sentences,true)
         }
         val completedAt=SystemClock.elapsedRealtime();val writeDuration=(completedAt-now).coerceAtLeast(0L)
+        // Promote only bytes the transport reports as written. This call must
+        // precede state bookkeeping so an RX callback racing this completion can
+        // never observe a gap between pending and confirmed quarantine.
+        loopGuard.completeWrite(echoAttempt,result.success&&result.writtenSentenceCount>0,completedAt)
         synchronized(guard){
         activeWriteInputGeneration=null
         _status.value=_status.value.copy(activeWriteStartedElapsed=null,lastWriteDurationMillis=writeDuration,maximumWriteDurationMillis=maxOf(_status.value.maximumWriteDurationMillis,writeDuration),backpressureState=NmeaWriteBackpressureState.NORMAL)
         if(configured!=settings||generation!=publicationGeneration)return false
         if(result.success){
             consecutiveFailures=0;nextDedicatedAttemptElapsed=0L;dedicatedCircuitOpen=false
-            if(result.writtenSentenceCount>0)loopGuard.record(sentences,completedAt)
             val timestamp=java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS"))
             val streamLabel=logicalStream?:sentenceTypes.sorted().joinToString("+").ifBlank{"SOCKET"}
             if(result.writtenSentenceCount>0)sentences.forEach{line->recent.addLast("$timestamp  [$streamLabel] ${line.trim()}");while(recent.size>RECENT_LIMIT)recent.removeFirst()}

@@ -2,10 +2,8 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.domain.vessel.NmeaStreamReadiness
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
-import com.yokuli.anchorwatch.location.vessel.PhoneMountMovementPolicy
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
-import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputBlocker
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputReadinessPolicy
 import com.yokuli.anchorwatch.runtime.output.AnchorWatchNmeaStream
 import com.yokuli.anchorwatch.runtime.output.FormalOutputSessionReadinessPolicy
@@ -23,12 +21,11 @@ class NmeaStreamReadinessPolicyTest {
         assertEquals(NmeaStreamReadiness.READY,NmeaStreamReadinessPolicy.position(true))
     }
 
-    @Test fun headingRequiresExplicitAlignmentMountDeclinationAndFreshCompass(){
-        assertEquals(NmeaStreamReadiness.WAITING_CALIBRATION,NmeaStreamReadinessPolicy.heading(true,false,true,true,true))
-        assertEquals(NmeaStreamReadiness.WAITING_CALIBRATION,NmeaStreamReadinessPolicy.heading(true,true,false,true,true))
-        assertEquals(NmeaStreamReadiness.WAITING_POSITION,NmeaStreamReadinessPolicy.heading(true,true,true,false,true))
-        assertEquals(NmeaStreamReadiness.STANDBY,NmeaStreamReadinessPolicy.heading(true,true,true,true,false))
-        assertEquals(NmeaStreamReadiness.READY,NmeaStreamReadinessPolicy.heading(true,true,true,true,true))
+    @Test fun headingRequiresOnlyItsOwnAlignmentDeclinationAndFreshCompass(){
+        assertEquals(NmeaStreamReadiness.WAITING_CALIBRATION,NmeaStreamReadinessPolicy.heading(false,true,true))
+        assertEquals(NmeaStreamReadiness.WAITING_POSITION,NmeaStreamReadinessPolicy.heading(true,false,true))
+        assertEquals(NmeaStreamReadiness.STANDBY,NmeaStreamReadinessPolicy.heading(true,true,false))
+        assertEquals(NmeaStreamReadiness.READY,NmeaStreamReadinessPolicy.heading(true,true,true))
     }
 
     @Test fun motionAndPressureDoNotShareHeadingPrerequisites(){
@@ -44,7 +41,7 @@ class NmeaStreamReadinessPolicyTest {
         assertTrue(aligned.headingAligned)
     }
 
-    @Test fun formalOutputRequiresVersionMatchedZeroMountAndHeadingAlignment(){
+    @Test fun formalOutputRequiresDurableHeadingAlignmentButNotTripAttitudeMount(){
         val calibrated=VesselMountCalibration(
             version=4,
             calibratedAt=1,
@@ -55,14 +52,13 @@ class NmeaStreamReadinessPolicyTest {
         )
         assertTrue(PhoneVesselOutputReadinessPolicy.evaluate(calibrated,PhoneVesselMountState.VESSEL_MOUNTED).ready)
 
-        val recalibrated=calibrated.copy(version=5)
+        val recalibrated=calibrated.copy(version=5,mountState=PhoneVesselMountState.MOUNT_SUSPECT,attitudeInvalidatedAt=3)
         val stale=PhoneVesselOutputReadinessPolicy.evaluate(recalibrated,PhoneVesselMountState.VESSEL_MOUNTED)
-        assertFalse(stale.ready)
-        assertTrue(PhoneVesselOutputBlocker.MOUNT_CONFIRMATION_REQUIRED in stale.blockers)
-        assertTrue(PhoneVesselOutputBlocker.HEADING_ALIGNMENT_REQUIRED in stale.blockers)
+        assertTrue(stale.ready)
+        assertTrue(stale.blockers.isEmpty())
     }
 
-    @Test fun suspectMountImmediatelyBlocksFormalOutput(){
+    @Test fun invalidTripAttitudeSegmentDoesNotBlockHeadingGpsOrPressureOutput(){
         val calibrated=VesselMountCalibration(
             calibratedAt=1,
             mountState=PhoneVesselMountState.VESSEL_MOUNTED,
@@ -71,25 +67,19 @@ class NmeaStreamReadinessPolicyTest {
             headingAlignmentVersion=1,
         )
         val result=PhoneVesselOutputReadinessPolicy.evaluate(calibrated,PhoneVesselMountState.MOUNT_SUSPECT)
-        assertFalse(result.ready)
-        assertTrue(PhoneVesselOutputBlocker.MOUNT_SUSPECT in result.blockers)
+        assertTrue(result.ready)
+        assertTrue(result.blockers.isEmpty())
     }
 
-    @Test fun magneticFusionJumpWithoutPhysicalGyroEvidenceDoesNotInvalidateTheMount(){
-        assertFalse(PhoneMountMovementPolicy.suspect(rotationJumpDegrees=90.0,angularVelocityRadPerSecond=0.02))
-        assertTrue(PhoneMountMovementPolicy.suspect(rotationJumpDegrees=90.0,angularVelocityRadPerSecond=0.8))
-        assertTrue(PhoneMountMovementPolicy.suspect(rotationJumpDegrees=2.0,angularVelocityRadPerSecond=4.0))
-    }
-
-    @Test fun activeOutputMountWarningSuppressesOnlyUnsafeVesselFrameStreamsOnEveryTransport(){
-        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+    @Test fun invalidAttitudeSegmentSuppressesOnlyMotionOnEveryTransport(){
+        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
         assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.MOTION,PhoneVesselMountState.MOUNT_SUSPECT))
         assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.POSITION,PhoneVesselMountState.MOUNT_SUSPECT))
         assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.PRESSURE,PhoneVesselMountState.MOUNT_SUSPECT))
-        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
     }
 
-    @Test fun runtimeMountWarningCannotTurnOffAnAlreadyStartedPublicationSession(){
+    @Test fun missingHeadingAlignmentBlocksOnlyAFormalStartNotAnExistingSession(){
         val blocked=PhoneVesselOutputReadinessPolicy.evaluate(
             VesselMountCalibration(),
             PhoneVesselMountState.MOUNT_SUSPECT,

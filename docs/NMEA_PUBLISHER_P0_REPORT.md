@@ -25,7 +25,7 @@ Branch: `codex/nmea-publisher-hard-stop`
 - A READY source switch is atomic and increments the visible source epoch.
 - Every queued batch carries a publication generation; Stop invalidates and clears old batches.
 - Same-input batches also carry the exact RX/TX transport generation. A batch queued before reconnect is dropped with `STALE_TRANSPORT_GENERATION` and can never cross onto the replacement socket.
-- Exact and talker/checksum-transformed echoes consume one quarantine occurrence per successfully written App frame; repeated real instrument values are not hidden indefinitely.
+- Exact and semantic converter echoes remain occurrence-bounded. A short in-flight barrier exists before socket IO so a first full-duplex replay cannot race ahead of write completion; failed writes release that barrier immediately.
 - Generic NMEA fields expire on a one-second timer even when the source becomes completely silent. `XDR,P,...,B,PHONE_BARO` is decoded as hPa pressure rather than an untyped raw field.
 - Every generated/diagnostic frame is checked for ASCII, checksum, single-frame CRLF and the 82-byte NMEA 0183 limit before any socket write.
 - Dedicated blocking connect registers its candidate socket before connect, allowing Stop to interrupt it.
@@ -41,7 +41,7 @@ Branch: `codex/nmea-publisher-hard-stop`
 |---|---|---|
 | Red tests before implementation | PASS | Missing measured-time model and held Heading behavior failed before the fix |
 | Targeted Source/Lease/Publisher/Socket JVM tests | PASS | `VesselSourceArbitratorTest`, `VesselSourceRegistryTest`, `AnchorWatchNmeaPublisherTest`, `NmeaDeviceOutputPolicyTest`, `NmeaSharingServerTest` |
-| Post-audit transport/framing/echo/field/GPS-policy tests | PASS | Old-transport rejection, 300 randomized TCP fragmentations, exact + transformed echo occurrence consumption, silent field expiry, PHONE_BARO semantics, frame validation, localized Arm result and GNSS startup resource hand-off |
+| Post-audit transport/framing/echo/field/GPS-policy tests | Historical suite passed; new pre-socket barrier tests not run | Old-transport rejection, randomized TCP fragmentation, occurrence-bounded echo quarantine, silent field expiry, PHONE_BARO semantics, frame validation, localized Arm result and GNSS startup resource hand-off |
 | Final focused close-out | PASS | 89/89 across Stop barrier, output/server policy, reconnect generation, field retention, parser/framing, source invalidation and System-GPS startup policy |
 | Full Debug unit tests | PASS | Final post-audit run: 549 total, 0 failed/errors, 1 opt-in wall-clock soak skipped by default. |
 | Android lint Debug | PASS | `lintDebug`; HTML report generated at `app/build/reports/lint-results-debug.html` |

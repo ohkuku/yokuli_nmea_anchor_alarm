@@ -9,8 +9,7 @@ import com.yokuli.anchorwatch.domain.model.PositionHealth
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.VesselDataHub
-import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
-import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
+import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,9 +51,9 @@ data class AcceptedPositionEvent(
 class AcceptedPositionRepository @Inject constructor(
     private val phoneHeading: PhoneHeadingRepository,
     private val phoneMotion: PhoneMotionRepository,
-    private val vesselAttitude:PhoneVesselAttitudeRepository,
     private val vesselDataHub:VesselDataHub,
     vesselSettings:VesselSettingsRepository,
+    mountCalibration:VesselMountCalibrationRepository,
 ) {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     private val filter = PositionIntegrityFilter()
@@ -67,12 +66,12 @@ class AcceptedPositionRepository @Inject constructor(
     val accepted = _accepted.asSharedFlow()
     @Volatile private var headingPreference=VesselSourcePreference.AUTO
     @Volatile private var headingSourceExplicitlyPinned=false
-    @Volatile private var phoneMountState=PhoneVesselMountState.UNCALIBRATED
+    @Volatile private var phoneHeadingAlignment=PhoneVesselHeadingAlignment()
     private var lastSubmissionKey: Triple<GpsDataSource, Long, String>? = null
 
     init{
         scope.launch{vesselSettings.settings.collect{headingPreference=it.headingPreference;headingSourceExplicitlyPinned=!it.boatHeadingSourceId.isNullOrBlank()}}
-        scope.launch{vesselAttitude.mountState.collect{phoneMountState=it}}
+        scope.launch{mountCalibration.calibration.collect{phoneHeadingAlignment=PhoneVesselHeadingAlignment(it.headingAligned,it.headingAlignmentOffsetDegrees)}}
     }
 
     @Synchronized
@@ -144,7 +143,7 @@ class AcceptedPositionRepository @Inject constructor(
             headingMagneticDegrees=rawFix.headingMagneticDegrees.takeIf{rawFix.headingMagneticReceivedElapsedRealtime.isFreshAt(now)},
         ) else rawFix
         val vesselSnapshot=vesselDataHub.snapshot.value
-        val evidence=AnchorHeadingEvidenceRouter.routeSelected(headingPreference,vesselSnapshot.headingTrueDegrees,vesselSnapshot.conflicts[com.yokuli.anchorwatch.domain.vessel.VesselMetricId.HEADING_TRUE]?:vesselSnapshot.headingTrueDegrees.conflict,headingSourceExplicitlyPinned,phone,phoneMountState)
+        val evidence=AnchorHeadingEvidenceRouter.routeSelected(headingPreference,vesselSnapshot.headingTrueDegrees,vesselSnapshot.conflicts[com.yokuli.anchorwatch.domain.vessel.VesselMetricId.HEADING_TRUE]?:vesselSnapshot.headingTrueDegrees.conflict,headingSourceExplicitlyPinned,phone,phoneHeadingAlignment)
         val fix=safetyFix.copy(
             headingTrueDegrees=evidence.trueDegrees,
             headingReceivedElapsedRealtime=when(evidence.source){HeadingSource.PHONE->phone.receivedElapsedRealtime;HeadingSource.NMEA_PHYSICAL->safetyFix.headingReceivedElapsedRealtime;else->null},

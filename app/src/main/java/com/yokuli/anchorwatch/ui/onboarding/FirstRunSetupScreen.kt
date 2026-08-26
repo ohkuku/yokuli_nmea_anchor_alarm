@@ -21,7 +21,6 @@ import com.yokuli.anchorwatch.domain.model.AlarmState
 import com.yokuli.anchorwatch.domain.model.AlarmType
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
-import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 
 /** Six short, domain-backed setup decisions. Optional equipment pages never
  * fabricate a connection or enable publication; they tell the user exactly
@@ -31,8 +30,7 @@ fun FirstRunSetupScreen(
     initialBoatLengthMeters:Double,
     initialDraftMeters:Double?,
     nmeaConnection:NmeaConnectionState,
-    mountState:PhoneVesselMountState,
-    mountCalibrated:Boolean,
+    headingAligned:Boolean,
     positionPreference:VesselSourcePreference,
     headingPreference:VesselSourcePreference,
     output:NmeaDeviceOutputSettings,
@@ -48,7 +46,7 @@ fun FirstRunSetupScreen(
     var boatLength by rememberSaveable{mutableStateOf(initialBoatLengthMeters.toString())}
     var draft by rememberSaveable{mutableStateOf(initialDraftMeters?.toString().orEmpty())}
     val alarmTesting=alarmState==AlarmState.ALARM&&alarmType==AlarmType.ALARM_TEST
-    val titles=listOf(tr("Vessel profile","船舶资料"),"NMEA Input",tr("Phone mount","手机安装"),tr("Data sources","数据来源"),"NMEA Output",tr("Alarm test","警报测试"))
+    val titles=listOf(tr("Vessel profile","船舶资料"),"NMEA Input",tr("Phone heading","手机船首向"),tr("Data sources","数据来源"),"NMEA Output",tr("Alarm test","警报测试"))
     Scaffold(bottomBar={Surface(shadowElevation=8.dp){Row(Modifier.fillMaxWidth().padding(16.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){
         if(step>0)OutlinedButton({step--},Modifier.weight(1f)){Text(tr("Back","返回"))}
         val validVessel=boatLength.toDoubleOrNull()?.let{it>0}==true&&(draft.isBlank()||draft.toDoubleOrNull()?.let{it>=0}==true)
@@ -68,13 +66,12 @@ fun FirstRunSetupScreen(
                     OutlinedTextField(draft,{draft=decimal(it)},Modifier.fillMaxWidth(),label={Text(tr("Draft (optional)","吃水（可选）"))},suffix={Text("m")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal))
                 }
                 1->SetupStatusCard(Icons.Default.Cable,"NMEA Input",when(nmeaConnection){NmeaConnectionState.CONNECTED->tr("Connected and receiving valid NMEA","已连接并正在接收有效 NMEA");NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE->tr("Endpoint exists, but live data is not ready","端点存在，但实时数据尚未就绪");else->tr("Not connected — configure it later in Data → NMEA Input","尚未连接，可稍后在“数据 → NMEA 输入”中配置")},nmeaConnection==NmeaConnectionState.CONNECTED)
-                2->{SetupStatusCard(Icons.Default.Smartphone,tr("Phone mount","手机安装"),when{!mountCalibrated->tr("Not calibrated — handheld device navigation remains available","尚未校准；手持设备导航仍然可用");mountState==PhoneVesselMountState.VESSEL_MOUNTED->tr("Calibrated and fixed to the vessel","已校准并固定在船体");else->tr("Calibrated, currently handheld","已校准，当前为手持模式")},mountState==PhoneVesselMountState.VESSEL_MOUNTED);Text(tr("Only calibrate after the phone is physically secured. Vessel heading and motion publication remain suppressed while handheld.","只有手机牢固固定后才应校准。手持状态下，船艏向与船体运动发布会保持抑制。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                2->{SetupStatusCard(Icons.Default.Smartphone,tr("Phone heading","手机船首向"),if(headingAligned)tr("One-time phone-to-bow alignment confirmed","一次性手机—船艏对齐已确认")else tr("Optional now — align later in Settings → Phone vessel sensors","现在可跳过；稍后在“设置 → 手机船舶传感器”对齐"),headingAligned);Text(tr("GNSS and pressure never require a mount. Heading alignment is durable; Trip attitude is confirmed separately only while sailing.","GNSS 与气压从不要求固定安装。船首向对齐会持续保存；航程姿态只在航行时单独确认。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 3->{SetupStatusCard(Icons.Default.Hub,tr("Automatic source routing","自动来源路由"),tr("Position: ${preferenceLabel(positionPreference)} · Heading: ${preferenceLabel(headingPreference)}","位置：${preferenceLabel(positionPreference)} · 船艏向：${preferenceLabel(headingPreference)}"),true);Text(tr("Auto preserves every candidate, prefers healthy boat instruments, and falls back only after freshness and recovery checks. You can inspect or pin a source in Data → Vessel.","自动模式会保留所有候选来源，优先选择健康的船载仪表，并只在新鲜度与恢复检查后回退。可在“数据 → 船舶”查看或固定来源。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 4->{
-                    val calibratedAndMounted=mountCalibrated&&mountState==PhoneVesselMountState.VESSEL_MOUNTED
                     val body=when{
                         !output.transportConfigured->tr("Not configured — no output socket can start","尚未配置；不会启动任何输出 Socket")
-                        !calibratedAndMounted->tr("Route saved — Phone vessel-sensor calibration and a secure mount are still required","线路已保存；仍需完成手机船舶传感器校准并确认牢固安装")
+                        !headingAligned->tr("Route saved — the one-time phone-to-bow heading alignment is still required","线路已保存；仍需完成一次性手机—船艏对齐")
                         output.publicationEnabled->tr("Canonical vessel-data sharing is running","统一船舶数据共享正在运行")
                         else->tr("Route and calibration are ready — output waits for an explicit Start","线路和校准已就绪；输出正在等待用户明确启动")
                     }

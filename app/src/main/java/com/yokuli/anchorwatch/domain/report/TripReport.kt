@@ -29,6 +29,7 @@ data class TripFinding(val severity:String,val title:String,val detail:String)
 data class TripSourceTimelineEntry(val timestamp:Long,val type:String,val detailJson:String)
 data class HeelDistribution(val zeroToTenPercent:Double=0.0,val tenToTwentyPercent:Double=0.0,val twentyToThirtyPercent:Double=0.0,val overThirtyPercent:Double=0.0)
 data class WindHeelBand(val label:String,val sampleCount:Long,val medianAbsHeelDegrees:Double?,val p95AbsHeelDegrees:Double?)
+data class SpeedHeelBand(val label:String,val sampleCount:Long,val averageSogKnots:Double?,val maximumSogKnots:Double?,val averageBoatSpeedKnots:Double?,val maximumBoatSpeedKnots:Double?)
 data class TripReport(
     val session:TripSessionEntity,
     val durationMillis:Long,
@@ -60,7 +61,12 @@ data class TripReport(
     val derivedWaterTrueWindCoveragePercent:Double=0.0,
     val derivedGroundTrueWindCoveragePercent:Double=0.0,
     val sourceTimeline:List<TripSourceTimelineEntry> = emptyList(),
-){companion object{const val ENGINE_VERSION="TRIP_REPORT_V3"}}
+    val maximumSogWithAttitudeKnots:Double?=null,
+    val heelAtMaximumSogDegrees:Double?=null,
+    val maximumSogWithAttitudeTimestamp:Long?=null,
+    val speedHeelBands:List<SpeedHeelBand> = emptyList(),
+    val attitudeArtifactFilteredCount:Long=0,
+){companion object{const val ENGINE_VERSION="TRIP_REPORT_V4"}}
 
 class TripReportEngine @Inject constructor(private val dao:TripDao){
     suspend fun generate(sessionId:Long):TripReport?{
@@ -81,10 +87,56 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
         val pressure=StreamingStatistics();var pressureStart:Double?=null;var pressureEnd:Double?=null
         val headingCog=StreamingStatistics();val headingCogAbs=StreamingStatistics()
         val windHeel=List(5){StreamingStatistics(seed=0x59100+it)}
+        val speedByHeel=List(5){StreamingStatistics(seed=0x5A100+it)}
+        val boatSpeedByHeel=List(5){StreamingStatistics(seed=0x5B100+it)}
+        var maximumSogWithAttitude:Double?=null;var heelAtMaximumSog:Double?=null;var maximumSogWithAttitudeAt:Long?=null
+        var attitudeArtifactFilteredCount=0L
         var setNorth=0.0;var setEast=0.0;var setCount=0L
         var previousHighHeelAt:Long?=null;var sustainedHeelMillis=0L
         val sourceTimeline=mutableListOf<TripSourceTimelineEntry>()
         val sailing=SailingAnalyticsAccumulator()
+        data class AttitudeFrame(val sample:TripSampleEntity,val legPoint:TripLegPoint,val usable:Boolean,val apparentWindUsable:Boolean)
+        val attitudeWindow=ArrayDeque<AttitudeFrame>()
+        var firstAttitudeFrameEmitted=false
+        val processAttitudeFrame:(AttitudeFrame,Boolean,Boolean)->Unit={frame,accepted,artifact->
+            val sample=frame.sample
+            if(artifact)attitudeArtifactFilteredCount++
+            legAnalytics.add(frame.legPoint.copy(heelDegrees=sample.heelDegrees.takeIf{accepted}))
+            if(accepted){
+                sample.heelDegrees?.let{value->
+                    attitudeCount++;heel.add(value);val magnitude=abs(value);absoluteHeel.add(magnitude)
+                    heelBins[when{magnitude<10->0;magnitude<20->1;magnitude<30->2;else->3}]++
+                    if(magnitude>=SUSTAINED_HEEL_DEGREES){previousHighHeelAt?.let{old->if(sample.timestamp-old in 1..MAX_ATTITUDE_SEGMENT_GAP_MILLIS)sustainedHeelMillis+=sample.timestamp-old};previousHighHeelAt=sample.timestamp}else previousHighHeelAt=null
+                    sample.sogKnots?.takeIf{(sample.sogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS&&it>=0.0}?.let{sog->
+                        val band=heelSpeedBand(magnitude);speedByHeel[band].add(sog)
+                        if(maximumSogWithAttitude==null||sog>maximumSogWithAttitude!!){maximumSogWithAttitude=sog;heelAtMaximumSog=value;maximumSogWithAttitudeAt=sample.timestamp}
+                    }
+                    sample.speedThroughWaterKnots?.takeIf{(sample.stwAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS&&it>=0.0}?.let{boatSpeedByHeel[heelSpeedBand(magnitude)].add(it)}
+                    if(frame.apparentWindUsable&&sample.apparentWindSpeedKnots!=null)windHeel[windBand(sample.apparentWindSpeedKnots)].add(magnitude)
+                }
+                sample.pitchDegrees?.let{pitch.add(it);absolutePitch.add(abs(it))}
+                sample.motionScore?.let(motion::add)
+                sample.rollRateDegPerSec?.let(rollRate::add)
+                sample.pitchRateDegPerSec?.let(pitchRate::add)
+                sample.rollPeriodSeconds?.takeIf{it>0}?.let(rollPeriod::add)
+            }else previousHighHeelAt=null
+        }
+        fun filterPoint(frame:AttitudeFrame)=TripAttitudeFilterPoint(
+            timestamp=frame.sample.timestamp,heelDegrees=frame.sample.heelDegrees,pitchDegrees=frame.sample.pitchDegrees,
+            rollRateDegreesPerSecond=frame.sample.rollRateDegPerSec,pitchRateDegreesPerSecond=frame.sample.pitchRateDegPerSec,
+            cogDegrees=frame.sample.cogTrueDegrees,cogFresh=(frame.sample.cogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS,usable=frame.usable,
+        )
+        fun addAttitudeFrame(frame:AttitudeFrame){
+            attitudeWindow.addLast(frame)
+            if(!firstAttitudeFrameEmitted&&attitudeWindow.size==2){
+                val first=attitudeWindow.first();processAttitudeFrame(first,first.usable,false);firstAttitudeFrameEmitted=true
+            }
+            if(attitudeWindow.size>=3){
+                val previous=attitudeWindow.elementAt(0);val current=attitudeWindow.elementAt(1);val next=attitudeWindow.elementAt(2)
+                val artifact=TripAttitudeArtifactPolicy.isShortHandlingArtifact(filterPoint(previous),filterPoint(current),filterPoint(next))
+                processAttitudeFrame(current,current.usable&&!artifact,artifact);attitudeWindow.removeFirst()
+            }
+        }
 
         while(true){
             val page=dao.samplesPage(sessionId,afterTimestamp,afterId,PAGE_SIZE)
@@ -109,7 +161,7 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
                 val attitudeUsable=TripSampleFreshness.attitudeUsable(sample.attitudeAgeMillis,sample.attitudeQuality,sample.attitudeMountSuspect)
                 val trueWindSpeedUsable=TripSampleFreshness.trueWindAvailable(sample.trueWindSpeedKnots,sample.trueWindSpeedAgeMillis)
                 val apparentWindSpeedUsable=TripSampleFreshness.apparentWindAvailable(sample.apparentWindSpeedKnots,sample.apparentWindSpeedAgeMillis)
-                legAnalytics.add(TripLegPoint(sample.timestamp,sample.latitude.takeIf{positionUsable},sample.longitude.takeIf{positionUsable},sample.sogKnots.takeIf{positionUsable&&(sample.sogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS},sample.speedThroughWaterKnots?.takeIf{(sample.stwAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS},sample.trueWindSpeedKnots?.takeIf{trueWindSpeedUsable},sample.heelDegrees?.takeIf{attitudeUsable}))
+                addAttitudeFrame(AttitudeFrame(sample,TripLegPoint(sample.timestamp,sample.latitude.takeIf{positionUsable},sample.longitude.takeIf{positionUsable},sample.sogKnots.takeIf{positionUsable&&(sample.sogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS},sample.speedThroughWaterKnots?.takeIf{(sample.stwAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS},sample.trueWindSpeedKnots?.takeIf{trueWindSpeedUsable},null),attitudeUsable,apparentWindSpeedUsable))
 
                 sample.sogKnots?.takeIf{positionUsable&&(sample.sogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS&&it>=MOVING_SOG_KNOTS}?.let{value->
                     val oldMax=movingSog.maximum;movingSog.add(value);if(oldMax==null||value>oldMax)maxSogTimestamp=sample.timestamp
@@ -117,16 +169,6 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
                 sample.speedThroughWaterKnots?.takeIf{(sample.stwAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS&&it>=0.0}?.let(boatSpeed::add)
                 sample.depthMeters?.takeIf{(sample.depthAgeMillis?:Long.MAX_VALUE)<=DEPTH_USABLE_MILLIS}?.let{depth.add(it);depthCount++}
                 sample.ukcMeters?.takeIf{(sample.depthAgeMillis?:Long.MAX_VALUE)<=DEPTH_USABLE_MILLIS}?.let(ukc::add)
-                sample.heelDegrees?.takeIf{attitudeUsable}?.let{value->
-                    attitudeCount++;heel.add(value);val magnitude=abs(value);absoluteHeel.add(magnitude)
-                    heelBins[when{magnitude<10->0;magnitude<20->1;magnitude<30->2;else->3}]++
-                    if(magnitude>=SUSTAINED_HEEL_DEGREES){previousHighHeelAt?.let{old->if(sample.timestamp-old in 1..MAX_ATTITUDE_SEGMENT_GAP_MILLIS)sustainedHeelMillis+=sample.timestamp-old};previousHighHeelAt=sample.timestamp}else previousHighHeelAt=null
-                }?:run{previousHighHeelAt=null}
-                sample.pitchDegrees?.takeIf{attitudeUsable}?.let{pitch.add(it);absolutePitch.add(abs(it))}
-                sample.motionScore?.takeIf{attitudeUsable}?.let(motion::add)
-                sample.rollRateDegPerSec?.takeIf{attitudeUsable}?.let(rollRate::add)
-                sample.pitchRateDegPerSec?.takeIf{attitudeUsable}?.let(pitchRate::add)
-                sample.rollPeriodSeconds?.takeIf{attitudeUsable&&it>0}?.let(rollPeriod::add)
                 val trueWindDirectionUsable=(sample.trueWindDirectionAgeMillis?:Long.MAX_VALUE)<=WIND_USABLE_MILLIS
                 val trueWindAngleUsable=(sample.trueWindAngleAgeMillis?:Long.MAX_VALUE)<=WIND_USABLE_MILLIS
                 if(trueWindSpeedUsable&&sample.trueWindSpeedKnots!=null){
@@ -145,7 +187,6 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
                 sample.trueWindDirectionDegrees?.takeIf{trueWindDirectionUsable}?.let(trueWindDirection::add)
                 // Sailing point-of-sail analytics are water-relative only.
                 sailing.add(sample.timestamp,sample.trueWindAngleDegrees?.takeIf{trueWindAngleUsable},sample.speedThroughWaterKnots?.takeIf{(sample.stwAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS})
-                if(apparentWindSpeedUsable&&attitudeUsable&&sample.apparentWindSpeedKnots!=null&&sample.heelDegrees!=null)windHeel[windBand(sample.apparentWindSpeedKnots)].add(abs(sample.heelDegrees))
                 sample.pressureHpa?.takeIf{(sample.pressureAgeMillis?:Long.MAX_VALUE)<=PRESSURE_USABLE_MILLIS}?.let{value->if(pressureStart==null)pressureStart=value;pressureEnd=value;pressure.add(value)}
 
                 val navigationFresh=(sample.sogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS&&(sample.cogAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS&&(sample.headingAgeMillis?:Long.MAX_VALUE)<=NAVIGATION_ANALYTICS_FRESH_MILLIS
@@ -160,6 +201,12 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
                 }
             }
             val last=page.last();afterTimestamp=last.timestamp;afterId=last.id
+        }
+        if(attitudeWindow.isNotEmpty()){
+            val last=attitudeWindow.last()
+            if(!firstAttitudeFrameEmitted)processAttitudeFrame(last,last.usable,false)
+            else processAttitudeFrame(last,last.usable,false)
+            attitudeWindow.clear()
         }
 
         val eventCounts=mutableMapOf<String,Int>();var totalEvents=0;afterTimestamp=Long.MIN_VALUE;afterId=Long.MIN_VALUE
@@ -212,12 +259,16 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
             legs=legAnalytics.summaries(session.endedAt?:System.currentTimeMillis()),trueWindCoveragePercent=trueWindCoverage,apparentWindCoveragePercent=apparentWindCoverage,
             externalTrueWindCoveragePercent=externalTrueWindCoverage,derivedWaterTrueWindCoveragePercent=derivedWaterTrueWindCoverage,derivedGroundTrueWindCoveragePercent=derivedGroundTrueWindCoverage,
             sourceTimeline=sourceTimeline,
+            maximumSogWithAttitudeKnots=maximumSogWithAttitude,heelAtMaximumSogDegrees=heelAtMaximumSog,maximumSogWithAttitudeTimestamp=maximumSogWithAttitudeAt,
+            speedHeelBands=speedByHeel.mapIndexed{index,stats->SpeedHeelBand(HEEL_SPEED_BAND_LABELS[index],stats.count,stats.mean(),stats.maximum,boatSpeedByHeel[index].mean(),boatSpeedByHeel[index].maximum)},
+            attitudeArtifactFilteredCount=attitudeArtifactFilteredCount,
         )
     }
 
     private fun percent(value:Long,total:Long)=if(total==0L)0.0 else value*100.0/total
     private fun shortestSigned(value:Double)=((value+540.0)%360.0)-180.0
     private fun windBand(knots:Double)=when{knots<10->0;knots<15->1;knots<20->2;knots<25->3;else->4}
+    private fun heelSpeedBand(degrees:Double)=when{degrees<5->0;degrees<10->1;degrees<15->2;degrees<20->3;else->4}
 
     private companion object{
         const val PAGE_SIZE=1_000
@@ -234,6 +285,7 @@ class TripReportEngine @Inject constructor(private val dao:TripDao){
         const val HEADING_COG_MIN_SOG=1.5
         const val SUSTAINED_HEEL_DEGREES=25.0
         val WIND_BAND_LABELS=listOf("0–10 kn","10–15 kn","15–20 kn","20–25 kn","25+ kn")
+        val HEEL_SPEED_BAND_LABELS=listOf("0–5°","5–10°","10–15°","15–20°","20°+")
         val SOURCE_TIMELINE_EVENTS=setOf("POSITION_SOURCE_CHANGED","HEADING_SOURCE_CHANGED","WIND_SOURCE_CHANGED","PHONE_MOUNT_SUSPECT","NMEA_DATA_GAP","NMEA_DATA_RESTORED")
     }
 }

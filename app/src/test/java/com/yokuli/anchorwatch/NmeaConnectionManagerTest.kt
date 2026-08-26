@@ -51,6 +51,22 @@ class NmeaConnectionManagerTest {
         }finally{manager.disconnect();managerScope.cancel()}
     }
 
+    @Test fun explicitConnectAfterTerminalErrorCanOpenAReplacementEndpointWithoutAStopTap() = runBlocking {
+        val closedPort=ServerSocket(0).use{it.localPort}
+        val liveServer=ServerSocket(0);val accepted=CompletableDeferred<Socket>()
+        val serverJob=launch(Dispatchers.IO){runCatching{accepted.complete(liveServer.accept())}}
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
+        var client:Socket?=null
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=closedPort)))
+            withTimeout(3_000){manager.state.first{it==NmeaConnectionState.ERROR}}
+            assertTrue("ERROR is terminal; the next explicit Connect must replace it",manager.connect(ConnectionProfile(host="127.0.0.1",port=liveServer.localPort)))
+            client=withTimeout(3_000){accepted.await()}
+            withTimeout(3_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
+            Unit // Keep the JUnit4 method's generated JVM return type void.
+        }finally{manager.disconnect();managerScope.cancel();runCatching{client?.close()};runCatching{liveServer.close()};serverJob.cancelAndJoin()}
+    }
+
     @Test fun automaticOpenFailuresBackOffAndStopAfterTheBoundedCircuitLimit() = runBlocking {
         val closedPort=ServerSocket(0).use{it.localPort}
         val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)

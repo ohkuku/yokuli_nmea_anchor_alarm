@@ -21,7 +21,7 @@ Implemented residual fixes from the audit:
 
 - structured shared-socket write result with expected/actual transport generation and failure category;
 - generated/attempted/written/dropped packet diagnostics with exact sentence, byte length and reason;
-- one-occurrence-per-outbound-frame echo quarantine, including talker/checksum transformation;
+- occurrence-bounded echo quarantine plus a short pre-socket in-flight barrier;
 - silent generic-field expiry independent of new traffic;
 - correct `PHONE_HEEL`, `PHONE_PITCH`, rudder and `PHONE_BARO` XDR semantics;
 - strict ASCII/checksum/CRLF/82-byte validation before socket IO;
@@ -32,7 +32,7 @@ Implemented residual fixes from the audit:
 
 - `data/nmea/NmeaConnection.kt`: shared transport generation and structured write result.
 - `data/NavigationRepository.kt`: generation-aware write facade.
-- `data/nmea/output/NmeaDeviceOutputConnection.kt`: one writer boundary, validation, packet outcomes, echo occurrence tracker.
+- `data/nmea/output/NmeaDeviceOutputConnection.kt`: one writer boundary, validation, packet outcomes, and pre-socket/confirmed echo replay firewall.
 - `data/nmea/output/NmeaGeneratedSentenceValidator.kt`: final sentence contract.
 - `runtime/output/PhonePositionNmeaOutputRuntime.kt`: publication + transport generation on queued batches.
 - `data/nmea/NmeaFieldRepository.kt`: timer expiry and XDR pressure semantics.
@@ -63,7 +63,7 @@ The App-to-boat path in same-socket mode calls `NmeaConnectionManager.writeExpec
 - Cadence policy asserts that healthy writes remain fixed-rate while congested writes cannot produce an immediate catch-up attempt. Backpressure thresholds and exact-generation, single-abort behavior have deterministic JVM regressions; they are written and remain to be run.
 - Old transport generation is rejected after reconnect.
 - TCP input framing reconstructs identical sentence lists across 300 random fragment seeds.
-- Exact and transformed echoes each consume only the number of frames actually written.
+- Confirmed exact/transformed echoes consume written occurrences; the short pre-socket barrier closes the first-return race and failed write attempts are removed immediately. The real KC-2W/Raymarine dropout was separately confirmed as a 4800-baud hardware bottleneck and resolved at 38400.
 - Silent retained fields expire; blank same-source heartbeats retain unchanged values only while live.
 - `PHONE_BARO` produces hPa pressure; unrelated angular XDR does not become rudder.
 - Generated sentence validator rejects bad checksum/framing, Unicode, embedded newline and oversize frames.

@@ -73,8 +73,9 @@ true-wind result carrying explicit App-calculation identity and provenance.
 ## Echo handling
 
 The provenance firewall and outbound echo quarantine are separate layers.
-`NmeaOutboundLoopGuard` consumes a bounded occurrence for recently transmitted
-exact/semantic frames before they reach the source registry. An echo identity,
+`NmeaOutboundLoopGuard` consumes bounded occurrences of recently transmitted
+exact/semantic frames before they reach the source registry. A short barrier is
+installed before socket IO and confirmed only after a successful write. An echo identity,
 if one reaches the provenance boundary, is denied explicitly.
 
 ## Publication ownership
