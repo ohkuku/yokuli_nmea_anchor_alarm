@@ -57,6 +57,31 @@ object PhoneVesselOutputReadinessPolicy{
         return PhoneVesselOutputReadiness(blockers.isEmpty(),blockers)
     }
 }
+enum class PhoneHeadingAlignmentReference{TRUE_NORTH,MAGNETIC_NORTH}
+data class PhoneHeadingAlignmentMatch(val offsetDegrees:Double,val reference:PhoneHeadingAlignmentReference)
+
+/** Keeps the persisted angular correction as an implementation detail. The
+ * user either points the phone toward the bow (zero correction), or asks the
+ * App to match two simultaneous headings with the same north reference. */
+object PhoneHeadingAlignmentPolicy{
+    fun matchLiveReference(
+        phoneTrueDegrees:Double?,
+        phoneMagneticDegrees:Double?,
+        vesselTrueDegrees:Double?,
+        vesselMagneticDegrees:Double?,
+    ):PhoneHeadingAlignmentMatch?=when{
+        phoneTrueDegrees.isHeading()&&vesselTrueDegrees.isHeading()->PhoneHeadingAlignmentMatch(shortestOffset(vesselTrueDegrees!!,phoneTrueDegrees!!),PhoneHeadingAlignmentReference.TRUE_NORTH)
+        phoneMagneticDegrees.isHeading()&&vesselMagneticDegrees.isHeading()->PhoneHeadingAlignmentMatch(shortestOffset(vesselMagneticDegrees!!,phoneMagneticDegrees!!),PhoneHeadingAlignmentReference.MAGNETIC_NORTH)
+        else->null
+    }
+
+    fun shortestOffset(referenceDegrees:Double,phoneDegrees:Double):Double{
+        require(referenceDegrees.isHeading()&&phoneDegrees.isHeading())
+        return ((referenceDegrees-phoneDegrees+540.0)%360.0)-180.0
+    }
+
+    private fun Double?.isHeading()=this!=null&&isFinite()&&this in 0.0..360.0
+}
 data class PhoneSensorCapabilities(val attitudeAvailable:Boolean=false,val gyroAvailable:Boolean=false,val magnetometerAvailable:Boolean=false,val pressureAvailable:Boolean=false,val linearAccelerationAvailable:Boolean=false)
 data class PhoneVesselAttitudeSample(val attitude:VesselAttitude?=null,val dynamicAccelerationG:Double=0.0,val mountSuspect:Boolean=false,val receivedElapsedRealtime:Long?=null)
 data class PhonePressureSample(val pressureHpa:Double?=null,val receivedElapsedRealtime:Long?=null)

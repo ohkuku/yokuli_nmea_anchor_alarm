@@ -356,8 +356,8 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
     // running connection hid the editable endpoint and made the next explicit
     // Connect impossible even though the failure card remained on screen.
     val connectionRunning = state.connection !in setOf(NmeaConnectionState.DISCONNECTED,NmeaConnectionState.ERROR)
-    var showConnectionSettings by remember{mutableStateOf(!connectionRunning)}
-    LaunchedEffect(connectionRunning){if(!connectionRunning)showConnectionSettings=true}
+    var showAdvancedSettings by remember{mutableStateOf(false)}
+    var showTechnicalDetails by remember{mutableStateOf(false)}
     val testing=state.connectionAttempt.state==ConnectionAttemptState.TESTING
     val controlsEnabled=state.settingsReady&&!connectionRunning&&!testing
     val activeWatchUsesNmea=state.active?.paused==false&&state.active.positionSource==GpsDataSource.NMEA.name
@@ -387,32 +387,45 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
         validationRequested=false
         vm.clearConnectionAttempt()
     }
-    LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("nmea_runtime_list"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    val formError=validationError.takeIf{validationRequested}
+    val transportError=state.nmeaTransportDiagnostics.lastDisconnectReason
+        ?.takeIf{state.connection==NmeaConnectionState.ERROR}
+        ?.let{reason->"${state.nmeaTransportDiagnostics.lastFailureCategory?:tr("Transport error","传输错误")}: $reason"}
+    val feedbackMessage=formError
+        ?:state.connectionAttempt.message.takeIf{state.connectionAttempt.state!=ConnectionAttemptState.IDLE&&it.isNotBlank()}
+        ?:transportError
+    val feedbackIsError=formError!=null||state.connectionAttempt.state==ConnectionAttemptState.FAILED||
+        (state.connectionAttempt.state==ConnectionAttemptState.IDLE&&transportError!=null)
+    val feedbackIsWarning=state.connectionAttempt.state==ConnectionAttemptState.WARNING
+    LazyColumn(Modifier.fillMaxSize().padding(16.dp).testTag("nmea_runtime_list"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { PageHeader(tr("Boat NMEA input","船载 NMEA 输入"), tr("Boat server → App receive (RX). Sending Phone/App data to the boat network and the Phone NMEA service each have separate controls on Share.","船载服务器 → App 的接收连接（RX）。向船网发送手机 / App 数据与本机 NMEA 服务都在“共享”页分别管理。")) }
+        item { Card(Modifier.fillMaxWidth().testTag("nmea_input_connection_card")) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Input connection (RX)","输入连接（RX）"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold);Text(connectionStateLabel(state.connection),style=MaterialTheme.typography.bodySmall,color=when(state.connection){NmeaConnectionState.CONNECTED->MaterialTheme.colorScheme.primary;NmeaConnectionState.ERROR->MaterialTheme.colorScheme.error;else->MaterialTheme.colorScheme.onSurfaceVariant})};if(connectionRunning)AssistChip({},label={Text(tr("Settings locked","配置已锁定"))},leadingIcon={Icon(Icons.Default.Lock,null,Modifier.size(16.dp))},enabled=false)}
+            if(!connectionRunning){
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(profile.protocol==Protocol.TCP,{edit(profile.copy(protocol=Protocol.TCP))},label={Text(tr("TCP client","TCP 客户端"))},enabled=controlsEnabled);FilterChip(profile.protocol==Protocol.UDP,{edit(profile.copy(protocol=Protocol.UDP))},label={Text(tr("UDP listener","UDP 监听"))},enabled=controlsEnabled)}
+                if(profile.protocol==Protocol.TCP)OutlinedTextField(profile.host,{edit(profile.copy(host=it))},label={Text(tr("Boat server address *","船载服务器地址 *"))},modifier=Modifier.fillMaxWidth().testTag("nmea_rx_host"),singleLine=true,enabled=controlsEnabled,isError=formError!=null)
+                OutlinedTextField(portText,{value->portText=value.filter(Char::isDigit);validationRequested=false;vm.clearConnectionAttempt()},label={Text(if(profile.protocol==Protocol.TCP)tr("Receive port *","接收端口 *")else tr("Listen port *","监听端口 *"))},singleLine=true,enabled=controlsEnabled,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),isError=formError!=null,modifier=Modifier.fillMaxWidth().testTag("nmea_rx_port"))
+                Button({validationRequested=true;if(validationError==null)vm.saveAndConnect(draftProfile)},Modifier.fillMaxWidth().testTag("nmea_connect_input"),enabled=state.settingsReady&&!testing){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Connecting…","正在连接…")else tr("Connect input","连接输入"))}
+            }else{
+                Text("${profile.protocol} · ${profile.host}:${profile.port}",style=MaterialTheme.typography.bodyMedium)
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect","重连"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f).testTag("nmea_stop_input"),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Stop input","停止输入"))}}
+            }
+            feedbackMessage?.let{message->Surface(color=when{feedbackIsError->MaterialTheme.colorScheme.errorContainer;feedbackIsWarning->MaterialTheme.colorScheme.tertiaryContainer;else->MaterialTheme.colorScheme.surfaceVariant},shape=MaterialTheme.shapes.medium,modifier=Modifier.fillMaxWidth().testTag("nmea_connection_attempt")){Row(Modifier.padding(10.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.Top){if(testing)CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)else Icon(if(feedbackIsError)Icons.Default.ErrorOutline else Icons.Default.Info,null,Modifier.size(18.dp));Text(localizeKnownMessage(message),style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))}}}
+            if(!state.settingsReady)Text(tr("Loading saved connection settings…","正在加载已保存的连接设置…"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton({showAdvancedSettings=!showAdvancedSettings},Modifier.align(Alignment.End).testTag("nmea_input_advanced_toggle")){Icon(if(showAdvancedSettings)Icons.Default.ExpandLess else Icons.Default.Tune,null);Spacer(Modifier.width(4.dp));Text(if(showAdvancedSettings)tr("Hide advanced settings","收起高级设置")else tr("Advanced settings","高级设置"))}
+            if(showAdvancedSettings){
+                OutlinedTextField(profile.name,{edit(profile.copy(name=it))},label={Text(tr("Profile name","配置名称"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled)
+                OutlinedTextField(profile.noDataTimeoutSeconds.toString(),{value->edit(profile.copy(noDataTimeoutSeconds=value.filter(Char::isDigit).toIntOrNull()?:0))},label={Text(tr("No-data warning delay","无数据提醒延时"))},suffix={Text(tr("s","秒"))},supportingText={Text(tr("A quiet TCP stream stays connected; this only changes when the App reports No data.","TCP 数据安静时仍保持连接；这里只调整何时显示“无数据”。"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled,isError=profile.noDataTimeoutSeconds !in 3..120,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
+                SettingSwitch(tr("Require checksum","要求校验和"),tr("Reject sentences without a checksum","拒绝没有校验和的语句"),profile.requireChecksum,enabled=controlsEnabled){edit(profile.copy(requireChecksum=it))}
+                SettingSwitch(tr("Auto reconnect","自动重连"),tr("Use protected retries after a network loss","网络中断后执行受保护的重连"),profile.autoReconnect,enabled=controlsEnabled){edit(profile.copy(autoReconnect=it))}
+                Text(tr("This page only controls Boat → App input. Both sharing directions remain separate on Share.","此页只控制船载服务器 → App 的输入；两种共享方向仍在“共享”页独立管理。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } } }
 		if(state.outputSettings.publicationEnabled)item{Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(tr("Phone/App NMEA output is active. Manage or stop it from Share before changing input configuration.","手机 / App NMEA 输出正在运行。更改输入配置前，请先到“共享”页面管理或停止发送。"),Modifier.fillMaxWidth().padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSecondaryContainer)}}
         if(activeWatchNmeaFault)item { Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(tr("Anchor watch needs a usable NMEA position","锚警需要可用的 NMEA 船位"),style=MaterialTheme.typography.titleMedium,color=MaterialTheme.colorScheme.onErrorContainer);Text(tr("The transport may be disconnected, stale, without a current fix, or reporting unacceptable quality. The session remains locked to NMEA with no silent failover. Reconnect, or pause safely before changing the source.","连接可能已断开、过期、没有当前定位，或正在报告不合格的定位质量。本次会话仍锁定 NMEA，不会静默切源。请重连，或先安全暂停再更换数据源。"),color=MaterialTheme.colorScheme.onErrorContainer);OutlinedButton({showWatchDisconnect=true}){Text(tr("Pause safely","安全暂停"))}}} }
-        item{ConnectionResultCard(state)}
-        if(connectionRunning)item{Column{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect input","重连输入"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f).testTag("nmea_stop_input"),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Stop input","停止输入"))}};TextButton({showConnectionSettings=!showConnectionSettings},Modifier.align(Alignment.End)){Icon(if(showConnectionSettings)Icons.Default.ExpandLess else Icons.Default.Tune,null);Spacer(Modifier.width(4.dp));Text(if(showConnectionSettings)tr("Hide connection settings","收起连接设置")else tr("Connection settings","连接设置"))}}}
-        if(!connectionRunning||showConnectionSettings)
-        item { Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if(connectionRunning) AssistChip({}, { Text(tr("Configuration locked while connected","连接期间配置已锁定")) }, leadingIcon={Icon(Icons.Default.Lock,null,Modifier.size(18.dp))}, enabled=false)
-            OutlinedTextField(profile.name, { edit(profile.copy(name = it)) }, label = { Text(tr("Profile name","配置名称")) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled=controlsEnabled)
-            Text(tr("Server → App · receive (RX)","服务器 → App · 接收（RX）"),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
-            Text(tr("Protocol","协议"), style = MaterialTheme.typography.labelLarge); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilterChip(profile.protocol == Protocol.TCP, { edit(profile.copy(protocol = Protocol.TCP)) }, label = { Text(tr("TCP client","TCP 客户端")) },enabled=controlsEnabled); FilterChip(profile.protocol == Protocol.UDP, { edit(profile.copy(protocol = Protocol.UDP)) }, label = { Text(tr("UDP listener","UDP 监听")) },enabled=controlsEnabled) }
-            if (profile.protocol == Protocol.TCP) OutlinedTextField(profile.host, { edit(profile.copy(host = it)) }, label = { Text(tr("Host or IP address *","主机名或 IP 地址 *")) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled=controlsEnabled,isError=validationRequested&&validationError!=null,supportingText={if(validationRequested&&validationError!=null)Text(localizeKnownMessage(validationError))})
-            OutlinedTextField(portText, { v -> portText=v.filter(Char::isDigit);validationRequested=false;vm.clearConnectionAttempt() }, label = { Text(if (profile.protocol == Protocol.TCP) tr("Receive server port (RX) *","接收服务器端口（RX）*") else tr("Receive listen port (RX) *","接收监听端口（RX）*")) }, singleLine = true, enabled=controlsEnabled, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),isError=validationRequested&&draftProfile.port !in 1..65535,supportingText={if(validationRequested&&draftProfile.port !in 1..65535)Text(tr("Enter the Boat → App receive port (1–65535).","请输入船网 → App 的接收端口（1–65535）。"))},modifier=Modifier.fillMaxWidth().testTag("nmea_rx_port"))
-            OutlinedTextField(profile.noDataTimeoutSeconds.toString(),{v->edit(profile.copy(noDataTimeoutSeconds=v.filter(Char::isDigit).toIntOrNull()?:0))},label={Text(tr("No-data timeout","无数据超时"))},suffix={Text(tr("s","秒"))},supportingText={Text(tr("3–120 seconds; reports a quiet stream without closing the TCP connection.","3–120 秒；用于报告数据流静默，但不会因此关闭 TCP 连接。"))},modifier=Modifier.fillMaxWidth(),singleLine=true,enabled=controlsEnabled,isError=profile.noDataTimeoutSeconds !in 3..120,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
-            SettingSwitch(tr("Require checksum","要求校验和"), tr("Reject sentences without a checksum","拒绝没有校验和的语句"), profile.requireChecksum,enabled=controlsEnabled) { edit(profile.copy(requireChecksum = it)) }; SettingSwitch(tr("Auto reconnect","自动重连"), tr("Reconnect after network loss","网络中断后自动重新连接"), profile.autoReconnect,enabled=controlsEnabled) { edit(profile.copy(autoReconnect = it)) }
-            HorizontalDivider()
-            AssistChip({},label={Text(tr("Sharing directions are configured separately on Share","不同方向的数据共享请在“共享”页分别配置"))},leadingIcon={Icon(Icons.Default.NorthEast,null)},enabled=false)
-            if(!connectionRunning)Button({validationRequested=true;if(validationError==null)vm.saveAndConnect(draftProfile)},Modifier.fillMaxWidth().testTag("nmea_connect_input"),enabled=state.settingsReady&&!testing){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Connecting input…","正在连接输入…") else tr("Save & connect input","保存并连接输入"))}
-            if(!state.settingsReady)Text(tr("Loading saved connection settings…","正在加载已保存的连接设置…"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(state.connectionAttempt.state==ConnectionAttemptState.FAILED)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
-            if(state.connectionAttempt.state==ConnectionAttemptState.WARNING)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),color=MaterialTheme.colorScheme.tertiary,style=MaterialTheme.typography.bodySmall)
-            if(testing)Text(localizeKnownMessage(state.connectionAttempt.message),Modifier.testTag("nmea_connection_attempt"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(testing&&!connectionRunning)Text(tr("One formal RX socket is opening. A quiet stream will remain connected as ‘No data’; the App never opens a disposable preflight socket.","正在打开唯一的正式 RX Socket。安静的数据流会保持“已连接，无数据”；应用绝不会先开一次性测试连接。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            if(state.settings.nmeaSharingEnabled)Text(tr("A legacy Sharing request is being migrated to the stopped Phone NMEA service. Review and explicitly start it on Share.","旧版“共享”请求正在迁移到已停止的“本机 NMEA 服务”；请前往“共享”页检查并明确启动。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        } } }
+        if(state.settings.nmeaSharingEnabled)item{Text(tr("A legacy Sharing request is waiting in the stopped Phone NMEA service. Review and explicitly start it on Share.","旧版“共享”请求正在已停止的“本机 NMEA 服务”中等待；请前往“共享”页检查并明确启动。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        item{OutlinedButton({showTechnicalDetails=!showTechnicalDetails},Modifier.fillMaxWidth().testTag("nmea_input_diagnostics_toggle")){Icon(if(showTechnicalDetails)Icons.Default.ExpandLess else Icons.Default.MonitorHeart,null);Spacer(Modifier.width(6.dp));Text(if(showTechnicalDetails)tr("Hide technical details","收起技术详情")else tr("Technical details","技术详情"))}}
+        if(showTechnicalDetails)item{ConnectionResultCard(state)}
     }
     if(showWatchDisconnect)ActiveWatchDisconnectDialog(pauseWatch={showWatchDisconnect=false;vm.stopActiveWatchAndDisconnect()},dismiss={showWatchDisconnect=false})
     if(showDependencyDisconnect)NmeaDependencyDisconnectDialog(
@@ -492,26 +505,10 @@ private fun ConnectionResultCard(state: MainUiState) {
                 "${state.nmeaTransportDiagnostics.connectionGeneration} / ${state.nmeaTransportDiagnostics.reconnectAttempt}",
             )
             state.nmeaTransportDiagnostics.lastDisconnectReason?.let { reason ->
-                val retrySeconds=state.nmeaTransportDiagnostics.nextRetryElapsedRealtime?.let{((it-now).coerceAtLeast(0L)+999L)/1_000L}
-                Surface(
-                    color=MaterialTheme.colorScheme.errorContainer,
-                    shape=MaterialTheme.shapes.medium,
-                    modifier=Modifier.fillMaxWidth().testTag("nmea_transport_error"),
-                ){
-                    Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
-                        Text(state.nmeaTransportDiagnostics.lastFailureCategory?:tr("Transport error","传输错误"),fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.onErrorContainer)
-                        SelectionContainer{Text(reason,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onErrorContainer)}
-                        Text(
-                            when{
-                                state.nmeaTransportDiagnostics.circuitOpen->tr("Automatic retries stopped to protect the server. Check the endpoint, then use Reconnect once or Stop input.","为保护服务器，自动重试已停止。请检查端点后只重连一次，或停止输入。")
-                                retrySeconds!=null->tr("One protected retry is scheduled in about $retrySeconds seconds. Do not tap Reconnect repeatedly.","约 $retrySeconds 秒后安排一次受保护重试，请勿反复点击重连。")
-                                else->tr("The failure stays visible until a successful connection, Stop input, or the next explicit attempt.","失败信息会保留到连接成功、停止输入或下一次明确尝试。")
-                            },
-                            style=MaterialTheme.typography.bodySmall,
-                            color=MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                    }
-                }
+                DiagnosticsRow(
+                    tr("Last transport failure", "最近传输故障"),
+                    "${state.nmeaTransportDiagnostics.lastFailureCategory ?: tr("Transport error", "传输错误")}: $reason",
+                )
             }
             DiagnosticsRow(tr("Heading / wind", "船艏向 / 风"),"${age(state.nmeaInstruments.headingTrue?.second?:state.nmeaInstruments.headingMagnetic?.second)} / ${age(listOfNotNull(state.liveWind.trueSpeed?.receivedElapsedRealtime,state.liveWind.apparentSpeed?.receivedElapsedRealtime,state.liveWind.trueDirection?.receivedElapsedRealtime).maxOrNull())}")
             DiagnosticsRow(tr("Depth / STW", "水深 / 对水航速"),"${age(state.liveDepth.receivedElapsedRealtime.takeUnless{state.liveDepth.isDemo})} / ${age(state.nmeaInstruments.speedThroughWaterKnots?.second)}")

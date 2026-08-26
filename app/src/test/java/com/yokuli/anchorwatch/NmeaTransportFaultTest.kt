@@ -3,6 +3,7 @@ package com.yokuli.anchorwatch
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
 import com.yokuli.anchorwatch.data.nmea.NmeaConnectionManager
+import com.yokuli.anchorwatch.data.nmea.NmeaConnectionRetryPolicy
 import com.yokuli.anchorwatch.data.nmea.Protocol
 import java.io.Closeable
 import java.net.ServerSocket
@@ -35,7 +36,20 @@ class NmeaTransportFaultTest{
         val first=NmeaChecksum.append("GPGGA,120000,3650.9100,S,17445.7980,E,1,10,0.8,0.0,M,0.0,M,,")
         val second=NmeaChecksum.append("GPRMC,120001,A,3650.9100,S,17445.7980,E,0.2,12.0,170826,,,A")
         DeterministicNmeaServer(listOf(listOf(100L to first),listOf(100L to second))).use{server->runBlocking{
-            val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(scope)
+            val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+            // Production deliberately protects fragile marine gateways with a
+            // 15-second peer-close backoff. This deterministic test verifies
+            // ownership/generation recovery, so inject a short policy rather
+            // than coupling the assertion timeout to the vessel safety delay.
+            val manager=NmeaConnectionManager(
+                scope,
+                NmeaConnectionRetryPolicy(
+                    openFailureRetryMillis=100,
+                    peerDisconnectRetryMillis=100,
+                    reconnectCoalesceMillis=50,
+                    manualReconnectCooldownMillis=100,
+                ),
+            )
             try{
                 assertTrue(manager.connect(ConnectionProfile(protocol=Protocol.TCP,host="127.0.0.1",port=server.port,autoReconnect=true,noDataTimeoutSeconds=3)))
                 assertEquals(first,withTimeout(5_000){manager.lines.first()})

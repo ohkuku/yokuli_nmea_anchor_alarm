@@ -83,6 +83,7 @@ import com.yokuli.anchorwatch.location.PhoneHeadingSample
 import com.yokuli.anchorwatch.location.vessel.DeviceBowAxis
 import com.yokuli.anchorwatch.location.vessel.PhoneSensorCapabilities
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
+import com.yokuli.anchorwatch.location.vessel.PhoneHeadingAlignmentPolicy
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
@@ -418,7 +419,12 @@ class MainViewModel @Inject constructor(
         incidentLogger.record("app","UI_STARTED")
     }
 
-    private companion object { const val UI_POSITION_FRAME_MILLIS=250L;const val MAX_ACTIVE_TRAIL_POINTS=4_800 }
+    private companion object {
+        const val UI_POSITION_FRAME_MILLIS=250L
+        const val MAX_ACTIVE_TRAIL_POINTS=4_800
+        const val PHONE_HEADING_ALIGNMENT_FRESH_MILLIS=2_000L
+        const val NMEA_HEADING_ALIGNMENT_FRESH_MILLIS=3_000L
+    }
 
     private fun refreshWatchSafety(){
         val state=_ui.value
@@ -737,7 +743,7 @@ class MainViewModel @Inject constructor(
         val state=_ui.value
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
         if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){
-            fail("Confirm the one-time phone-to-vessel heading alignment before starting the Phone NMEA service.")
+            fail("Align the phone to the vessel bow in Settings → Phone vessel sensors before starting the Phone NMEA service.")
             return@launch
         }
         if(!state.localNmeaServerSettings.configured||state.localNmeaServerSettings.port !in 1024..65535){
@@ -860,10 +866,40 @@ class MainViewModel @Inject constructor(
         vesselAttitudeRepository.setMounted(mounted)
         _ui.update{it.copy(vesselCalibrationFeedback=if(mounted)"Trip attitude capture resumed." else "Trip attitude capture paused. Heading, GPS and pressure continue.")}
     }
-    fun setPhoneHeadingAlignment(offsetDegrees:Double)=viewModelScope.launch{
-        vesselAttitudeRepository.alignHeading(offsetDegrees)
-        _ui.update{it.copy(vesselCalibrationFeedback="Heading alignment saved. It remains valid until you deliberately change the phone-to-bow orientation.")}
+    fun alignPhoneHeadingToBow()=viewModelScope.launch{
+        val state=_ui.value
+        val now=android.os.SystemClock.elapsedRealtime()
+        val phoneFresh=state.phoneHeading.receivedElapsedRealtime?.let{now-it in 0L..PHONE_HEADING_ALIGNMENT_FRESH_MILLIS}==true
+        val phoneAvailable=state.phoneHeading.liveTrueHeadingDegrees!=null||state.phoneHeading.liveMagneticHeadingDegrees!=null
+        if(!phoneFresh||!phoneAvailable){
+            _ui.update{it.copy(vesselCalibrationFeedback=com.yokuli.anchorwatch.localization.localized(it.settings.appLanguage,"No fresh phone compass reading is available. Keep this page open, move away from magnetic interference, then try again.","当前没有新鲜的手机罗盘数据。请保持此页打开、远离磁场干扰后再试。"))}
+            return@launch
+        }
+        vesselAttitudeRepository.alignHeading(0.0)
+        _ui.update{it.copy(vesselCalibrationFeedback=com.yokuli.anchorwatch.localization.localized(it.settings.appLanguage,"Aligned now. The top of the phone is the vessel bow direction; you can repeat this at any time.","已重新对齐。现在手机顶部方向就是船艏方向；以后可随时再次操作。"))}
     }
+    fun alignPhoneHeadingToNmea()=viewModelScope.launch{
+        val state=_ui.value
+        val now=android.os.SystemClock.elapsedRealtime()
+        val phoneFresh=state.phoneHeading.receivedElapsedRealtime?.let{now-it in 0L..PHONE_HEADING_ALIGNMENT_FRESH_MILLIS}==true
+        val nmeaTrue=state.nmeaInstruments.headingTrue?.takeIf{now-it.second in 0L..NMEA_HEADING_ALIGNMENT_FRESH_MILLIS}?.first
+        val nmeaMagnetic=state.nmeaInstruments.headingMagnetic?.takeIf{now-it.second in 0L..NMEA_HEADING_ALIGNMENT_FRESH_MILLIS}?.first
+        val match=if(phoneFresh)PhoneHeadingAlignmentPolicy.matchLiveReference(
+            phoneTrueDegrees=state.phoneHeading.liveTrueHeadingDegrees,
+            phoneMagneticDegrees=state.phoneHeading.liveMagneticHeadingDegrees,
+            vesselTrueDegrees=nmeaTrue,
+            vesselMagneticDegrees=nmeaMagnetic,
+        )else null
+        if(match==null){
+            _ui.update{it.copy(vesselCalibrationFeedback=com.yokuli.anchorwatch.localization.localized(it.settings.appLanguage,"A fresh Phone and NMEA heading with the same north reference is required. Nothing was changed.","需要同时取得采用相同北向基准的新鲜手机艏向与 NMEA 艏向；本次没有修改。"))}
+            return@launch
+        }
+        vesselAttitudeRepository.alignHeading(match.offsetDegrees)
+        val reference=if(match.reference==com.yokuli.anchorwatch.location.vessel.PhoneHeadingAlignmentReference.TRUE_NORTH)"true" else "magnetic"
+        _ui.update{it.copy(vesselCalibrationFeedback=com.yokuli.anchorwatch.localization.localized(it.settings.appLanguage,"Aligned to the live NMEA $reference heading. You can realign again at any time.","已按实时 NMEA ${if(reference=="true")"真北" else "磁北"}艏向重新对齐；以后可随时再次操作。"))}
+    }
+    /** Source-compatible entry point for older call sites and backup tooling. */
+    fun setPhoneHeadingAlignment(offsetDegrees:Double)=viewModelScope.launch{vesselAttitudeRepository.alignHeading(offsetDegrees)}
     fun clearVesselCalibrationFeedback()=_ui.update{it.copy(vesselCalibrationFeedback=null)}
     fun setNmeaOutputEndpoint(mode:NmeaOutputTransportMode,host:String,port:Int)=viewModelScope.launch{
         val current=_ui.value.outputSettings
@@ -895,7 +931,7 @@ class MainViewModel @Inject constructor(
             autoStartOutput=false,
         )
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
-        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Confirm the one-time phone-to-vessel heading alignment before sharing NMEA data.");return@launch}
+        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Align the phone to the vessel bow in Settings → Phone vessel sensors before sharing NMEA data.");return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
         if(value!=state.outputSettings)outputSettingsRepository.saveConfiguration(value.copy(publicationEnabled=false))
         outputSettingsRepository.requestStart()
@@ -1102,7 +1138,8 @@ class MainViewModel @Inject constructor(
     }
     fun cancelAnchorageApproach(){selectedApproachClusterId=null;selectedApproachMemberIds=emptySet();gisApproachTarget=null;phoneHeadingRepository.setApproachDemand(false);refreshAnchorageApproach()}
     private fun availableApproachClusters()=_ui.value.anchorageClusters+listOfNotNull(gisApproachTarget).filter{target->_ui.value.anchorageClusters.none{it.id==target.id}}
-    fun setMapHeadingDisplayActive(active:Boolean){phoneHeadingRepository.setDisplayDemand(active)}
+    fun setPhoneHeadingDisplayActive(active:Boolean){phoneHeadingRepository.setDisplayDemand(active)}
+    fun setMapHeadingDisplayActive(active:Boolean)=setPhoneHeadingDisplayActive(active)
     fun dismissNearbyAnchorage(){
         anchorageNearbyTracker.dismiss(_ui.value.nearbyAnchoragePrompt.map{it.cluster.id})
         _ui.update{it.copy(nearbyAnchoragePrompt=emptyList())}

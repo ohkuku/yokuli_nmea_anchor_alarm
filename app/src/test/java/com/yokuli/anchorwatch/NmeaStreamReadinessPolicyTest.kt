@@ -5,6 +5,8 @@ import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputReadinessPolicy
+import com.yokuli.anchorwatch.location.vessel.PhoneHeadingAlignmentPolicy
+import com.yokuli.anchorwatch.location.vessel.PhoneHeadingAlignmentReference
 import com.yokuli.anchorwatch.runtime.output.AnchorWatchNmeaStream
 import com.yokuli.anchorwatch.runtime.output.FormalOutputSessionReadinessPolicy
 import com.yokuli.anchorwatch.runtime.output.NmeaStreamReadinessPolicy
@@ -16,6 +18,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NmeaStreamReadinessPolicyTest {
+    @Test fun liveHeadingAlignmentUsesOnlyMatchingNorthReferences(){
+        val trueMatch=PhoneHeadingAlignmentPolicy.matchLiveReference(350.0,340.0,10.0,20.0)
+        assertEquals(PhoneHeadingAlignmentReference.TRUE_NORTH,trueMatch?.reference)
+        assertEquals(20.0,trueMatch?.offsetDegrees?:Double.NaN,0.001)
+
+        val magneticMatch=PhoneHeadingAlignmentPolicy.matchLiveReference(null,350.0,10.0,5.0)
+        assertEquals(PhoneHeadingAlignmentReference.MAGNETIC_NORTH,magneticMatch?.reference)
+        assertEquals(15.0,magneticMatch?.offsetDegrees?:Double.NaN,0.001)
+        assertNull(PhoneHeadingAlignmentPolicy.matchLiveReference(null,350.0,10.0,null))
+    }
+
     @Test fun positionWaitsForFreshGnssWithoutDependingOnMountCalibration(){
         assertEquals(NmeaStreamReadiness.WAITING_POSITION,NmeaStreamReadinessPolicy.position(false))
         assertEquals(NmeaStreamReadiness.READY,NmeaStreamReadinessPolicy.position(true))

@@ -489,3 +489,29 @@
 - Verification result: **`NmeaOutputEndpointPolicy.automatic()` now canonicalises matching TCP endpoints to the existing input connection before readiness, runtime ownership, tests or writes. Different TCP endpoints remain an independent writer. UI exposes only TCP destination host/port plus optional UDP protocol choices; same-Socket wording and blockers are removed. `:app:compileDebugKotlin` passed in 30 seconds and `:app:compileDebugUnitTestKotlin` passed in 26 seconds. Tests were not run, and no real endpoint was contacted.**
 - Real hardware verified: **No — verify one accepted gateway client for equal RX/TX and exactly one additional client for a documented different TX port.**
 - Status: **FIXED IN CODE — KOTLIN COMPILE PASSED; TEST AND HARDWARE QA PENDING**
+
+## Finding P1-034 — NMEA input hid Connect below diagnostics and repeated the same failure
+
+- Severity: **P1 / routine connection setup was difficult to operate**
+- User story: opening Data → Input → Connection should present protocol, server, receive port and Connect together in the first workflow card. Status and the actionable error belong beside that action; counters and Socket generations are optional diagnostics.
+- Evidence: the page rendered a full live-diagnostics card and safety/output notices before the endpoint form. Profile name, timeout, checksum and reconnect switches then pushed Connect to the bottom. `connectionAttempt` and `lastDisconnectReason` each rendered their own error surface, so one failed attempt appeared in multiple places.
+- Reproduction steps: use a small phone display, open a stopped or failed NMEA input and count the scroll distance to Connect; then attempt an unavailable endpoint and compare the form error with the transport error card.
+- Root cause: connection task flow, advanced configuration and technical troubleshooting were flattened into one long `LazyColumn` instead of being presented by user priority.
+- Failing test: existing Compose connection stories retain `nmea_connect_input`; the new compact card exposes `nmea_input_connection_card`, `nmea_input_advanced_toggle` and `nmea_input_diagnostics_toggle` for the pending small-screen reachability regression.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **Protocol/address/port/Connect or Reconnect/Stop now share the first card. Profile/timeout/checksum/retry are collapsed under Advanced settings. Technical health is collapsed separately. Validation, attempt and terminal transport failure select one feedback surface; the technical table may retain the last failure as a non-actionable historical row. The 572-test Debug suite initially reported two coroutine timeouts; both failures passed targeted reruns, with the NMEA recovery test corrected to inject a short deterministic retry policy instead of assuming the production 15-second fragile-gateway delay. `lintDebug` and `assembleDebug` passed. No real endpoint was contacted.**
+- Real hardware verified: **No — verify on the smallest supported phone and the fragile boat gateway.**
+- Status: **FIXED IN CODE — UNIT FAILURES PASSED TARGETED RERUNS; LINT/APK PASSED; SMALL-SCREEN AND GATEWAY QA PENDING**
+
+## Finding P1-035 — Phone heading alignment looked permanent and exposed an internal offset
+
+- Severity: **P1 / heading source setup and recovery were unclear**
+- User story: a sailor must be able to realign the phone whenever its orientation relative to the vessel changes. The normal action is “point the phone top toward the bow and align now”; a numeric implementation offset is not a user task.
+- Evidence: Settings described alignment as one-time, displayed an editable degree offset and a Confirm button, and did not acquire a Phone-heading display lease while the sensor page was open. This made realignment hard to find and could leave the live verification blank.
+- Reproduction steps: complete heading setup once, return after rotating the phone and search for a realign action; open the page with no Watch/Approach runtime owning the compass and inspect whether live device direction updates.
+- Root cause: the persisted angular transform was exposed directly as product UI, while sensor runtime demand was owned by map/approach screens rather than the settings surface that required a live sample.
+- Failing test: `NmeaStreamReadinessPolicyTest.liveHeadingAlignmentUsesOnlyMatchingNorthReferences`; UI tags `phone_sensor_confirm_heading` and `phone_sensor_align_nmea` remain available for the pending device Compose story.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **The settings row explicitly advertises realignment. Opening the sensor page starts a display-only compass lease. The main action may be repeated at any time and records a zero correction only after a fresh compass sample while the phone points toward the bow. When fresh Phone and NMEA headings share a true or magnetic reference, an optional live-match action computes the shortest signed correction. The offset is no longer editable or shown as required input. The new same-reference/wraparound policy test passed within the Debug suite; `lintDebug` and `assembleDebug` passed.**
+- Real hardware verified: **No — verify compass freshness, bow-pointing realignment and optional NMEA match on both phones.**
+- Status: **FIXED IN CODE — UNIT/LINT/APK GATES PASSED; TWO-PHONE SENSOR QA PENDING**

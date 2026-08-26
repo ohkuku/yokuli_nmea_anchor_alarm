@@ -230,7 +230,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
      val readiness=PhoneVesselOutputReadinessPolicy.evaluate(calibration,mount)
      if(settings.serverRequested&&!localNmeaServer.enabled&&!readiness.ready){
       localNmeaServerSettings.requestStop();localNmeaServer.configure(settings.copy(serverRequested=false))
-      notifySeparate("Phone NMEA service blocked","Confirm the one-time phone-to-vessel heading alignment before publishing phone vessel data.",true)
+      notifySeparate("Phone NMEA service blocked","Align the phone to the vessel bow in Settings → Phone vessel sensors before publishing phone vessel data.",true)
      }else localNmeaServer.configure(settings)
     }
   }
@@ -613,7 +613,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(vesselMountCalibration.calibration.first(),vesselAttitude.mountState.first())
   if(!readiness.ready&&!phonePositionOutput.enabled){
    val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile,readiness);outputSettings.requestStop()
-   notifySeparate("NMEA output blocked","Confirm the one-time phone-to-vessel heading alignment before formal sharing.",true);return
+   notifySeparate("NMEA output blocked","Align the phone to the vessel bow in Settings → Phone vessel sensors before formal sharing.",true);return
   }
   if(!readiness.ready&&phonePositionOutput.enabled){
    // This session already passed the formal Start gate. Keep the transport and
