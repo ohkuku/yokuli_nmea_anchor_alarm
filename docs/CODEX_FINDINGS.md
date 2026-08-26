@@ -528,3 +528,55 @@
 - Verification result: **New-session source routing now resolves an unusable NMEA position preference to Phone GPS without changing the saved preference or closing the NMEA instrument connection. Phone GNSS is acquired before and during setup; Watch status and preflight evaluate the same effective source. A running session remains locked to its explicitly armed source, so an active NMEA watch is never silently switched. Targeted `NmeaSourceSelectionPolicyTest` and `compileDebugKotlin` passed together in 56 seconds.**
 - Real hardware verified: **No — verify with the fishfinder stream connected and no NMEA GPS sentences, then confirm Phone GPS can arm while live depth remains available.**
 - Status: **FIXED IN CODE — TARGETED UNIT TEST AND KOTLIN COMPILE PASSED; FISHFINDER QA PENDING**
+
+## Finding P0-037 — Late NMEA readiness was missed while arming
+
+- Severity: **P0 / valid NMEA position could not start Anchor Watch**
+- User story: when the selected boat NMEA server supplies a current valid position, one Start tap must arm from that NMEA position even if the fix and transport-ready state arrive in adjacent asynchronous updates.
+- Evidence: the setup form captured its temporary Phone-GPS fallback before the preferred NMEA fix arrived and never promoted itself back to NMEA. Independently, `AnchorWatchRuntime.awaitUsableStartFix()` observed only `navigation.fix`; `NavigationRepository` intentionally publishes the parsed fix before calling `reportValidFix()`, so the waiter could reject the fix while state was `CONNECTED_NO_FIX`, miss the subsequent `CONNECTED` transition, and wait 15 seconds for a duplicate sentence. The generic Chinese translation then hid whether NMEA or Phone GNSS had timed out.
+- Reproduction steps: configure NMEA as the preferred position source; open anchor setup while the current connection is transitioning from data-only to its first valid RMC/GGA/GLL position; press Start after the position appears. The old implementation could retain Phone GPS or reject the first NMEA fix and eventually show only “需要实时且新鲜的 GPS 定位”.
+- Root cause: the setup source was a one-shot remembered value, and Runtime treated position readiness as a single-flow event instead of the tuple `(connection state, connection generation start, fix, quality)`.
+- Failing test: `NmeaPositionAwaiterTest.freshFixWakesWaiterWithoutWaitingForAConnectionLabelPromotion` and the centralized-source Compose regression in `AnchorSetupValidationTest`.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **Setup no longer owns an independent source picker: it derives and reports the centralized Data → Sources choice. The shared NMEA awaiter listens to connection state, fix and connection-generation start together and is used by new arming, paused-source handover and Resume. Source-specific Chinese timeout messages distinguish NMEA from Phone GNSS. Production, JVM-test and Android-test Kotlin sources compile; tests were not executed in the final UI-centralization pass.**
+- Real hardware verified: **No — retest one Start tap against the vessel NMEA server and record whether the source-specific failure appears if it still rejects the stream.**
+- Status: **FIXED IN CODE — PRODUCTION AND TEST SOURCES COMPILE; VESSEL QA PENDING**
+
+## Finding P0-038 — Global semantic echo filtering deleted real boat GPS
+
+- Severity: **P0 / raw GPS visible but no parsed position**
+- User story: a real GPS position received from the configured Boat NMEA input must remain eligible even while Phone/App output or the independent Phone NMEA service is running. Sensors mounted on the same vessel agreeing on position or heading is normal and is not proof of an echo.
+- Evidence: direct comparison with `main` (`2627c6e`) showed that its `NavigationRepository` parsed accepted NMEA sentences directly. `develop` later injected the singleton `NmeaOutboundLoopGuard` into both Boat output and the unrelated phone-hosted NMEA server, then called the guard before parsing Boat input. The guard's semantic fingerprint deliberately ignored talker/checksum and matched positions within roughly three metres, so a real fishfinder/boat GPS near the phone could be labelled `[Echoed App TX]` and returned before `parser.parseEnvelope()`. Raw UI still showed the sentence, exactly matching the vessel report.
+- Reproduction steps: run Phone/App publication or serve Phone NMEA clients, then receive an independent Boat RMC/GGA at the same vessel position; inspect Raw data and try to arm from NMEA. The regression branch may show the GPS sentence while `nmeaFix` remains empty/stale; old `main` accepts it.
+- Root cause: two output products shared one global echo-provenance cache, and approximate semantic equality was treated as transport provenance. This violated the product split and cannot distinguish independent co-located sensors from converted echoes.
+- Failing test: `NmeaDeviceOutputPolicyTest.boatInputUsesExactEchoEvidenceAndNeverRejectsANearbyIndependentGps`; companion parser/quality regressions cover GNS and stale GGA quality contamination.
+- Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
+- Verification result: **The independent Phone NMEA service no longer writes to the Boat-input echo guard. `NavigationRepository` now rejects only byte-identical recent App frames; approximate semantic matching remains available for diagnostics but cannot delete Boat GPS evidence. Modern GNS is parsed, an invalid GGA/GNS cannot write quality 0 back into the shared cache, stale bad HDOP no longer poisons a newer RMC/GLL fix, and Raw/health shows the exact latest position rejection reason. Six targeted suites plus `compileDebugKotlin` passed in 2m26s.**
+- Real hardware verified: **No — install the new APK, keep the same output/server configuration, and verify that Boat NMEA Position becomes populated before one-tap arming.**
+- Status: **FIXED IN CODE — MAIN REGRESSION IDENTIFIED; TARGETED PARSER/QUALITY/ECHO TESTS PASSED; VESSEL QA PENDING**
+
+## Finding P0-039 — One invalid NMEA position source erased another valid GPS
+
+- Severity: **P0 / map shows coordinates but Anchor Watch cannot arm**
+- User story: a multiplexed boat network may carry several RMC/GGA/GNS/GLL producers. One source reporting an explicit invalid status must not erase a fresh valid position from another GPS.
+- Evidence: `main` kept the last valid aggregate position until freshness expiry. `develop` added exact-source invalidation in `VesselSourceRegistry`, but also called `clearLegacyMeasurements()` on the shared `NavigationRepository._fix`. That aggregate has no physical-source identity, so any invalid position sentence cleared every source. The next valid sentence restored the map, producing the reported visible-coordinate/15-second-arm-timeout contradiction.
+- Reproduction steps: feed a valid RMC repeatedly together with an invalid GGA/GLL from another talker or converted device; observe `_fix` alternate between valid and null while Raw data continues to show coordinates, then attempt to arm NMEA Anchor Watch.
+- Root cause: a source-scoped negative event was incorrectly applied to a source-agnostic compatibility aggregate. This regression is absent from `main`.
+- Failing test: expanded `NmeaSourceSelectionPolicyTest.freshCurrentGenerationFixWinsOverTransientTransportPresentationLabels`; existing `NmeaSourceInvalidationTest.invalidStatusMarksOnlyMatchingTransportGenerationAndMetricsInvalid` proves the authoritative registry keeps invalidation source-scoped. A real multiplexed-stream device case remains in manual QA.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Exact invalidation remains in `VesselSourceRegistry`; the source-agnostic map/Anchor aggregate now preserves its last valid observation and expires by receive time. Fresh current-generation fixes are accepted during transient CONNECTED_NO_FIX/CONNECTED_NO_DATA/STALE presentation labels, but DISCONNECTED/CONNECTING/RECONNECTING/ERROR, old-generation fixes, expired fixes and current bad HDOP/fix quality remain blocked. Production, JVM-test and Android-test Kotlin sources compile; tests were not executed in this pass.**
+- Real hardware verified: **No — connect the existing vessel stream, confirm a continuously visible NMEA position, and start Anchor Watch once.**
+- Status: **FIXED IN CODE — PRODUCTION AND TEST SOURCES COMPILE; VESSEL QA PENDING**
+
+## Finding P1-040 — GPS controls were split across Anchor, Data and Settings
+
+- Severity: **P1 / safety-source UX ambiguity**
+- User story: the sailor should have one discoverable place to select Phone/NMEA/Demo GPS and manage the Android GPS proxy, while Anchor setup only confirms which source will be used.
+- Evidence: Settings exposed Positioning and Developer Demo pages, Data exposed a separate instrument-position routing strategy, and Anchor setup exposed another Phone/NMEA radio group. Recovery actions also jumped to Settings or changed the source directly from Watch.
+- Reproduction steps: try to answer “which GPS will the next anchor session use?” by visiting Data, Settings and Set anchor; several controls use similar labels but different scopes.
+- Root cause: feature-specific controls accumulated without a single navigation owner or clear separation between safety GPS selection and App-instrument routing.
+- Failing test: updated `AnchorSafetyFlowTest` GPS-source/proxy stories; new `AnchorSetupValidationTest.anchorSetupReportsTheCentralGpsChoiceButDoesNotOfferAnotherPicker`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Data → Sources is now the only UI owner for App GPS selection, Demo GPS and the Android GPS proxy. Settings removes the duplicate Positioning and Developer entries. Anchor setup shows a read-only source/readiness summary and a single link to Data → Sources. Watch/Alarm recovery also opens the central source page. Instrument routing remains below it with explicit copy that it controls App instruments/calculations rather than Anchor GPS or NMEA publication. Production, JVM-test and Android-test Kotlin sources compile; tests were not executed in this pass.**
+- Real hardware verified: **No — verify navigation and small-screen scrolling on the phone.**
+- Status: **FIXED IN CODE — PRODUCTION AND TEST SOURCES COMPILE; MANUAL UX QA PENDING**

@@ -186,17 +186,9 @@ class NmeaOutboundLoopGuard @Inject constructor(){
         while(semantic.size>MAX_ENTRIES)semantic.removeFirst()
     }
     @Synchronized fun isRecentOutbound(sentence:String,nowElapsed:Long=SystemClock.elapsedRealtime()):Boolean{
+        if(isRecentExactOutbound(sentence,nowElapsed))return true
         prune(nowElapsed)
         val exactKey=normalize(sentence)
-        sent[exactKey]?.let{occurrences->
-            while(occurrences.firstOrNull()?.let{nowElapsed-it>QUARANTINE_MILLIS}==true)occurrences.removeFirst()
-            if(occurrences.isNotEmpty()){
-                occurrences.removeFirst()
-                semanticFingerprint(sentence,nowElapsed)?.let{candidate->semantic.firstOrNull{it.matches(candidate)}?.let(semantic::remove)}
-                return true
-            }
-        }
-        if(pending.values.any{attempt->nowElapsed-attempt.startedElapsedRealtime in 0L..PENDING_WRITE_MILLIS&&exactKey in attempt.sentences})return true
         // The exact App frame is known, but every transmitted occurrence has
         // already been matched. Do not let the broader semantic fallback hide
         // a third identical sentence from a real instrument.
@@ -227,6 +219,24 @@ class NmeaOutboundLoopGuard @Inject constructor(){
         if(nowElapsed-started !in 0L..QUARANTINE_MILLIS)return false
         semantic.remove(matching.first())
         return true
+    }
+
+    /** Only byte-equivalent output can be rejected safely at the Boat input.
+     * Semantic position/heading equality is not provenance: independent
+     * sensors mounted on the same vessel are expected to agree. */
+    @Synchronized fun isRecentExactOutbound(sentence:String,nowElapsed:Long=SystemClock.elapsedRealtime()):Boolean{
+        prune(nowElapsed)
+        val exactKey=normalize(sentence)
+        sent[exactKey]?.let{occurrences->
+            while(occurrences.firstOrNull()?.let{nowElapsed-it>QUARANTINE_MILLIS}==true)occurrences.removeFirst()
+            if(occurrences.isNotEmpty()){
+                occurrences.removeFirst()
+                semanticFingerprint(sentence,nowElapsed)?.let{candidate->semantic.firstOrNull{it.matches(candidate)}?.let(semantic::remove)}
+                return true
+            }
+        }
+        if(pending.values.any{attempt->nowElapsed-attempt.startedElapsedRealtime in 0L..PENDING_WRITE_MILLIS&&exactKey in attempt.sentences})return true
+        return false
     }
     private fun prune(now:Long){
         sent.entries.forEach{(_,occurrences)->while(occurrences.firstOrNull()?.let{now-it>QUARANTINE_MILLIS}==true)occurrences.removeFirst()}

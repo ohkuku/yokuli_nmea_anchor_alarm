@@ -18,7 +18,7 @@ data class NavigationFix(
     val hdop: Double? = null,
     val fixQuality: Int? = null,
     val satellites: Int? = null,
-    /** Receive times of the last GGA quality components. A later RMC/GLL
+    /** Receive times of the last GGA/GNS quality components. A later RMC/GLL
      * sentence may omit them without erasing their diagnostic value. Safety
      * consumers must still reject them after their own freshness window. */
     val hdopReceivedElapsedRealtime: Long? = null,

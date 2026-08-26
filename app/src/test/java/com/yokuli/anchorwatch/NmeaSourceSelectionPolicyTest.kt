@@ -53,6 +53,20 @@ class NmeaSourceSelectionPolicyTest {
         )
     }
 
+    @Test fun freshCurrentGenerationFixWinsOverTransientTransportPresentationLabels() {
+        listOf(
+            NmeaConnectionState.CONNECTED_NO_DATA,
+            NmeaConnectionState.CONNECTED_NO_FIX,
+            NmeaConnectionState.STALE,
+        ).forEach { state ->
+            assertEquals(
+                "A fresh parsed fix must not be rejected only because the transport label is $state",
+                NmeaSourceAvailability.AVAILABLE,
+                NmeaSourceSelectionPolicy.availability(state, validFix, now - 5_000, now, 15_000),
+            )
+        }
+    }
+
     @Test fun aFixFromBeforeTheCurrentConnectionCannotBeSelected() {
         assertEquals(
             NmeaSourceAvailability.NO_VALID_FIX,
@@ -139,4 +153,5 @@ class NmeaSourceSelectionPolicyTest {
             ),
         )
     }
+
 }

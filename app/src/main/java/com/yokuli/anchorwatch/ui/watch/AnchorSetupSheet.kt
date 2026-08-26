@@ -79,16 +79,14 @@ import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import java.text.DateFormat
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
-internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:AnchorageSetupReference?=null,previewPhoneGps:(Boolean)->Unit={},start:(Double,Double,AnchorWatchInput)->Unit){
+internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:AnchorageSetupReference?=null,previewPhoneGps:(Boolean)->Unit={},openGpsSettings:()->Unit={},start:(Double,Double,AnchorWatchInput)->Unit){
  DisposableEffect(Unit){previewPhoneGps(true);onDispose{previewPhoneGps(false)}}
  val now=android.os.SystemClock.elapsedRealtime();val proxyActive=GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state)
  val nmeaReady=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1000L)
- val nmeaInstrumentsConnected=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.hasInstrumentTraffic(state.connection)
  val systemReady=state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&now-it.receivedElapsedRealtime<state.settings.gpsLossSeconds*1000L&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0}==true&&!proxyActive
- // A remembered NMEA preference is not a usable position choice while the
- // current instrument stream has no fresh GPS fix. Keep that stream connected
- // and start the form from Phone GNSS instead of an impossible position source.
- var source by remember{mutableStateOf(NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode,nmeaReady))}
+ // GPS source selection is authoritative in Data -> Sources. Setup reports the
+ // resulting source but never maintains a second, transient source choice.
+ val source=NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode,nmeaReady)
  var estimate by remember{mutableStateOf(false)};var knownMethod by remember{mutableStateOf(AnchorCenterSource.CURRENT_POSITION)}
  var coordinates by remember{mutableStateOf("")};var picked by remember{mutableStateOf<LatLng?>(null)};var showMapPicker by remember{mutableStateOf(false)}
  var rangeMode by remember{mutableStateOf(AnchorRangeMode.BASIC)};var preset by remember{mutableStateOf(AnchorSafetyPreset.BALANCED)}
@@ -104,10 +102,6 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
  var submitFeedbackBaseline by remember{mutableLongStateOf(0L)}
  var submitFailure by remember{mutableStateOf<String?>(null)}
  val latestRuntimeFeedback=state.runtimeDiagnostics.lastUserFeedback
- LaunchedEffect(nmeaReady,state.settings.demoMode){
-  if(state.settings.demoMode)source=GpsDataSource.DEMO
-  else if(source==GpsDataSource.NMEA&&!nmeaReady)source=GpsDataSource.SYSTEM
- }
  LaunchedEffect(submitting,state.active?.id,latestRuntimeFeedback?.id){
   if(!submitting)return@LaunchedEffect
   if(state.active!=null){dismiss();return@LaunchedEffect}
@@ -143,8 +137,10 @@ internal fun AnchorSetupSheet(state:MainUiState,dismiss:()->Unit,reference:Ancho
   Text(tr("Set anchor watch","设置锚警"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
   if(reference!=null)Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Text(tr("Depth, rode and radius were prefilled from saved references. Re-check current conditions. No historical coordinate is used as this session's anchor.","水深、锚链和范围已按收藏参考预填。请重新核对当前环境；本次锚点不会使用任何历史坐标。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall)}
   Text(tr("Position source","定位数据源"),style=MaterialTheme.typography.titleMedium)
-  if(state.settings.demoMode)GpsSourceRow(tr("Demo GPS · locked","演示 GPS · 已锁定"),tr("Each session first captures the current real System GNSS position.","每次会话都会先获取当前真实系统 GNSS 位置。"),true,false,"setup_source_demo"){}
-  else{GpsSourceRow(tr("Phone GPS","手机 GPS"),if(proxyActive)tr("Unavailable while Android GPS Proxy is active.","Android GPS 代理开启时不可使用。")else if(systemReady)tr("GNSS ready · ±${state.systemFix?.horizontalAccuracyMeters?.toInt()?:"--"} m","GNSS 就绪 · ±${state.systemFix?.horizontalAccuracyMeters?.toInt()?:"--"} 米")else tr("Acquiring precise Phone GNSS; the NMEA instrument connection stays open.","正在获取手机精确 GNSS；NMEA 仪表连接会继续保持。"),source==GpsDataSource.SYSTEM,!proxyActive,"setup_source_system"){source=GpsDataSource.SYSTEM};HorizontalDivider();GpsSourceRow("NMEA GPS",when{nmeaReady->tr("Connected · HDOP ${state.nmeaFix?.hdop?.let{"%.1f".format(it)}?:"—"}","已连接 · HDOP ${state.nmeaFix?.hdop?.let{"%.1f".format(it)}?:"—"}");nmeaInstrumentsConnected->tr("Instruments connected, but this stream has no fresh GPS position. Phone GPS is used for Anchor Watch.","仪表数据已连接，但这条流没有新鲜 GPS 船位；锚警将使用手机 GPS。");else->tr("Connect NMEA and wait for a fresh valid fix before choosing it as the position source.","连接 NMEA 并取得新鲜有效定位后，才能把它选为定位源。")},source==GpsDataSource.NMEA,nmeaReady,"setup_source_nmea"){source=GpsDataSource.NMEA}}
+  Surface(Modifier.fillMaxWidth().testTag("anchor_position_source_summary"),color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+   Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.GpsFixed,null);Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(when(source){GpsDataSource.SYSTEM->tr("Phone GPS","手机 GPS");GpsDataSource.NMEA->"NMEA GPS";GpsDataSource.DEMO->tr("Demo GPS","演示 GPS")},fontWeight=FontWeight.SemiBold);Text(when{source==GpsDataSource.NMEA->tr("Fresh current-connection NMEA position is ready.","当前 NMEA 连接的新鲜船位已就绪。");source==GpsDataSource.SYSTEM&&state.settings.gpsDataSource==GpsDataSource.NMEA->tr("NMEA is selected but currently unavailable; the documented Phone GPS fallback will be used for this new session.","已选择 NMEA，但当前不可用；本次新会话将使用明确标示的手机 GPS 回退。");source==GpsDataSource.SYSTEM&&systemReady->tr("Precise Phone GNSS is ready.","手机精确 GNSS 已就绪。");source==GpsDataSource.DEMO->tr("Demo mode owns the source and starts from real Phone GNSS.","演示模式已接管来源，并从真实手机 GNSS 起步。");else->tr("Waiting for a usable position.","正在等待可用船位。")},style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
+   OutlinedButton(openGpsSettings,Modifier.fillMaxWidth().testTag("anchor_open_gps_sources")){Text(tr("Change in Data → Sources","前往“数据 → 来源”修改"))}
+  }}
   Text(tr("Anchor position","锚点位置"),style=MaterialTheme.typography.titleMedium)
   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(!estimate,{estimate=false},label={Text(tr("I know it","我知道锚点"))},modifier=Modifier.weight(1f));FilterChip(estimate,{estimate=true},label={Text(tr("Estimate it","自动估算"))},modifier=Modifier.weight(1f))}
   if(!estimate){Column(verticalArrangement=Arrangement.spacedBy(8.dp)){GpsSourceRow(tr("Use current position","使用当前位置"),tr("The selected source position becomes authoritative.","所选数据源当前位置将作为权威锚点。"),knownMethod==AnchorCenterSource.CURRENT_POSITION,true,"known_current"){knownMethod=AnchorCenterSource.CURRENT_POSITION};GpsSourceRow(tr("Enter coordinates","输入坐标"),tr("Decimal degrees, comma or space separated.","十进制度，可用逗号或空格分隔。"),knownMethod==AnchorCenterSource.MANUAL_COORDINATES,true,"known_manual"){knownMethod=AnchorCenterSource.MANUAL_COORDINATES};GpsSourceRow(tr("Pick on map","地图选点"),tr("Open a full-screen map and drag the anchor marker.","打开全屏地图并拖动锚点图标。"),knownMethod==AnchorCenterSource.MAP_PICK,true,"known_map"){knownMethod=AnchorCenterSource.MAP_PICK}}

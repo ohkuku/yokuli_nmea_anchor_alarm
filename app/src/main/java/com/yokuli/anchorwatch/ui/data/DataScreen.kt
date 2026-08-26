@@ -102,7 +102,7 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     LaunchedEffect(pager){snapshotFlow{pager.currentPage}.collect(vm::rememberDataSection)}
     Column(Modifier.fillMaxSize().testTag("data_page")){
         PrimaryTabRow(selectedTabIndex=pager.currentPage){
-            listOf(tr("Vessel","船舶"),tr("Input","输入"),tr("Share","共享"),tr("Sonar","声呐")).forEachIndexed{index,label->
+            listOf(tr("Sources","来源"),tr("Input","输入"),tr("Share","共享"),tr("Sonar","声呐")).forEachIndexed{index,label->
                 Tab(selected=pager.currentPage==index,onClick={scope.launch{pager.animateScrollToPage(index)}},modifier=Modifier.testTag("data_tab_${listOf("vessel","input","output","sonar")[index]}"),text={Text(label,maxLines=1)})
             }
         }
@@ -125,9 +125,15 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
     val data=state.vesselData
     var detailMetric by remember{mutableStateOf<VesselMetricId?>(null)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{PageHeader(tr("App-internal vessel data","App 内部船舶数据"),tr("Choose sources for App instruments and calculations. This page never decides what is shared: both NMEA sharing products accept only provenance-proven Phone/App-owned data and never repeat selected Boat input.","为 App 仪表和计算选择数据来源。本页不决定对外共享内容：两种 NMEA 共享功能都只接受来源可证明的手机 / App 自有数据，绝不会重复这里选中的船载输入。"))}
+        item{PageHeader(tr("Position & vessel sources","定位与船舶数据源"),tr("This is the only place to choose the App GPS source, Demo GPS and Android GPS proxy. Anchor setup only reports the choice made here.","这里是选择 App GPS 来源、演示 GPS 和 Android GPS 代理的唯一入口。下锚设置只会显示这里已经作出的选择。"))}
+        item{Column(Modifier.fillMaxWidth().testTag("data_gps_controls"),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            GpsDataSourceCard(state,vm)
+            GpsProxyCard(state,vm)
+            DeveloperSettingsCard(state,vm)
+        }}
+        item{HorizontalDivider();Text(tr("Instrument routing","仪表数据路由"),style=MaterialTheme.typography.titleMedium);Text(tr("These preferences only decide which proven sensor feeds App instruments and calculations. They do not change the GPS source selected above or publish Boat input back onto NMEA.","这里的偏好只决定哪个可信传感器供 App 仪表和计算使用，不会改变上方选择的 GPS 来源，也不会把船载输入重新发布回 NMEA。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         item{Card{Column{
-            SourceRoutingSummaryRow(tr("Position source","位置来源"),state.vesselSettings.positionPreference,data.position){detailMetric=VesselMetricId.POSITION}
+            SourceRoutingSummaryRow(tr("Instrument position routing","仪表船位路由"),state.vesselSettings.positionPreference,data.position){detailMetric=VesselMetricId.POSITION}
             HorizontalDivider(Modifier.padding(horizontal=14.dp))
             SourceRoutingSummaryRow(tr("Heading source","船首向来源"),state.vesselSettings.headingPreference,data.headingTrueDegrees){detailMetric=VesselMetricId.HEADING_TRUE}
         }}}
@@ -174,7 +180,7 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
             DetailLine(tr("Selection reason","选择原因"),observation.selectionReason?:"—")
             if(conflict?.active==true)Surface(color=MaterialTheme.colorScheme.errorContainer,shape=MaterialTheme.shapes.small){Text(tr("Source conflict: eligible sensors disagree. The App selects one and never averages them.","来源冲突：合格传感器互相矛盾。应用只选择一个，绝不会将它们平均。"),Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer,style=MaterialTheme.typography.bodySmall)}
         }}}
-        if(metric==VesselMetricId.POSITION)item{SourceRoutingCard(tr("Position source strategy","位置来源策略"),state.vesselSettings.positionPreference,data.position){vm.updateVesselDataSettings(state.vesselSettings.copy(positionPreference=it))}}
+        if(metric==VesselMetricId.POSITION)item{SourceRoutingCard(tr("Instrument position routing","仪表船位路由"),state.vesselSettings.positionPreference,data.position){vm.updateVesselDataSettings(state.vesselSettings.copy(positionPreference=it))}}
         if(metric in setOf(VesselMetricId.HEADING_TRUE,VesselMetricId.HEADING_MAGNETIC))item{SourceRoutingCard(tr("Vessel heading strategy","船艏向来源策略"),state.vesselSettings.headingPreference,data.headingTrueDegrees){vm.updateVesselDataSettings(state.vesselSettings.copy(headingPreference=it))}}
         item{Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
             Text(tr("Available sources","可用来源"),style=MaterialTheme.typography.titleMedium)
@@ -523,6 +529,9 @@ private fun ConnectionResultCard(state: MainUiState) {
                 val longitude = "%.6f".format(it.longitude)
                 Text(tr("Latest position  $latitude, $longitude", "最新位置  $latitude, $longitude"))
             } ?: Text(tr("No parsed GPS position yet", "暂时没有解析出的 GPS 位置"))
+            state.diagnostics.lastPositionRejectionReason?.let{reason->
+                Text(tr("Latest position rejection: ${positionRejectionLabel(reason)}","最近船位拒绝：${positionRejectionLabel(reason)}"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+            }
             Text(
                 tr(
                     "Open Raw data above for the NMEA stream.",
@@ -558,6 +567,7 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
             DiagnosticsRow(tr("True / apparent wind","真风 / 视风"),"${heldNmeaValue(trueWind?.value,trueWind?.receivedElapsedRealtime,"kn",now)}  ·  ${heldNmeaValue(apparentWind?.value,apparentWind?.receivedElapsedRealtime,"kn",now)}")
             DiagnosticsRow(tr("Depth","水深"),heldNmeaValue(depth?.depthMeters,depth?.receivedElapsedRealtime,"m",now,3_000L))
             DiagnosticsRow(tr("HDOP / provider","HDOP / 提供者"),"${heldNmeaValue(state.nmeaFix?.hdop,state.nmeaFix?.hdopReceivedElapsedRealtime,"",now)}  ·  ${state.nmeaFix?.positionProvider?.name?.let{diagnosticState(it)}?:"—"}")
+            state.diagnostics.lastPositionRejectionReason?.let{reason->Surface(color=MaterialTheme.colorScheme.errorContainer,shape=MaterialTheme.shapes.small){Text(tr("Latest position rejection: ${positionRejectionLabel(reason)}","最近船位拒绝：${positionRejectionLabel(reason)}"),Modifier.fillMaxWidth().padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer,style=MaterialTheme.typography.bodySmall)}}
             Text(tr("A blank field in a valid sentence means unchanged. That same physical source refreshes its last value; an explicit invalid status clears it, and values are never borrowed across instruments or reconnects.","有效语句中的空字段表示数值未变化。同一物理来源会刷新上一值；明确的无效状态会清除该值，且不同仪器或重连代次之间绝不会互相借值。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }}}
         item{RuntimeHealthCard(state,tileDiagnostics,healthExpanded){healthExpanded=!healthExpanded}}
@@ -648,6 +658,21 @@ private fun heldNmeaValue(value:Double?,received:Long?,unit:String,now:Long,fres
 
 @Composable private fun DiagnosticsSection(title:String){Text(title,style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary,fontWeight=FontWeight.SemiBold)}
 @Composable private fun DiagnosticsRow(label:String,value:String){Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(2.dp)){Text(label,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value,style=MaterialTheme.typography.bodyMedium)}}
+@Composable private fun positionRejectionLabel(code:String):String{
+    val detail=code.substringAfter(':',"")
+    return when(code.substringBefore(':')){
+        "CHECKSUM_REQUIRED"->tr("$detail has no checksum while ‘Require checksum’ is enabled","$detail 没有校验和，但当前开启了“要求校验和”")
+        "CHECKSUM_MISMATCH"->tr("$detail checksum does not match","$detail 校验和不匹配")
+        "MALFORMED_POSITION"->tr("$detail is unsupported or malformed","$detail 不受支持或格式不完整")
+        "EXPLICIT_NO_FIX"->tr("$detail explicitly reports no valid fix","$detail 明确报告当前无有效定位")
+        "NO_POSITION_UPDATE"->tr("$detail contains no complete coordinate update","$detail 没有携带完整的新坐标")
+        "FIX_QUALITY_ZERO"->tr("$detail reports fix quality 0","$detail 报告定位质量为 0")
+        "POOR_HDOP"->tr("Current HDOP $detail exceeds the safety limit 5.0","当前 HDOP $detail 超过安全门槛 5.0")
+        "QUALITY_REJECTED"->tr("$detail position quality was rejected","$detail 船位质量未通过")
+        "EXACT_APP_TX_ECHO"->tr("$detail is byte-identical to a recent App transmission","$detail 与应用刚发送的数据逐字相同，已按回显隔离")
+        else->code
+    }
+}
 @Composable private fun diagnosticState(value:String):String=when(value){
     "SYSTEM"->tr("System GPS","系统 GPS");"NMEA"->"NMEA GPS";"DEMO"->tr("Demo GPS","演示 GPS")
     "ACCEPTED"->tr("Accepted","可信");"QUARANTINED"->tr("Quarantined","隔离");"REJECTED"->tr("Rejected","拒绝");"PENDING"->tr("Pending","等待中")

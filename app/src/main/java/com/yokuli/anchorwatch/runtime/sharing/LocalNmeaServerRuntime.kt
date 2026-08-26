@@ -1,7 +1,6 @@
 package com.yokuli.anchorwatch.runtime.sharing
 
 import android.os.SystemClock
-import com.yokuli.anchorwatch.data.nmea.output.NmeaOutboundLoopGuard
 import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerSettings
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sharing.SharingServerState
@@ -55,7 +54,6 @@ class LocalNmeaServerRuntime @Inject constructor(
     private val vesselDataHub:VesselDataHub,
     private val vesselPositionRepository:VesselPositionRepository,
     private val encoder:AnchorWatchNmeaFeedEncoder,
-    private val loopGuard:NmeaOutboundLoopGuard,
     private val resources:RuntimeResourceManager,
     vesselAttitude:PhoneVesselAttitudeRepository,
 ){
@@ -132,9 +130,7 @@ class LocalNmeaServerRuntime @Inject constructor(
             batch.sentences.forEach{sentence->
                 recent.addLast("$timestamp  [${stream.name}] ${sentence.trim()}")
                 while(recent.size>RECENT_LIMIT)recent.removeFirst()
-                val echoAttempt=loopGuard.beginWrite(listOf(sentence),now)
                 val receivers=server.publish(sentence)
-                loopGuard.completeWrite(echoAttempt,receivers>0,now)
                 if(receivers>0)queuedCount++
             }
         }

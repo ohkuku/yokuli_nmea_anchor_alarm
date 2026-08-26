@@ -10,6 +10,7 @@ import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertTrue
 
 class AnchorSetupValidationTest{
     @get:Rule val compose=createComposeRule()
@@ -23,5 +24,18 @@ class AnchorSetupValidationTest{
         compose.onNodeWithTag("start_anchor_watch").performScrollTo().performClick()
         compose.onNodeWithTag("anchor_setup_validation_error").assertExists()
         compose.onNodeWithTag("anchor_coordinates").assertExists()
+    }
+
+    @Test fun anchorSetupReportsTheCentralGpsChoiceButDoesNotOfferAnotherPicker(){
+        val now=SystemClock.elapsedRealtime()
+        val fix=NavigationFix(-36.8485,174.7633,receivedElapsedRealtime=now,horizontalAccuracyMeters=3.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="TEST_GNSS",valid=true)
+        var opened=false
+        compose.setContent{YokuliTheme{AnchorSetupSheet(MainUiState(systemFix=fix,fix=fix,settingsReady=true),dismiss={},openGpsSettings={opened=true}){_,_,_->}}}
+
+        compose.onNodeWithTag("anchor_position_source_summary").assertExists()
+        compose.onNodeWithTag("setup_source_system").assertDoesNotExist()
+        compose.onNodeWithTag("setup_source_nmea").assertDoesNotExist()
+        compose.onNodeWithTag("anchor_open_gps_sources").performClick()
+        assertTrue(opened)
     }
 }

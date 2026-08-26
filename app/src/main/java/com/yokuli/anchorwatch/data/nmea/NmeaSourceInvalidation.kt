@@ -18,7 +18,7 @@ data class NmeaSourceInvalidation(
 object NmeaInvalidationPolicy {
     fun affectedMetrics(sentenceType:String):Set<VesselMetricId> = when(sentenceType.uppercase()){
         "RMC"->setOf(VesselMetricId.POSITION,VesselMetricId.SOG,VesselMetricId.COG)
-        "GGA"->setOf(VesselMetricId.POSITION)
+        "GGA","GNS"->setOf(VesselMetricId.POSITION)
         "GLL"->setOf(VesselMetricId.POSITION)
         "MWV"->setOf(VesselMetricId.APPARENT_WIND_ANGLE,VesselMetricId.APPARENT_WIND_SPEED,VesselMetricId.TRUE_WIND_ANGLE,VesselMetricId.TRUE_WIND_SPEED)
         "ROT"->setOf(VesselMetricId.RATE_OF_TURN)

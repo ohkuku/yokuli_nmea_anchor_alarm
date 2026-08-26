@@ -76,7 +76,7 @@ import com.yokuli.anchorwatch.data.linz.LinzDepthPresentation
 import com.yokuli.anchorwatch.data.linz.LinzDepthStatus
 
 @Composable
-internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit, adjust:()->Unit,manageVesselData:()->Unit,resetCentreAnalysis:()->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewNearby:(List<Long>)->Unit,nearbyActions:SavedAnchorageCardActions,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit,recalculateCentre:()->Unit,reconnectNmea:()->Unit,openNmea:()->Unit,switchToSystemGps:()->Unit) {
+internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit, adjust:()->Unit,manageVesselData:()->Unit,resetCentreAnalysis:()->Unit,conditionUpdate:(com.yokuli.anchorwatch.domain.condition.ConditionGuardConfig)->Unit,resetWindBaseline:()->Unit,viewNearby:(List<Long>)->Unit,nearbyActions:SavedAnchorageCardActions,pause:()->Unit,resume:()->Unit,lift:()->Unit,openAnchorMap:()->Unit,recalculateCentre:()->Unit,reconnectNmea:()->Unit,openNmea:()->Unit,openGpsSources:()->Unit) {
     val fix = state.fix; val active = state.active; val now=android.os.SystemClock.elapsedRealtime()
     var showHealth by remember{mutableStateOf(false)};var showDepthDetails by remember{mutableStateOf(false)};var showConditions by remember{mutableStateOf(false)};var confirmAnalysisReset by remember{mutableStateOf(false)}
     var startBlocker by remember{mutableStateOf<String?>(null)}
@@ -154,11 +154,10 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
             paused=active?.paused==true,
             connection=state.connection,
             autoReconnect=state.settings.profile.autoReconnect,
-            systemAvailable=!GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state),
             pause=pause,
             reconnect=reconnectNmea,
             openNmea=openNmea,
-            switchToSystemGps=switchToSystemGps,
+            openGpsSources=openGpsSources,
         )
         if(active?.paused==true&&active.positionSource!=GpsDataSource.DEMO.name){
             val missing=buildList{
@@ -208,11 +207,10 @@ private fun NmeaWatchRecoveryCard(
     paused:Boolean,
     connection:NmeaConnectionState,
     autoReconnect:Boolean,
-    systemAvailable:Boolean,
     pause:()->Unit,
     reconnect:()->Unit,
     openNmea:()->Unit,
-    switchToSystemGps:()->Unit,
+    openGpsSources:()->Unit,
 ){
     Surface(
         modifier=Modifier.fillMaxWidth().testTag("nmea_watch_recovery"),
@@ -243,8 +241,7 @@ private fun NmeaWatchRecoveryCard(
             )
             if(!paused)Button(pause,Modifier.fillMaxWidth().testTag("pause_for_source_recovery")){Icon(Icons.Default.PauseCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Pause safely to recover","安全暂停并恢复"))}
             else{
-                Button(switchToSystemGps,Modifier.fillMaxWidth().testTag("recover_with_system_gps"),enabled=systemAvailable){Icon(Icons.Default.GpsFixed,null);Spacer(Modifier.width(6.dp));Text(tr("Use Phone GPS for this session","本会话改用手机 GPS"))}
-                if(!systemAvailable)Text(tr("Phone GPS is unavailable while the global NMEA GPS proxy is active. Disable the proxy first.","全局 NMEA GPS 代理开启时，手机 GPS 不是独立来源；请先关闭代理。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+                Button(openGpsSources,Modifier.fillMaxWidth().testTag("recover_with_system_gps")){Icon(Icons.Default.GpsFixed,null);Spacer(Modifier.width(6.dp));Text(tr("Open GPS source recovery","打开 GPS 数据源恢复"))}
             }
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 OutlinedButton(reconnect,Modifier.weight(1f)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(4.dp));Text(tr("Reconnect","重连"))}

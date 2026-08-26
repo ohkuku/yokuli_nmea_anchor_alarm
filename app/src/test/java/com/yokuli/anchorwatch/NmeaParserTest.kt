@@ -8,6 +8,12 @@ class NmeaParserTest{private val p=Nmea0183Parser()
  @Test fun rmcValidAndInvalid(){val a=p.parse("\$GPRMC,123519,A,4807.038,N,01131.000,E,22.4,84.4,230394,,,A",false)!!;assertTrue(a.position!!.valid);assertEquals(48.1173,a.position.latitude,1e-5);val v=p.parse("\$GNRMC,123519,V,4807.038,N,01131.000,E,3.2,91.0,230394,,,N",false)!!;assertFalse(v.position!!.valid);assertNull(v.sog);assertNull(v.cog)}
  @Test fun rmcPreservesFractionalSeconds(){val first=p.parse("\$GPRMC,123519.10,A,4807.038,N,01131.000,E,0,0,230394,,,A",false)!!.utcMillis!!;val second=p.parse("\$GPRMC,123519.35,A,4807.038,N,01131.000,E,0,0,230394,,,A",false)!!.utcMillis!!;assertEquals(250L,second-first)}
  @Test fun ggaAndGll(){val g=p.parse("\$GNGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,",false)!!;assertEquals(8,g.position!!.satellites);assertEquals(545.4,g.position.altitudeMeters!!,.01);assertTrue(p.parse("\$GPGLL,4916.45,N,12311.12,W,225444,A",false)!!.position!!.valid)}
+ @Test fun modernMultiConstellationGnsProvidesPositionAndExplicitNoFix(){
+  val valid=p.parse("\$GNGNS,092750.00,3650.9100,S,17445.8000,E,AA,12,0.8,3.4,46.9,,",false)!!
+  assertTrue(valid.position!!.valid);assertEquals(-36.8485,valid.position.latitude,1e-4);assertEquals(174.763333,valid.position.longitude,1e-4);assertEquals(12,valid.satellites);assertEquals(.8,valid.hdop!!,.01)
+  val invalid=p.parse("\$GNGNS,092751.00,3650.9100,S,17445.8000,E,NN,00,9.9,,,,",false)!!
+  assertFalse(invalid.position!!.valid);assertEquals(0,invalid.fixQuality);assertFalse(invalid.holdAllowed)
+ }
  @Test fun auxiliary(){assertEquals(12.3,p.parse("\$GPVTG,84.4,T,,M,12.3,N,22.8,K",false)!!.sog!!,.01);assertEquals(123.4,p.parse("\$IIHDT,123.4,T",false)!!.trueHeading!!,.01);assertEquals(5.2,p.parse("\$IIDPT,5.2,0",false)!!.depth!!,.01);assertEquals(5.0,p.parse("\$IIDBT,16.4,f,5.0,M,2.7,F",false)!!.depth!!,.01)}
  @Test fun vhwProvidesPhysicalHeadingAndSpeedThroughWater(){val value=p.parse("\$IIVHW,123.4,T,120.0,M,5.6,N,10.4,K",false)!!;assertEquals(123.4,value.trueHeading!!,.01);assertEquals(120.0,value.magneticHeading!!,.01);assertEquals(5.6,value.speedThroughWaterKnots!!,.01)}
  @Test fun recognizedSentencesWithMissingFieldsAreNoUpdateNotInvalid(){

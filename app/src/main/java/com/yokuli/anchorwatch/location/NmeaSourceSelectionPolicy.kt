@@ -13,6 +13,19 @@ enum class NmeaSourceAvailability {
 
 /** A saved endpoint is not a usable GPS source until its live stream has a fresh position. */
 object NmeaSourceSelectionPolicy {
+    private val LIVE_TRANSPORT_STATES = setOf(
+        NmeaConnectionState.CONNECTED,
+        NmeaConnectionState.CONNECTED_NO_DATA,
+        NmeaConnectionState.CONNECTED_NO_FIX,
+        NmeaConnectionState.STALE,
+    )
+
+    /** Connection labels describe transport presentation, not position truth.
+     * A parsed current-generation fix can arrive immediately before the state
+     * promotion to CONNECTED, or while a watchdog label is being corrected. */
+    fun hasLiveTransportState(connectionState: NmeaConnectionState): Boolean =
+        connectionState in LIVE_TRANSPORT_STATES
+
     fun availability(
         connectionState: NmeaConnectionState,
         fix: NavigationFix?,
@@ -20,7 +33,7 @@ object NmeaSourceSelectionPolicy {
         nowElapsedRealtime: Long,
         maximumAgeMillis: Long,
     ): NmeaSourceAvailability {
-        if (connectionState != NmeaConnectionState.CONNECTED) return NmeaSourceAvailability.NOT_CONNECTED
+        if (!hasLiveTransportState(connectionState)) return NmeaSourceAvailability.NOT_CONNECTED
         if (fix?.valid != true || connectionStartedElapsedRealtime == null || fix.receivedElapsedRealtime < connectionStartedElapsedRealtime) {
             return NmeaSourceAvailability.NO_VALID_FIX
         }
@@ -50,7 +63,7 @@ object NmeaSourceSelectionPolicy {
         connectionStartedElapsedRealtime,
         nowElapsedRealtime,
         maximumAgeMillis,
-    ) == NmeaSourceAvailability.AVAILABLE && NmeaFixQualityPolicy.allowsContinuation(fix)
+    ) == NmeaSourceAvailability.AVAILABLE && NmeaFixQualityPolicy.allowsContinuation(fix, nowElapsedRealtime)
 }
 
 /** Resolves the position source for a new anchor session without changing the

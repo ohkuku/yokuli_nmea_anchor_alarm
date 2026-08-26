@@ -208,6 +208,17 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(guard.isRecentOutbound("\$HCHDT,124.00,T*7F",2_000))
     }
 
+    @Test fun boatInputUsesExactEchoEvidenceAndNeverRejectsANearbyIndependentGps(){
+        val guard=NmeaOutboundLoopGuard()
+        guard.record(listOf("\$GNRMC,120000.00,A,3650.9100,S,17445.8000,E,0.00,0.00,260826,,,A*00\r\n"),1_000)
+        guard.record(listOf("\$GNRMC,120001.00,A,3650.9101,S,17445.8001,E,0.00,0.00,260826,,,A*00\r\n"),1_200)
+
+        assertFalse(
+            "A real boat GPS on the same vessel is not an App echo merely because its coordinates agree",
+            guard.isRecentExactOutbound("\$GPRMC,120001,A,3650.9101,S,17445.8001,E,0.0,0.0,260826,,,A*7F",2_000),
+        )
+    }
+
     @Test fun semanticEchoAlsoConsumesOneOutboundOccurrence(){
         val guard=NmeaOutboundLoopGuard()
         guard.record(listOf("\$IIHDT,123.00,T*00\r\n","\$IIHDT,123.02,T*00\r\n"),1_000)

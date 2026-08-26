@@ -57,7 +57,7 @@ data class NmeaUpdate(val position:NavigationFix?=null,val sog:Double?=null,val 
  * generation. It therefore cannot borrow depth/heading/wind from another
  * instrument, endpoint or reconnect generation.
  *
- * Explicit negative validity (RMC/GLL/MWV V, GGA quality 0) clears that source;
+ * Explicit negative validity (RMC/GLL/MWV V, GGA quality 0, GNS mode N) clears that source;
  * only an ordinary blank field is treated as "unchanged".
  */
 class NmeaUpdateRetainer {
@@ -133,7 +133,7 @@ class Nmea0183Parser {
   if(!NmeaChecksum.validate(line,requireChecksum)) return null
   val body=line.substring(1).substringBefore('*'); val f=body.split(','); if(f[0].length<3)return null
   val type=f[0].takeLast(3)
-  val update=when(type){"RMC"->rmc(f,line,elapsed);"GGA"->gga(f,line,elapsed);"GLL"->gll(f,line,elapsed);"VTG"->NmeaUpdate(sog=f.getOrNull(5).d(),cog=f.getOrNull(1).d(),type="VTG");"VHW"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),magneticHeading=f.getOrNull(3).d(),speedThroughWaterKnots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(.539957),type="VHW");"HDT"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),type="HDT");"HDM"->NmeaUpdate(magneticHeading=f.getOrNull(1).d(),type="HDM");"HDG"->hdg(f);"DPT"->depthDpt(f,line,elapsed);"DBT"->depthDbt(f,line,elapsed);"MWD"->mwd(f);"MWV"->mwv(f);"VWR"->relativeWind(f,false);"VWT"->relativeWind(f,true);"MDA"->mda(f);"ZDA"->zda(f);in FIELD_BUS_TYPES->NmeaUpdate(type=type);else->null}
+  val update=when(type){"RMC"->rmc(f,line,elapsed);"GGA"->gga(f,line,elapsed);"GNS"->gns(f,line,elapsed);"GLL"->gll(f,line,elapsed);"VTG"->NmeaUpdate(sog=f.getOrNull(5).d(),cog=f.getOrNull(1).d(),type="VTG");"VHW"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),magneticHeading=f.getOrNull(3).d(),speedThroughWaterKnots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(.539957),type="VHW");"HDT"->NmeaUpdate(trueHeading=f.getOrNull(1).d(),type="HDT");"HDM"->NmeaUpdate(magneticHeading=f.getOrNull(1).d(),type="HDM");"HDG"->hdg(f);"DPT"->depthDpt(f,line,elapsed);"DBT"->depthDbt(f,line,elapsed);"MWD"->mwd(f);"MWV"->mwv(f);"VWR"->relativeWind(f,false);"VWT"->relativeWind(f,true);"MDA"->mda(f);"ZDA"->zda(f);in FIELD_BUS_TYPES->NmeaUpdate(type=type);else->null}
   return update?.copy(sentenceId=f[0].uppercase())
  }
  private fun depthDpt(f:List<String>,raw:String,e:Long):NmeaUpdate {
@@ -155,6 +155,13 @@ class Nmea0183Parser {
   return NmeaUpdate(position,sog,cog,utcMillis=utc,type="RMC",holdAllowed=status!=false)
  }
  private fun gga(f:List<String>,raw:String,e:Long):NmeaUpdate { val p=position(f,2,3,4,5);val q=f.getOrNull(6)?.toIntOrNull();val hdop=f.getOrNull(8).d();val satellites=f.getOrNull(7)?.toIntOrNull();val position=if(q==null)null else p?.let{NavigationFix(it.first,it.second,null,e,hdop=hdop,fixQuality=q,satellites=satellites,altitudeMeters=f.getOrNull(9).d(),sourceSentence=raw,valid=q>0)};return NmeaUpdate(position=position,hdop=hdop,fixQuality=q,satellites=satellites,type="GGA",holdAllowed=q!=0) }
+ private fun gns(f:List<String>,raw:String,e:Long):NmeaUpdate {
+  val p=position(f,2,3,4,5);val modes=f.getOrNull(6)?.trim()?.uppercase().orEmpty();val explicit=modes.isNotEmpty();val valid=explicit&&modes.any{it!='N'}
+  val quality=when{!explicit->null;!valid->0;'R' in modes->4;'F' in modes->5;'D' in modes->2;else->1}
+  val hdop=f.getOrNull(8).d();val satellites=f.getOrNull(7)?.toIntOrNull()
+  val fix=if(!explicit)null else p?.let{NavigationFix(it.first,it.second,null,e,hdop=hdop,fixQuality=quality,satellites=satellites,altitudeMeters=f.getOrNull(9).d(),sourceSentence=raw,valid=valid)}
+  return NmeaUpdate(position=fix,hdop=hdop,fixQuality=quality,satellites=satellites,type="GNS",holdAllowed=!explicit||valid)
+ }
  private fun gll(f:List<String>,raw:String,e:Long):NmeaUpdate { val p=position(f,1,2,3,4);val status=validity(f.getOrNull(6),"A","V");return NmeaUpdate(if(status==null)null else p?.let{NavigationFix(it.first,it.second,null,e,sourceSentence=raw,valid=status)},type="GLL",holdAllowed=status!=false) }
  private fun hdg(f:List<String>):NmeaUpdate { val mag=f.getOrNull(1).d(); val variation=f.getOrNull(4).d()?.let{if(f.getOrNull(5).equals("W",true))-it else it}; return NmeaUpdate(trueHeading=if(mag!=null&&variation!=null)(mag+variation+360)%360 else null,magneticHeading=mag,magneticVariationDegrees=variation,type="HDG") }
  private fun mwd(f:List<String>):NmeaUpdate { val knots=f.getOrNull(5).d()?:f.getOrNull(7).d()?.times(1.943844);return NmeaUpdate(trueWindDirection=f.getOrNull(1).d(),windSpeedKnots=knots,trueWindSpeedKnots=knots,type="MWD") }
@@ -184,4 +191,4 @@ class Nmea0183Parser {
  companion object { private val FIELD_BUS_TYPES=setOf("VLW","ROT","RSA","MTW","MTA","VDR","RMB","BWC","BWR","BOD","XTE","APB","XDR") }
 }
 
-data class NmeaDiagnostics(val bytes:Long=0,val validSentences:Long=0,val invalidSentences:Long=0,val checksumErrors:Long=0,val lastPacketElapsed:Long?=null,val lastFixElapsed:Long?=null,val lastByType:Map<String,String> = emptyMap(),val raw:List<String> = emptyList(),val echoedAppTxSentences:Long=0)
+data class NmeaDiagnostics(val bytes:Long=0,val validSentences:Long=0,val invalidSentences:Long=0,val checksumErrors:Long=0,val lastPacketElapsed:Long?=null,val lastFixElapsed:Long?=null,val lastByType:Map<String,String> = emptyMap(),val raw:List<String> = emptyList(),val echoedAppTxSentences:Long=0,val lastPositionRejectionReason:String?=null)

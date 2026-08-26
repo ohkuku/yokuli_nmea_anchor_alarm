@@ -38,7 +38,7 @@ class P0OperabilityComposeTest{
         compose.setContent{
             YokuliTheme{WatchPanel(
                 state=MainUiState(settingsReady=false),boatHeading=null,arm={},adjust={},manageVesselData={},resetCentreAnalysis={},conditionUpdate={_ ->},resetWindBaseline={},viewNearby={_ ->},
-                nearbyActions=SavedAnchorageCardActions({_ ->},{_ ->},{_ ->}),pause={},resume={},lift={},openAnchorMap={},recalculateCentre={},reconnectNmea={},openNmea={},switchToSystemGps={},
+                nearbyActions=SavedAnchorageCardActions({_ ->},{_ ->},{_ ->}),pause={},resume={},lift={},openAnchorMap={},recalculateCentre={},reconnectNmea={},openNmea={},openGpsSources={},
             )}
         }
         compose.onNodeWithTag("set_anchor_primary").assertIsDisplayed().assertIsEnabled().performClick()

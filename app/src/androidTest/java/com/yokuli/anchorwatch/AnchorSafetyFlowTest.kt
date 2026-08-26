@@ -384,9 +384,8 @@ class AnchorSafetyFlowTest {
                 assertEquals(GpsDataSource.NMEA,selected.gpsDataSource)
                 assertTrue(!selected.demoMode)
                 assertEquals("Save/connect must retain one formal RX socket, not open a disposable preflight client",1,server.accepted.get())
-                compose.onNodeWithText("Settings").performClick()
-                compose.onNodeWithTag("settings_list").performScrollToIndex(3)
-                compose.onNodeWithTag("settings_positioning").performClick()
+                compose.onNodeWithTag("data_tab_vessel").performClick()
+                compose.onNodeWithTag("data_gps_controls").performScrollTo()
                 compose.onNodeWithTag("gps_source_nmea").assertIsEnabled()
             }
         }
@@ -421,14 +420,13 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun disconnectedNmeaSourceIsDisabledInSettings() = runBlocking<Unit> {
+    @Test fun disconnectedNmeaSourceIsDisabledInDataSources() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM))
         navigation.disconnectAll()
         ActivityScenario.launch(MainActivity::class.java).use {
-            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithText("Settings").performClick()
-            compose.onNodeWithTag("settings_list").performScrollToIndex(3)
-            compose.onNodeWithTag("settings_positioning").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Data").performClick()
+            compose.onNodeWithTag("data_tab_vessel").performClick()
             compose.onNodeWithTag("gps_source_nmea").assertIsNotEnabled()
             compose.onNodeWithText("Connect the NMEA server before selecting this source.").assertExists()
             assertEquals(GpsDataSource.SYSTEM,preferences.settings.first().gpsDataSource)
@@ -455,9 +453,7 @@ class AnchorSafetyFlowTest {
                 compose.onNodeWithTag("nmea_connect_input").performScrollTo().performClick()
                 withTimeout(15_000){navigation.connectionState.first{it==NmeaConnectionState.CONNECTED}}
                 assertEquals(GpsDataSource.DEMO,preferences.settings.first().gpsDataSource)
-                compose.onNodeWithText("Settings").performClick()
-                compose.onNodeWithTag("settings_list").performScrollToIndex(3)
-                compose.onNodeWithTag("settings_positioning").performClick()
+                compose.onNodeWithTag("data_tab_vessel").performClick()
                 compose.onNodeWithTag("gps_source_demo").assertIsNotEnabled()
                 compose.onNodeWithTag("gps_source_system").assertDoesNotExist()
                 compose.onNodeWithTag("gps_source_nmea").assertDoesNotExist()
@@ -468,12 +464,12 @@ class AnchorSafetyFlowTest {
     @Test fun proxyButtonExplainsWhyItCannotStart() = runBlocking<Unit> {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.NMEA))
         ActivityScenario.launch(MainActivity::class.java).use {
-            compose.waitUntil(5_000){compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithText("Settings").performClick()
-            compose.onNodeWithTag("settings_positioning").performScrollTo().performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("Data").performClick()
+            compose.onNodeWithTag("data_tab_vessel").performClick()
             compose.onNodeWithText("Enable global GPS proxy").performScrollTo().performClick()
             compose.onNodeWithText("Connect the NMEA server and wait for a fresh valid position before enabling the global proxy.").assertExists()
-            compose.onNodeWithText("Select mock location app → Anchor Watch.",substring=true).assertExists()
+            compose.onNodeWithText("Select mock location app → Boat Watch.",substring=true).assertExists()
         }
     }
 
@@ -532,11 +528,9 @@ class AnchorSafetyFlowTest {
                 "settings_vessel" to 2,
                 "settings_phone_sensors" to 2,
                 "settings_depth_sounder" to 2,
-                "settings_positioning" to 3,
                 "settings_map_depth" to 3,
                 "settings_background" to 4,
                 "settings_storage_support" to 4,
-                "settings_developer" to 5,
             )
             pages.forEach{(tag,index)->
                 compose.onNodeWithTag("settings_list").performScrollToIndex(index)
@@ -548,6 +542,11 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("settings_language").performClick()
             compose.onNodeWithTag("language_en").assertExists().performClick()
             compose.onNodeWithText("Enable global GPS proxy").assertDoesNotExist()
+            compose.onNodeWithTag("settings_positioning").assertDoesNotExist()
+            compose.onNodeWithTag("settings_developer").assertDoesNotExist()
+            compose.onNodeWithText("Data").performClick()
+            compose.onNodeWithTag("data_tab_vessel").performClick()
+            compose.onNodeWithTag("data_gps_controls").assertExists()
         }
     }
 

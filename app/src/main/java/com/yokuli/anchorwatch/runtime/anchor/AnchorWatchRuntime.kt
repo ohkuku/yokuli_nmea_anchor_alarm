@@ -49,8 +49,7 @@ import com.yokuli.anchorwatch.location.DemoSonarGenerator
 import com.yokuli.anchorwatch.location.GlobalMockLocationManager
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.location.IntegrityAcceptedFix
-import com.yokuli.anchorwatch.location.NmeaFixQualityPolicy
-import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
+import com.yokuli.anchorwatch.location.NmeaPositionAwaiter
 import com.yokuli.anchorwatch.location.PhoneHeadingRepository
 import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.runtime.MonotonicClock
@@ -267,10 +266,9 @@ class AnchorWatchRuntime(
     private suspend fun awaitUsableStartFix(source:GpsDataSource,settings:AppSettings):NavigationFix?{
         val lossMillis=settings.gpsLossSeconds*1_000L
         fun systemUsable(candidate:NavigationFix?)=candidate?.valid==true&&candidate.positionProvider==PositionProvider.ANDROID_GNSS&&(candidate.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&monotonicClock.elapsedRealtime()-candidate.receivedElapsedRealtime in 0L until lossMillis
-        fun nmeaUsable(candidate:NavigationFix?)=NmeaSourceSelectionPolicy.isUsablePosition(navigation.connectionState.value,candidate,navigation.connectionStartedElapsed.value,monotonicClock.elapsedRealtime(),lossMillis)&&NmeaFixQualityPolicy.allowsContinuation(candidate)
         return when(source){
             GpsDataSource.NMEA->{
-                navigation.fix.value.takeIf(::nmeaUsable)?:withTimeoutOrNull(15_000L){navigation.fix.filterNotNull().filter(::nmeaUsable).first()}
+                NmeaPositionAwaiter.awaitUsable(navigation.connectionState,navigation.fix,navigation.connectionStartedElapsed,15_000L,lossMillis,monotonicClock::elapsedRealtime)
             }
             GpsDataSource.SYSTEM,GpsDataSource.DEMO->{
                 if(!host.enableSystemGps())null else systemLocation.fix.value.takeIf(::systemUsable)?:withTimeoutOrNull(15_000L){systemLocation.fix.filterNotNull().filter(::systemUsable).first()}
@@ -466,12 +464,7 @@ class AnchorWatchRuntime(
             when(requested){
                 GpsDataSource.NMEA->{
                     nmeaRuntime.ensureConnected(settings.profile)
-                    withTimeoutOrNull(10_000){navigation.fix.filterNotNull().filter{candidate->
-                        navigation.connectionState.value==NmeaConnectionState.CONNECTED&&
-                            navigation.connectionStartedElapsed.value?.let{candidate.receivedElapsedRealtime>=it}==true&&
-                            candidate.valid&&NmeaFixQualityPolicy.allowsContinuation(candidate)&&
-                            monotonicClock.elapsedRealtime()-candidate.receivedElapsedRealtime in 0L until maximumAge
-                    }.first()}
+                    NmeaPositionAwaiter.awaitUsable(navigation.connectionState,navigation.fix,navigation.connectionStartedElapsed,10_000L,maximumAge,monotonicClock::elapsedRealtime)
                 }
                 GpsDataSource.SYSTEM->{
                     temporarySystemClaim=true
@@ -544,7 +537,7 @@ class AnchorWatchRuntime(
                     dao.insertEvent(AlarmEventEntity(sessionId=current.id,timestamp=wallClock.currentTimeMillis(),type="NMEA_RECONNECT_CONFIRMED_BY_RESUME"))
                 }
                 nmeaRuntime.ensureConnected(settings.profile)
-                withTimeoutOrNull(resumeWaitMillis){navigation.fix.filterNotNull().filter{candidate->NmeaSourceSelectionPolicy.isUsablePosition(navigation.connectionState.value,candidate,navigation.connectionStartedElapsed.value,monotonicClock.elapsedRealtime(),lossMillis)&&NmeaFixQualityPolicy.allowsContinuation(candidate)}.first()}
+                NmeaPositionAwaiter.awaitUsable(navigation.connectionState,navigation.fix,navigation.connectionStartedElapsed,resumeWaitMillis,lossMillis,monotonicClock::elapsedRealtime)
             }
             GpsDataSource.SYSTEM->{if(!host.enableSystemGps())null else systemLocation.fix.value?.takeIf{it.valid&&it.positionProvider==PositionProvider.ANDROID_GNSS&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&monotonicClock.elapsedRealtime()-it.receivedElapsedRealtime in 0L until lossMillis}?:withTimeoutOrNull(resumeWaitMillis){systemLocation.fix.filterNotNull().filter{it.valid&&it.positionProvider==PositionProvider.ANDROID_GNSS&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&monotonicClock.elapsedRealtime()-it.receivedElapsedRealtime in 0L until lossMillis}.first()}}
             GpsDataSource.DEMO->{if(!host.enableSystemGps())null else demoLocation.resume()?:demoLocation.start(current.learningReferenceLatitude?:current.anchorLatitude,current.learningReferenceLongitude?:current.anchorLongitude,runCatching{AnchorPlacementMode.valueOf(current.placementMode)}.getOrDefault(AnchorPlacementMode.CENTER_DROP),settings.demoScenario,current.alarmRadiusMeters,settings.demoSpeedMultiplier,seed=demoSeed(current))}

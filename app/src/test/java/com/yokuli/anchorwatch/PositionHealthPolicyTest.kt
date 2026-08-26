@@ -22,4 +22,20 @@ class PositionHealthPolicyTest {
         assertEquals(false,NmeaFixQualityPolicy.allowsContinuation(unknown.copy(hdop=7.0)))
         assertEquals(false,NmeaFixQualityPolicy.allowsContinuation(unknown.copy(fixQuality=0)))
     }
+
+    @Test fun anOldBadGgaQualityDoesNotPoisonANewerValidRmcPosition(){
+        val rmc=NavigationFix(
+            1.0,2.0,
+            receivedElapsedRealtime=10_000,
+            hdop=7.0,
+            fixQuality=1,
+            hdopReceivedElapsedRealtime=1_000,
+            fixQualityReceivedElapsedRealtime=1_000,
+            positionProvider=PositionProvider.NMEA,
+            sourceSentence="RMC",
+            valid=true,
+        )
+        assertEquals(true,NmeaFixQualityPolicy.allowsContinuation(rmc,10_000))
+        assertEquals(false,NmeaFixQualityPolicy.allowsContinuation(rmc.copy(hdopReceivedElapsedRealtime=9_500),10_000))
+    }
 }

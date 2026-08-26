@@ -86,6 +86,7 @@ object NmeaFieldDecoder {
         val explicitlyInvalid=when(type){
             "RMC"->fields.getOrNull(2).equals("V",true)
             "GGA"->fields.getOrNull(6)?.toIntOrNull()==0
+            "GNS"->fields.getOrNull(6)?.trim()?.takeIf{it.isNotEmpty()}?.all{it.equals('N',true)}==true
             "GLL"->fields.getOrNull(6).equals("V",true)
             "MWV"->fields.getOrNull(5).equals("V",true)
             "ROT"->fields.getOrNull(2).equals("V",true)

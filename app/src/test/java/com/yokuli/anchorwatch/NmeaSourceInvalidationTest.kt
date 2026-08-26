@@ -38,6 +38,7 @@ class NmeaSourceInvalidationTest {
 
     @Test fun invalidityPolicyCoversNavigationWindAndGenericStatusSentences(){
         assertEquals(setOf(VesselMetricId.POSITION,VesselMetricId.SOG,VesselMetricId.COG),NmeaInvalidationPolicy.affectedMetrics("RMC"))
+        assertEquals(setOf(VesselMetricId.POSITION),NmeaInvalidationPolicy.affectedMetrics("GNS"))
         assertTrue(VesselMetricId.RATE_OF_TURN in NmeaInvalidationPolicy.affectedMetrics("ROT"))
         assertTrue(VesselMetricId.XTE in NmeaInvalidationPolicy.affectedMetrics("APB"))
     }

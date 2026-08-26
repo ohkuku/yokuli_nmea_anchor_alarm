@@ -172,7 +172,7 @@ internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false;setupReference=null}){showPreflight=false;showSetup=true}
-    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview){lat,lon,input->vm.arm(lat,lon,input)}
+    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview,openGpsSettings={showSetup=false;setupReference=null;vm.openDataSection(0)}){lat,lon,input->vm.arm(lat,lon,input)}
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
@@ -314,7 +314,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         // vertical drag without a parent horizontal pager stealing the map.
         sheetSwipeEnabled=true,
         sheetDragHandle={Box(Modifier.fillMaxWidth().clickable{bottomSheetScope.launch{if(bottomSheetState.currentValue==SheetValue.Expanded)bottomSheetState.partialExpand()else bottomSheetState.expand()}}.testTag("watch_sheet_toggle"),contentAlignment=Alignment.Center){BottomSheetDefaults.DragHandle()}},
-        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},{vm.openDataSection(0)},{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.switchGpsDataSource(GpsDataSource.SYSTEM)}},
+        sheetContent={WatchPanel(state,boatHeading,{setupReference=null;showPreflight=true},{showAdjust=true},{vm.openDataSection(0)},{active?.let(vm::resetCentreAnalysis)},vm::updateConditionGuards,vm::resetWindBaseline,openAnchorageList,nearbyActions,vm::pauseWatch,vm::resumeWatch,{confirmLift=true},{active?.let(vm::openAnchorInGoogleMaps)},{active?.let(vm::recalculateCentreFromTrack)},vm::reconnectNmea,{vm.openDataSection(1)}){vm.openDataSection(0)}},
     ) { _ ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (renderGoogleMap) {
@@ -439,7 +439,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview){lat,lon,input->vm.arm(lat,lon,input)}
+        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview,openGpsSettings={showSetup=false;setupReference=null;vm.openDataSection(0)}){lat,lon,input->vm.arm(lat,lon,input)}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}
