@@ -1,5 +1,6 @@
 package com.yokuli.anchorwatch.location
 
+import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 
@@ -50,4 +51,22 @@ object NmeaSourceSelectionPolicy {
         nowElapsedRealtime,
         maximumAgeMillis,
     ) == NmeaSourceAvailability.AVAILABLE && NmeaFixQualityPolicy.allowsContinuation(fix)
+}
+
+/** Resolves the position source for a new anchor session without changing the
+ * user's saved preference. A live NMEA instrument connection may legitimately
+ * contain depth/wind but no position; in that case Phone GNSS is the safe
+ * arming source while the NMEA socket remains available to those instruments. */
+object NewAnchorPositionSourcePolicy {
+    fun resolve(
+        configuredSource: GpsDataSource,
+        demoMode: Boolean,
+        nmeaPositionUsable: Boolean,
+    ): GpsDataSource = when {
+        demoMode -> GpsDataSource.DEMO
+        configuredSource == GpsDataSource.NMEA && nmeaPositionUsable -> GpsDataSource.NMEA
+        configuredSource == GpsDataSource.NMEA -> GpsDataSource.SYSTEM
+        configuredSource == GpsDataSource.DEMO -> GpsDataSource.SYSTEM
+        else -> configuredSource
+    }
 }

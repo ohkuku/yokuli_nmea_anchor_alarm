@@ -515,3 +515,16 @@
 - Verification result: **The settings row explicitly advertises realignment. Opening the sensor page starts a display-only compass lease. The main action may be repeated at any time and records a zero correction only after a fresh compass sample while the phone points toward the bow. When fresh Phone and NMEA headings share a true or magnetic reference, an optional live-match action computes the shortest signed correction. The offset is no longer editable or shown as required input. The new same-reference/wraparound policy test passed within the Debug suite; `lintDebug` and `assembleDebug` passed.**
 - Real hardware verified: **No — verify compass freshness, bow-pointing realignment and optional NMEA match on both phones.**
 - Status: **FIXED IN CODE — UNIT/LINT/APK GATES PASSED; TWO-PHONE SENSOR QA PENDING**
+
+## Finding P0-036 — Instrument-only NMEA incorrectly blocked Phone-GPS anchoring
+
+- Severity: **P0 / core Anchor Watch arming blocked**
+- User story: a fishfinder may provide valid depth, wind or other instrument data without providing a GPS position. Boat Watch must keep that NMEA input connected for instruments while using Phone GNSS to start a new Anchor Watch session.
+- Evidence: with the saved GPS preference set to NMEA, `MainViewModel` disabled `SystemLocationRepository` even when the current NMEA connection had no usable position. The setup UI tried to fall back only after Phone GNSS was already ready, creating a circular wait; Watch health continued evaluating the saved NMEA source and reported “NMEA GPS not fresh”.
+- Reproduction steps: save NMEA as the preferred GPS source; connect a fishfinder stream that carries depth but no current-position sentence; open Watch and start anchor setup. The old flow retained NMEA as the effective position source, did not continuously acquire Phone GNSS and blocked arming as stale NMEA GPS.
+- Root cause: the persisted preferred position source was incorrectly treated as the effective source for every new session, and NMEA transport/instrument availability was conflated with NMEA position availability.
+- Failing test: `NmeaSourceSelectionPolicyTest.instrumentOnlyNmeaFallsBackToPhoneGpsForANewAnchor` plus companion preference/demo cases.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **New-session source routing now resolves an unusable NMEA position preference to Phone GPS without changing the saved preference or closing the NMEA instrument connection. Phone GNSS is acquired before and during setup; Watch status and preflight evaluate the same effective source. A running session remains locked to its explicitly armed source, so an active NMEA watch is never silently switched. Targeted `NmeaSourceSelectionPolicyTest` and `compileDebugKotlin` passed together in 56 seconds.**
+- Real hardware verified: **No — verify with the fishfinder stream connected and no NMEA GPS sentences, then confirm Phone GPS can arm while live depth remains available.**
+- Status: **FIXED IN CODE — TARGETED UNIT TEST AND KOTLIN COMPILE PASSED; FISHFINDER QA PENDING**

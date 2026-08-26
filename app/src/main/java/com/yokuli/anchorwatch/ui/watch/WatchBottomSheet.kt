@@ -63,6 +63,7 @@ import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.GpsSourceSafety
 import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
+import com.yokuli.anchorwatch.location.NewAnchorPositionSourcePolicy
 import com.yokuli.anchorwatch.localization.localized
 import com.yokuli.anchorwatch.localization.usesChinese
 import com.yokuli.anchorwatch.map.FollowCameraMove
@@ -104,7 +105,10 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
             resumeFailure=resumeTimeoutFeedback
         }
     }
-    val freshFix = when(state.settings.gpsDataSource){
+    val nmeaPositionReady=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1_000L)
+    val newAnchorSource=NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode,nmeaPositionReady)
+    val nmeaInstrumentsConnected=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.hasInstrumentTraffic(state.connection)
+    val freshFix = when(newAnchorSource){
         GpsDataSource.NMEA->NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1_000L)
         GpsDataSource.SYSTEM->state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&now-it.receivedElapsedRealtime in 0L until state.settings.gpsLossSeconds*1_000L}==true&&!GpsSourceSafety.blocksSystemGps(state.settings.mockEnabled,state.mockGps.state)
         GpsDataSource.DEMO->state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&now-it.receivedElapsedRealtime in 0L until state.settings.gpsLossSeconds*1_000L}==true
@@ -121,7 +125,13 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) {
             Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
             Text(when{
-                active==null->if(freshFix)tr("Ready to set anchor${if(state.settings.gpsDataSource==GpsDataSource.DEMO)" · Demo starts from System GPS" else ""}","已可下锚${if(state.settings.gpsDataSource==GpsDataSource.DEMO)" · 演示从系统 GPS 起点开始" else ""}") else tr("Waiting for live ${when(state.settings.gpsDataSource){GpsDataSource.NMEA->"NMEA";GpsDataSource.SYSTEM->"system";GpsDataSource.DEMO->"system origin for Demo"}} GPS","正在等待${when(state.settings.gpsDataSource){GpsDataSource.NMEA->" NMEA";GpsDataSource.SYSTEM->"系统";GpsDataSource.DEMO->"演示起点的系统"}} GPS 实时定位")
+                active==null&&state.settings.gpsDataSource==GpsDataSource.NMEA&&!nmeaPositionReady->when{
+                    freshFix&&nmeaInstrumentsConnected->tr("Ready with Phone GPS · NMEA instruments remain connected","手机 GPS 已就绪 · NMEA 仪表数据继续连接")
+                    freshFix->tr("Ready with Phone GPS · NMEA position unavailable","手机 GPS 已就绪 · NMEA 船位不可用")
+                    nmeaInstrumentsConnected->tr("NMEA instruments connected · tap Set anchor to acquire Phone GPS","NMEA 仪表数据已连接 · 点击设置锚点以获取手机 GPS")
+                    else->tr("Tap Set anchor to acquire Phone GPS; NMEA position is unavailable","点击设置锚点以获取手机 GPS；NMEA 船位当前不可用")
+                }
+                active==null->if(freshFix)tr("Ready to set anchor${if(newAnchorSource==GpsDataSource.DEMO)" · Demo starts from System GPS" else ""}","已可下锚${if(newAnchorSource==GpsDataSource.DEMO)" · 演示从系统 GPS 起点开始" else ""}") else tr("Waiting for live ${when(newAnchorSource){GpsDataSource.NMEA->"NMEA";GpsDataSource.SYSTEM->"Phone";GpsDataSource.DEMO->"system origin for Demo"}} GPS","正在等待${when(newAnchorSource){GpsDataSource.NMEA->" NMEA";GpsDataSource.SYSTEM->"手机";GpsDataSource.DEMO->"演示起点的系统"}} GPS 实时定位")
                 active.paused->tr("Centre, track and ${active.alarmRadiusMeters.toInt()} m range preserved","中心、轨迹和 ${active.alarmRadiusMeters.toInt()} 米范围已保留")
                 !centerReady->tr("${learningDistance?.toInt()?:"--"} m / ${active.alarmRadiusMeters.toInt()} m temporary boundary • ${state.points.size} fixes","临时边界 ${learningDistance?.toInt()?:"--"} / ${active.alarmRadiusMeters.toInt()} 米 · ${state.points.size} 个定位点")
                 else->tr("${distance?.toInt() ?: "--"} m / ${active.alarmRadiusMeters.toInt()} m","${distance?.toInt() ?: "--"} / ${active.alarmRadiusMeters.toInt()} 米")

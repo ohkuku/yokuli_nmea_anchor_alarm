@@ -1,7 +1,9 @@
 package com.yokuli.anchorwatch
 
+import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
+import com.yokuli.anchorwatch.location.NewAnchorPositionSourcePolicy
 import com.yokuli.anchorwatch.location.NmeaSourceAvailability
 import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
 import org.junit.Assert.assertEquals
@@ -90,6 +92,50 @@ class NmeaSourceSelectionPolicyTest {
                 now - 5_000,
                 now,
                 15_000,
+            ),
+        )
+    }
+
+    @Test fun instrumentOnlyNmeaFallsBackToPhoneGpsForANewAnchor() {
+        assertEquals(
+            GpsDataSource.SYSTEM,
+            NewAnchorPositionSourcePolicy.resolve(
+                configuredSource = GpsDataSource.NMEA,
+                demoMode = false,
+                nmeaPositionUsable = false,
+            ),
+        )
+    }
+
+    @Test fun freshNmeaPositionRemainsPreferredForANewAnchor() {
+        assertEquals(
+            GpsDataSource.NMEA,
+            NewAnchorPositionSourcePolicy.resolve(
+                configuredSource = GpsDataSource.NMEA,
+                demoMode = false,
+                nmeaPositionUsable = true,
+            ),
+        )
+    }
+
+    @Test fun fallbackDoesNotChangeAnExplicitPhoneGpsChoice() {
+        assertEquals(
+            GpsDataSource.SYSTEM,
+            NewAnchorPositionSourcePolicy.resolve(
+                configuredSource = GpsDataSource.SYSTEM,
+                demoMode = false,
+                nmeaPositionUsable = false,
+            ),
+        )
+    }
+
+    @Test fun demoModeKeepsItsLockedDemoSource() {
+        assertEquals(
+            GpsDataSource.DEMO,
+            NewAnchorPositionSourcePolicy.resolve(
+                configuredSource = GpsDataSource.NMEA,
+                demoMode = true,
+                nmeaPositionUsable = false,
             ),
         )
     }

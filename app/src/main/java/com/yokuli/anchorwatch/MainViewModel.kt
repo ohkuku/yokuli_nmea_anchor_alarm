@@ -75,6 +75,7 @@ import com.yokuli.anchorwatch.location.MockGpsState
 import com.yokuli.anchorwatch.location.MockGpsStatus
 import com.yokuli.anchorwatch.location.NmeaSourceAvailability
 import com.yokuli.anchorwatch.location.NmeaSourceSelectionPolicy
+import com.yokuli.anchorwatch.location.NewAnchorPositionSourcePolicy
 import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionState
@@ -250,6 +251,13 @@ data class MainUiState(
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
 private data class AvailablePositions(val nmea:NavigationFix?,val system:NavigationFix?,val demo:NavigationFix?,val demoStatus:DemoGpsStatus)
+private data class PositionRoutingSnapshot(
+    val positions:AvailablePositions,
+    val settings:AppSettings,
+    val active:AnchorSessionEntity?,
+    val connection:NmeaConnectionState,
+    val connectionStartedElapsed:Long?,
+)
 data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=true,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig())
 
 @HiltViewModel
@@ -325,13 +333,26 @@ class MainViewModel @Inject constructor(
             val selected=when(settings.gpsDataSource){GpsDataSource.NMEA->positions.nmea;GpsDataSource.SYSTEM->positions.system;GpsDataSource.DEMO->if(positions.demoStatus.running)positions.demo else positions.system}
             PositionSources(selected,positions.nmea,positions.system,settings) to positions.demoStatus
         }
+        val positionRouting=combine(available,prefs.settings,dao.sessions(),nav.connectionState,nav.connectionStartedElapsed){positions,settings,sessions,connection,connectionStarted->
+            PositionRoutingSnapshot(positions,settings,sessions.firstOrNull{it.active},connection,connectionStarted)
+        }
         viewModelScope.launch{
-            combine(available,prefs.settings,dao.sessions()){positions,settings,sessions->Triple(positions,settings,sessions.firstOrNull{it.active})}.collect{(positions,settings,active)->
+            positionRouting.collect{routing->
+                val positions=routing.positions;val settings=routing.settings;val active=routing.active
                 val lockedSource=active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
-                val source=lockedSource?:settings.gpsDataSource
+                val nmeaUsable=NmeaSourceSelectionPolicy.isUsablePosition(routing.connection,positions.nmea,routing.connectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),settings.gpsLossSeconds*1_000L)
+                val source=lockedSource?:NewAnchorPositionSourcePolicy.resolve(settings.gpsDataSource,settings.demoMode,nmeaUsable)
                 if(active!=null)acceptedPosition.lockSource(active.id,source)else{acceptedPosition.unlockSource(null);acceptedPosition.selectSource(source)}
                 val raw=when(source){GpsDataSource.NMEA->positions.nmea;GpsDataSource.SYSTEM->positions.system;GpsDataSource.DEMO->positions.demo.takeIf{positions.demoStatus.running}}
                 raw?.let{acceptedPosition.submit(source,it)}
+            }
+        }
+        viewModelScope.launch{
+            positionRouting.collect{routing->
+                val lockedSource=routing.active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
+                val nmeaUsable=NmeaSourceSelectionPolicy.isUsablePosition(routing.connection,routing.positions.nmea,routing.connectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),routing.settings.gpsLossSeconds*1_000L)
+                val effectiveSource=lockedSource?:NewAnchorPositionSourcePolicy.resolve(routing.settings.gpsDataSource,routing.settings.demoMode,nmeaUsable)
+                systemLocation.setAppEnabled(effectiveSource in setOf(GpsDataSource.SYSTEM,GpsDataSource.DEMO))
             }
         }
         viewModelScope.launch{
@@ -388,7 +409,6 @@ class MainViewModel @Inject constructor(
             _ui.update{it.copy(anchorageClusters=clusters)}
             refreshAnchorageApproach()
         }}
-        viewModelScope.launch{prefs.settings.map{it.gpsDataSource}.distinctUntilChanged().collect{source->systemLocation.setAppEnabled(source==GpsDataSource.SYSTEM||source==GpsDataSource.DEMO)}}
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
         viewModelScope.launch{sharingServer.status.collect{status->_ui.update{it.copy(nmeaSharing=status)}}}
@@ -428,9 +448,14 @@ class MainViewModel @Inject constructor(
 
     private fun refreshWatchSafety(){
         val state=_ui.value
+        val nowElapsed=android.os.SystemClock.elapsedRealtime()
+        val lockedSource=state.active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
+        val nmeaUsable=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,nowElapsed,state.settings.gpsLossSeconds*1_000L)
+        val effectiveSource=lockedSource?:NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode,nmeaUsable)
+        val effectiveFix=when(effectiveSource){GpsDataSource.NMEA->state.nmeaFix;GpsDataSource.SYSTEM->state.systemFix;GpsDataSource.DEMO->if(state.active==null)state.systemFix else state.fix}
         val report=WatchPreflightEvaluator.evaluate(WatchSafetyInput(
-            nowElapsed=android.os.SystemClock.elapsedRealtime(),nowWall=System.currentTimeMillis(),settings=state.settings,
-            selectedFix=if(state.active==null&&state.settings.demoMode)state.systemFix else state.fix,nmeaConnection=state.connection,device=safetyProbe.snapshot(),sonar=state.sonarRecorder,nmeaConnectionStartedElapsedRealtime=state.nmeaConnectionStartedElapsed,
+            nowElapsed=nowElapsed,nowWall=System.currentTimeMillis(),settings=state.settings.copy(gpsDataSource=effectiveSource),
+            selectedFix=effectiveFix,nmeaConnection=state.connection,device=safetyProbe.snapshot(),sonar=state.sonarRecorder,nmeaConnectionStartedElapsedRealtime=state.nmeaConnectionStartedElapsed,
         ))
         _ui.update{it.copy(watchSafety=report)}
     }
