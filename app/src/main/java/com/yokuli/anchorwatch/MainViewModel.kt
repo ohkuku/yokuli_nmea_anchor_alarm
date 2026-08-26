@@ -340,8 +340,7 @@ class MainViewModel @Inject constructor(
             positionRouting.collect{routing->
                 val positions=routing.positions;val settings=routing.settings;val active=routing.active
                 val lockedSource=active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
-                val nmeaUsable=NmeaSourceSelectionPolicy.isUsablePosition(routing.connection,positions.nmea,routing.connectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),settings.gpsLossSeconds*1_000L)
-                val source=lockedSource?:NewAnchorPositionSourcePolicy.resolve(settings.gpsDataSource,settings.demoMode,nmeaUsable)
+                val source=lockedSource?:NewAnchorPositionSourcePolicy.resolve(settings.gpsDataSource,settings.demoMode)
                 if(active!=null)acceptedPosition.lockSource(active.id,source)else{acceptedPosition.unlockSource(null);acceptedPosition.selectSource(source)}
                 val raw=when(source){GpsDataSource.NMEA->positions.nmea;GpsDataSource.SYSTEM->positions.system;GpsDataSource.DEMO->positions.demo.takeIf{positions.demoStatus.running}}
                 raw?.let{acceptedPosition.submit(source,it)}
@@ -350,8 +349,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{
             positionRouting.collect{routing->
                 val lockedSource=routing.active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
-                val nmeaUsable=NmeaSourceSelectionPolicy.isUsablePosition(routing.connection,routing.positions.nmea,routing.connectionStartedElapsed,android.os.SystemClock.elapsedRealtime(),routing.settings.gpsLossSeconds*1_000L)
-                val effectiveSource=lockedSource?:NewAnchorPositionSourcePolicy.resolve(routing.settings.gpsDataSource,routing.settings.demoMode,nmeaUsable)
+                val effectiveSource=lockedSource?:NewAnchorPositionSourcePolicy.resolve(routing.settings.gpsDataSource,routing.settings.demoMode)
                 systemLocation.setAppEnabled(effectiveSource in setOf(GpsDataSource.SYSTEM,GpsDataSource.DEMO))
             }
         }
@@ -450,8 +448,7 @@ class MainViewModel @Inject constructor(
         val state=_ui.value
         val nowElapsed=android.os.SystemClock.elapsedRealtime()
         val lockedSource=state.active?.positionSource?.let{runCatching{GpsDataSource.valueOf(it)}.getOrNull()}
-        val nmeaUsable=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,nowElapsed,state.settings.gpsLossSeconds*1_000L)
-        val effectiveSource=lockedSource?:NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode,nmeaUsable)
+        val effectiveSource=lockedSource?:NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode)
         val effectiveFix=when(effectiveSource){GpsDataSource.NMEA->state.nmeaFix;GpsDataSource.SYSTEM->state.systemFix;GpsDataSource.DEMO->if(state.active==null)state.systemFix else state.fix}
         val report=WatchPreflightEvaluator.evaluate(WatchSafetyInput(
             nowElapsed=nowElapsed,nowWall=System.currentTimeMillis(),settings=state.settings.copy(gpsDataSource=effectiveSource),

@@ -76,14 +76,14 @@ object WatchPreflightEvaluator {
         val fix = input.selectedFix
         val age = fix?.let { input.nowElapsed - it.receivedElapsedRealtime }
         checks += when {
-            fix?.valid != true -> blocker("gps_fresh", "GPS fix", "No valid fix", "An anchor alarm cannot measure vessel movement without a position.")
-            age == null || age !in 0..FRESH_FIX_MILLIS -> blocker("gps_fresh", "GPS fix", "Stale by ${age?.div(1_000) ?: "?"} s", "Arming from an old position can put the boundary in the wrong place.")
+            fix?.valid != true -> warning("gps_fresh", "GPS fix", "No valid fix", "The session can start, but movement checks and track recording wait for GPS and the active watch will notify you.")
+            age == null || age !in 0..FRESH_FIX_MILLIS -> warning("gps_fresh", "GPS fix", "Stale by ${age?.div(1_000) ?: "?"} s", "The session can start from the confirmed anchor coordinate; stale fixes are ignored until live GPS recovers.")
             else -> ok("gps_fresh", "GPS fix", "Fresh · ${age / 1_000} s")
         }
         val accuracy = fix?.horizontalAccuracyMeters
         checks += when {
-            fix?.valid != true -> blocker("gps_accuracy", "GPS accuracy", "Unavailable", "Position quality is unknown.")
-            accuracy != null && accuracy > 100.0 -> blocker("gps_accuracy", "GPS accuracy", "±${accuracy.toInt()} m", "Accuracy is wider than a useful anchor boundary.")
+            fix?.valid != true -> warning("gps_accuracy", "GPS accuracy", "Unavailable", "Position quality is unknown; unsafe fixes remain excluded after the session starts.")
+            accuracy != null && accuracy > 100.0 -> warning("gps_accuracy", "GPS accuracy", "±${accuracy.toInt()} m", "Accuracy is wider than a useful anchor boundary; the watch will report degraded GPS until it improves.")
             accuracy != null && accuracy > 25.0 -> warning("gps_accuracy", "GPS accuracy", "±${accuracy.toInt()} m", "Use a wider alarm radius or wait for better accuracy.")
             accuracy != null -> ok("gps_accuracy", "GPS accuracy", "±${accuracy.toInt()} m")
             fix.hdop != null && fix.hdop > 5.0 -> warning("gps_accuracy", "GPS accuracy", "HDOP ${"%.1f".format(fix.hdop)}", "Satellite geometry is weak; allow more margin.")
@@ -94,9 +94,9 @@ object WatchPreflightEvaluator {
             ok("nmea", "NMEA source", "Not required for ${input.settings.gpsDataSource.name} GPS")
         } else when {
             NmeaSourceSelectionPolicy.isUsablePosition(input.nmeaConnection,fix,input.nmeaConnectionStartedElapsedRealtime,input.nowElapsed,FRESH_FIX_MILLIS)->ok("nmea", "NMEA source", "Connected with a fresh acceptable position")
-            input.nmeaConnection in setOf(NmeaConnectionState.RECONNECTING,NmeaConnectionState.CONNECTING)->blocker("nmea", "NMEA source", input.nmeaConnection.name, "Wait for a stable live NMEA position before arming.")
-            input.nmeaConnection==NmeaConnectionState.CONNECTED->blocker("nmea", "NMEA source", "Position unavailable, stale or poor quality", "Wait for a fresh position from the current connection with acceptable fix quality and HDOP.")
-            else->blocker("nmea", "NMEA source", input.nmeaConnection.name, "The selected GPS source is unavailable.")
+            input.nmeaConnection in setOf(NmeaConnectionState.RECONNECTING,NmeaConnectionState.CONNECTING)->warning("nmea", "NMEA source", input.nmeaConnection.name, "The session can start now; reconnect and GPS-loss monitoring stays active until a current acceptable position returns.")
+            input.nmeaConnection==NmeaConnectionState.CONNECTED->warning("nmea", "NMEA source", "Position unavailable, stale or poor quality", "The session can start now; current-generation quality rules still exclude unsafe fixes from movement calculations.")
+            else->warning("nmea", "NMEA source", input.nmeaConnection.name, "The session can start now and will notify you that the selected GPS source is unavailable.")
         }
         checks += if (input.device.notificationPermission) ok("notifications", "Alarm notifications", "Allowed")
         else blocker("notifications", "Alarm notifications", "Permission denied", "Android may hide critical anchor alarm notifications.")
@@ -120,7 +120,7 @@ object WatchPreflightEvaluator {
         }
         checks += if (input.settings.gpsDataSource != GpsDataSource.NMEA) ok("network", "Wi-Fi / network", "Not required for selected GPS")
         else when {
-            !input.device.networkConnected -> blocker("network", "Wi-Fi / network", "No active network", "The NMEA endpoint cannot be kept reachable.")
+            !input.device.networkConnected -> warning("network", "Wi-Fi / network", "No active network", "The session can start, but NMEA GPS remains degraded until the endpoint is reachable.")
             input.device.wifiConnected -> ok("network", "Wi-Fi / network", "Wi-Fi connected")
             else -> warning("network", "Wi-Fi / network", "Connected without Wi-Fi", "Confirm the NMEA server is reachable over this transport.")
         }

@@ -110,35 +110,22 @@ class NmeaSourceSelectionPolicyTest {
         )
     }
 
-    @Test fun instrumentOnlyNmeaFallsBackToPhoneGpsForANewAnchor() {
-        assertEquals(
-            GpsDataSource.SYSTEM,
-            NewAnchorPositionSourcePolicy.resolve(
-                configuredSource = GpsDataSource.NMEA,
-                demoMode = false,
-                nmeaPositionUsable = false,
-            ),
-        )
-    }
-
-    @Test fun freshNmeaPositionRemainsPreferredForANewAnchor() {
+    @Test fun selectedNmeaRemainsAuthoritativeDuringATransientOutage() {
         assertEquals(
             GpsDataSource.NMEA,
             NewAnchorPositionSourcePolicy.resolve(
                 configuredSource = GpsDataSource.NMEA,
                 demoMode = false,
-                nmeaPositionUsable = true,
             ),
         )
     }
 
-    @Test fun fallbackDoesNotChangeAnExplicitPhoneGpsChoice() {
+    @Test fun explicitPhoneGpsChoiceRemainsPhoneGps() {
         assertEquals(
             GpsDataSource.SYSTEM,
             NewAnchorPositionSourcePolicy.resolve(
                 configuredSource = GpsDataSource.SYSTEM,
                 demoMode = false,
-                nmeaPositionUsable = false,
             ),
         )
     }
@@ -149,7 +136,6 @@ class NmeaSourceSelectionPolicyTest {
             NewAnchorPositionSourcePolicy.resolve(
                 configuredSource = GpsDataSource.NMEA,
                 demoMode = true,
-                nmeaPositionUsable = false,
             ),
         )
     }

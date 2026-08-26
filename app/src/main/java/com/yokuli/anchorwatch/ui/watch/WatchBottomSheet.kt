@@ -106,7 +106,7 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
         }
     }
     val nmeaPositionReady=NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1_000L)
-    val newAnchorSource=NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode,nmeaPositionReady)
+    val newAnchorSource=NewAnchorPositionSourcePolicy.resolve(state.settings.gpsDataSource,state.settings.demoMode)
     val nmeaInstrumentsConnected=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.hasInstrumentTraffic(state.connection)
     val freshFix = when(newAnchorSource){
         GpsDataSource.NMEA->NmeaSourceSelectionPolicy.isUsablePosition(state.connection,state.nmeaFix,state.nmeaConnectionStartedElapsed,now,state.settings.gpsLossSeconds*1_000L)
@@ -126,12 +126,10 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
             Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
             Text(when{
                 active==null&&state.settings.gpsDataSource==GpsDataSource.NMEA&&!nmeaPositionReady->when{
-                    freshFix&&nmeaInstrumentsConnected->tr("Ready with Phone GPS · NMEA instruments remain connected","手机 GPS 已就绪 · NMEA 仪表数据继续连接")
-                    freshFix->tr("Ready with Phone GPS · NMEA position unavailable","手机 GPS 已就绪 · NMEA 船位不可用")
-                    nmeaInstrumentsConnected->tr("NMEA instruments connected · tap Set anchor to acquire Phone GPS","NMEA 仪表数据已连接 · 点击设置锚点以获取手机 GPS")
-                    else->tr("Tap Set anchor to acquire Phone GPS; NMEA position is unavailable","点击设置锚点以获取手机 GPS；NMEA 船位当前不可用")
+                    nmeaInstrumentsConnected->tr("NMEA GPS selected · position health is degraded · Set anchor remains available","已选择 NMEA GPS · 船位健康降级 · 仍可设置锚点")
+                    else->tr("NMEA GPS selected · disconnected or recovering · Set anchor remains available","已选择 NMEA GPS · 已断开或正在恢复 · 仍可设置锚点")
                 }
-                active==null->if(freshFix)tr("Ready to set anchor${if(newAnchorSource==GpsDataSource.DEMO)" · Demo starts from System GPS" else ""}","已可下锚${if(newAnchorSource==GpsDataSource.DEMO)" · 演示从系统 GPS 起点开始" else ""}") else tr("Waiting for live ${when(newAnchorSource){GpsDataSource.NMEA->"NMEA";GpsDataSource.SYSTEM->"Phone";GpsDataSource.DEMO->"system origin for Demo"}} GPS","正在等待${when(newAnchorSource){GpsDataSource.NMEA->" NMEA";GpsDataSource.SYSTEM->"手机";GpsDataSource.DEMO->"演示起点的系统"}} GPS 实时定位")
+                active==null->if(freshFix)tr("Ready to set anchor${if(newAnchorSource==GpsDataSource.DEMO)" · Demo uses the confirmed start coordinate" else ""}","已可下锚${if(newAnchorSource==GpsDataSource.DEMO)" · 演示使用已确认的起点坐标" else ""}") else tr("GPS health is degraded · Set anchor remains available and monitoring will warn after start","GPS 健康降级 · 仍可设置锚点，启动后监控会发出警告")
                 active.paused->tr("Centre, track and ${active.alarmRadiusMeters.toInt()} m range preserved","中心、轨迹和 ${active.alarmRadiusMeters.toInt()} 米范围已保留")
                 !centerReady->tr("${learningDistance?.toInt()?:"--"} m / ${active.alarmRadiusMeters.toInt()} m temporary boundary • ${state.points.size} fixes","临时边界 ${learningDistance?.toInt()?:"--"} / ${active.alarmRadiusMeters.toInt()} 米 · ${state.points.size} 个定位点")
                 else->tr("${distance?.toInt() ?: "--"} m / ${active.alarmRadiusMeters.toInt()} m","${distance?.toInt() ?: "--"} / ${active.alarmRadiusMeters.toInt()} 米")

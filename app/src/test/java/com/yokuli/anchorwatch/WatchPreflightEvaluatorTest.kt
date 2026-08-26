@@ -19,21 +19,21 @@ class WatchPreflightEvaluatorTest {
         assertTrue(report.ready);assertTrue(report.canContinue)
     }
 
-    @Test fun missingNotificationAndStaleGpsBlockArming(){
+    @Test fun missingNotificationBlocksButStaleGpsIsOnlyAWarning(){
         val report=WatchPreflightEvaluator.evaluate(input(fix=fix(received=80_000),device=device().copy(notificationPermission=false)))
         assertFalse(report.canContinue)
-        assertTrue(report.checks.any{it.id=="gps_fresh"&&it.status==SafetyCheckStatus.BLOCKER})
+        assertTrue(report.checks.any{it.id=="gps_fresh"&&it.status==SafetyCheckStatus.WARNING})
         assertTrue(report.checks.any{it.id=="notifications"&&it.status==SafetyCheckStatus.BLOCKER})
     }
 
-    @Test fun selectedNmeaMustBeConnectedAndReachable(){
+    @Test fun disconnectedSelectedNmeaCanContinueWithExplicitWarnings(){
         val report=WatchPreflightEvaluator.evaluate(input(settings=readySettings().copy(gpsDataSource=GpsDataSource.NMEA),connection=NmeaConnectionState.RECONNECTING,device=device().copy(networkConnected=false,wifiConnected=false)))
-        assertFalse(report.canContinue)
-        assertTrue(report.checks.any{it.id=="nmea"&&it.status==SafetyCheckStatus.BLOCKER})
-        assertTrue(report.checks.any{it.id=="network"&&it.status==SafetyCheckStatus.BLOCKER})
+        assertTrue(report.canContinue)
+        assertTrue(report.checks.any{it.id=="nmea"&&it.status==SafetyCheckStatus.WARNING})
+        assertTrue(report.checks.any{it.id=="network"&&it.status==SafetyCheckStatus.WARNING})
     }
 
-    @Test fun aConnectedSocketDoesNotMakePoorNmeaPositionReadyToWatch(){
+    @Test fun poorNmeaPositionDoesNotBlockSessionButRemainsAHealthWarning(){
         val report=WatchPreflightEvaluator.evaluate(
             input(
                 settings=readySettings().copy(gpsDataSource=GpsDataSource.NMEA),
@@ -42,8 +42,8 @@ class WatchPreflightEvaluatorTest {
                 connectionStarted=90_000,
             ),
         )
-        assertFalse(report.canContinue)
-        assertTrue(report.checks.any{it.id=="nmea"&&it.status==SafetyCheckStatus.BLOCKER})
+        assertTrue(report.canContinue)
+        assertTrue(report.checks.any{it.id=="nmea"&&it.status==SafetyCheckStatus.WARNING})
     }
 
     @Test fun batteryOptimizationAndUnconfirmedAlarmAreExplicitWarnings(){

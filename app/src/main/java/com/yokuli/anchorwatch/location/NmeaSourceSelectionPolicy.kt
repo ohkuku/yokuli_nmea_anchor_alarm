@@ -66,19 +66,20 @@ object NmeaSourceSelectionPolicy {
     ) == NmeaSourceAvailability.AVAILABLE && NmeaFixQualityPolicy.allowsContinuation(fix, nowElapsedRealtime)
 }
 
-/** Resolves the position source for a new anchor session without changing the
- * user's saved preference. A live NMEA instrument connection may legitimately
- * contain depth/wind but no position; in that case Phone GNSS is the safe
- * arming source while the NMEA socket remains available to those instruments. */
+/** Resolves the authoritative position source for a new anchor session.
+ *
+ * Source selection belongs to Data -> Sources. A transient transport, quality
+ * or freshness fault must not silently turn an explicitly selected NMEA watch
+ * into a Phone-GPS watch. The runtime records the session immediately and then
+ * reports/recoveries GPS health independently. Fresh installs still default to
+ * Phone GPS in [AppSettings]; NMEA is only selected after the user chooses it or
+ * the live-source auto-promotion has observed a real position. */
 object NewAnchorPositionSourcePolicy {
     fun resolve(
         configuredSource: GpsDataSource,
         demoMode: Boolean,
-        nmeaPositionUsable: Boolean,
     ): GpsDataSource = when {
         demoMode -> GpsDataSource.DEMO
-        configuredSource == GpsDataSource.NMEA && nmeaPositionUsable -> GpsDataSource.NMEA
-        configuredSource == GpsDataSource.NMEA -> GpsDataSource.SYSTEM
         configuredSource == GpsDataSource.DEMO -> GpsDataSource.SYSTEM
         else -> configuredSource
     }

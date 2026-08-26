@@ -527,7 +527,7 @@
 - Fix commit: **Current `codex/develop` delivery commit**
 - Verification result: **New-session source routing now resolves an unusable NMEA position preference to Phone GPS without changing the saved preference or closing the NMEA instrument connection. Phone GNSS is acquired before and during setup; Watch status and preflight evaluate the same effective source. A running session remains locked to its explicitly armed source, so an active NMEA watch is never silently switched. Targeted `NmeaSourceSelectionPolicyTest` and `compileDebugKotlin` passed together in 56 seconds.**
 - Real hardware verified: **No — verify with the fishfinder stream connected and no NMEA GPS sentences, then confirm Phone GPS can arm while live depth remains available.**
-- Status: **FIXED IN CODE — TARGETED UNIT TEST AND KOTLIN COMPILE PASSED; FISHFINDER QA PENDING**
+- Status: **SUPERSEDED FOR NEW-SESSION ARMING BY P0-041 — NMEA IS NO LONGER SILENTLY REPLACED BY PHONE GPS DURING A TRANSIENT POSITION FAULT**
 
 ## Finding P0-037 — Late NMEA readiness was missed while arming
 
@@ -538,9 +538,9 @@
 - Root cause: the setup source was a one-shot remembered value, and Runtime treated position readiness as a single-flow event instead of the tuple `(connection state, connection generation start, fix, quality)`.
 - Failing test: `NmeaPositionAwaiterTest.freshFixWakesWaiterWithoutWaitingForAConnectionLabelPromotion` and the centralized-source Compose regression in `AnchorSetupValidationTest`.
 - Fix commit: **UNCOMMITTED WORKTREE on `codex/develop`**
-- Verification result: **Setup no longer owns an independent source picker: it derives and reports the centralized Data → Sources choice. The shared NMEA awaiter listens to connection state, fix and connection-generation start together and is used by new arming, paused-source handover and Resume. Source-specific Chinese timeout messages distinguish NMEA from Phone GNSS. Production, JVM-test and Android-test Kotlin sources compile; tests were not executed in the final UI-centralization pass.**
+- Verification result: **Setup no longer owns an independent source picker: it derives and reports the centralized Data → Sources choice. The shared NMEA awaiter listens to connection state, fix and connection-generation start together and remains useful for explicit paused-source handover and Resume. P0-041 subsequently removed it from initial arming because GPS health must not be an arming-permission wait. Production, JVM-test and Android-test Kotlin sources compiled in the original pass; tests were not executed in the final UI-centralization pass.**
 - Real hardware verified: **No — retest one Start tap against the vessel NMEA server and record whether the source-specific failure appears if it still rejects the stream.**
-- Status: **FIXED IN CODE — PRODUCTION AND TEST SOURCES COMPILE; VESSEL QA PENDING**
+- Status: **SUPERSEDED FOR INITIAL ARMING BY P0-041 — ASYNC READINESS REMAINS RELEVANT TO EXPLICIT SOURCE HANDOVER/RESUME**
 
 ## Finding P0-038 — Global semantic echo filtering deleted real boat GPS
 
@@ -580,3 +580,16 @@
 - Verification result: **Data → Sources is now the only UI owner for App GPS selection, Demo GPS and the Android GPS proxy. Settings removes the duplicate Positioning and Developer entries. Anchor setup shows a read-only source/readiness summary and a single link to Data → Sources. Watch/Alarm recovery also opens the central source page. Instrument routing remains below it with explicit copy that it controls App instruments/calculations rather than Anchor GPS or NMEA publication. Production, JVM-test and Android-test Kotlin sources compile; tests were not executed in this pass.**
 - Real hardware verified: **No — verify navigation and small-screen scrolling on the phone.**
 - Status: **FIXED IN CODE — PRODUCTION AND TEST SOURCES COMPILE; MANUAL UX QA PENDING**
+
+## Finding P0-041 — Runtime GPS health was incorrectly used as permission to create an anchor session
+
+- Severity: **P0 / every Set anchor attempt could be rejected despite a visible boat position**
+- User story: pressing Start after confirming an anchor coordinate must create and activate the anchor session immediately. A disconnected/reconnecting NMEA transport, an old connection generation, a stale fix, missing GPS or current poor HDOP/accuracy must be reported during the active watch, not prevent the session from existing. Unsafe fixes must still never enter distance, track or centre-estimation calculations.
+- Evidence: `AnchorSetupSheet.valid` required strict source readiness; `WatchPreflightEvaluator` independently classified missing/stale/poor NMEA GPS and network as blockers; `AnchorWatchRuntime.arm()` then called `awaitUsableStartFix()` and returned without inserting the Room session if its full connection-generation/freshness/quality tuple did not become acceptable within 15 seconds. A parsed fix can be visible on the map while any of those independent presentation gates is false, making the failure deterministic rather than an occasional GPS dropout.
+- Reproduction steps: select NMEA in Data → Sources, retain a valid displayed boat coordinate, then let the input be reconnecting, older than 15 seconds or report an unacceptable current HDOP. Open Set anchor and Start. The previous branch either disabled the form/preflight or spun for 15 seconds and reported that no fresh boat position existed; no anchor session was created.
+- Root cause: the product had one strict policy suitable for trusted runtime movement calculations and reused it in three layers as an arming-authorisation policy. The later wait fixed an asynchronous first-fix race but made the architectural mistake more visible. Silent NMEA→Phone fallback further contradicted the centralized explicit source choice.
+- Failing test: updated `WatchPreflightEvaluatorTest` proves stale/disconnected/poor NMEA is a warning while notification permission remains a blocker; updated `NmeaSourceSelectionPolicyTest.selectedNmeaRemainsAuthoritativeDuringATransientOutage` proves the selected source does not silently change. Runtime/UI device stories remain written for the next device gate and are not executed in this pass.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Initial arming no longer waits for or requires a live fix. It validates the confirmed anchor geometry, inserts and activates the session, starts the selected source resources and submits an initial fix only when that fix passes the existing current-generation/freshness/quality policy. Otherwise it records `SESSION_STARTED_GPS_DEGRADED`, posts an immediate high-priority warning and lets the existing GPS-loss/quality alarm plus automatic recovery continue. Active NMEA/System submissions now apply that strict health gate before distance, track or estimator input. Setup and Watch show degraded health without disabling Set anchor; Preflight presents GPS/NMEA/network faults as proceedable warnings. Data → Sources remains authoritative and no transient NMEA fault silently switches the session to Phone GPS.**
+- Real hardware verified: **No — verify one Start tap with the current vessel feed, then interrupt/recover NMEA and confirm the same session remains active while unsafe fixes never move the plotted boat/track.**
+- Status: **FIXED IN CODE — PRODUCTION/JVM-TEST/ANDROID-TEST SOURCES COMPILE; TESTS NOT RUN; REAL-VESSEL QA PENDING**
