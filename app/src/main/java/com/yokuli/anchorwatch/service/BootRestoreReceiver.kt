@@ -22,8 +22,9 @@ import kotlinx.coroutines.launch
 /**
  * Reboot is an explicit monitoring gap. Location safety is never claimed to
  * have continued through it: anchor watch becomes resumable/paused and an
- * interrupted sonar survey is safely closed. NMEA Output, including its TCP
- * server transport, is never restored without an explicit calibrated Start.
+ * interrupted sonar survey is safely closed. Boat-network output and the
+ * phone-hosted NMEA listener both require a new explicit Start after reboot;
+ * the listener's stored lease is scoped to the previous boot count.
  */
 @AndroidEntryPoint
 class BootRestoreReceiver:BroadcastReceiver(){
@@ -41,8 +42,8 @@ class BootRestoreReceiver:BroadcastReceiver(){
             }
             if(sonar!=null){interrupted=true;sonarDao.refreshSampleCount(sonar.id);sonarDao.finish(sonar.id,now)}
             if(settings.mockEnabled){interrupted=true;settings=settings.copy(mockEnabled=false);preferences.save(settings)}
-            // NMEA Output (including TCP server mode) is intentionally never
-            // restored after reboot. It requires an explicit calibrated Start.
+            // NMEA products are intentionally never restored after reboot.
+            // The local listener repository rejects its previous-boot lease.
             if(interrupted)notifyRecovery(context,sonar!=null)
         }finally{pending.finish()}}
     }

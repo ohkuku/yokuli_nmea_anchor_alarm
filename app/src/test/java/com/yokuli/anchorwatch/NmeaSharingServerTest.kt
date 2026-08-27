@@ -2,6 +2,7 @@ package com.yokuli.anchorwatch
 
 import com.yokuli.anchorwatch.data.sharing.NetworkAddressProvider
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
+import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerLeasePolicy
 import com.yokuli.anchorwatch.data.sharing.SharingServerState
 import com.yokuli.anchorwatch.data.sharing.NmeaOutputMux
 import com.yokuli.anchorwatch.domain.model.NavigationFix
@@ -12,10 +13,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.net.SocketException
 import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NmeaSharingServerTest {
+    @Test fun explicitLocalServerLeaseRestoresOnlyWithinTheSameDeviceBoot(){
+        assertTrue(LocalNmeaServerLeasePolicy.restore(true,42,42))
+        assertFalse(LocalNmeaServerLeasePolicy.restore(false,42,42))
+        assertFalse("A reboot requires another explicit Start",LocalNmeaServerLeasePolicy.restore(true,42,43))
+        assertFalse(LocalNmeaServerLeasePolicy.restore(true,-1,-1))
+    }
     @Test fun capacityMeetsProductMinimumAndQueuesAreBounded(){assertTrue(NmeaSharingServer.MAX_CLIENTS>=5);assertTrue(NmeaSharingServer.CLIENT_QUEUE_CAPACITY in 16..1024)}
 
     @Test fun listeningWithoutAClientNeverClaimsASentenceWasSent(){

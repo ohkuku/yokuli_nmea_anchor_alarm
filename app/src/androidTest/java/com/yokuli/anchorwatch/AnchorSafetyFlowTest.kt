@@ -135,6 +135,7 @@ class AnchorSafetyFlowTest {
         // them as part of every story so a previous Phone Position scenario
         // cannot make a later NMEA-selection story look like a product failure.
         outputSettings.save(NmeaDeviceOutputSettings())
+        localNmeaServerSettings.requestStop()
         preferences.save(AppSettings(gpsDataSource = GpsDataSource.NMEA, gpsLossSeconds = 2))
     }
 
@@ -147,6 +148,7 @@ class AnchorSafetyFlowTest {
             }
         }
         if(::navigation.isInitialized)navigation.disconnectAll()
+        if(::localNmeaServerSettings.isInitialized)localNmeaServerSettings.requestStop()
         if(::dao.isInitialized)dao.active()?.let { dao.updateSession(it.copy(active = false, endedAt = System.currentTimeMillis())) }
         if(::sonarDao.isInitialized)sonarDao.active()?.let{sonarDao.finish(it.id,System.currentTimeMillis())}
     }

@@ -64,7 +64,10 @@ class LongRunningFaultStoryTest{
         assertTrue(enabled.ownerRequirements.getValue(RuntimeOwner.SONAR_MAPPING).needsWifiLock)
         assertTrue(enabled.ownerRequirements.getValue(RuntimeOwner.NMEA_SHARING).needsWifiLock)
         registry.updateKeepWifiAwake(false)
-        assertFalse(registry.snapshot().needsWifiLock)
+        val disabled=registry.snapshot()
+        assertFalse(disabled.ownerRequirements.getValue(RuntimeOwner.SONAR_MAPPING).needsWifiLock)
+        assertTrue("An explicitly running TCP listener owns a mandatory screen-off Wi-Fi lock",disabled.ownerRequirements.getValue(RuntimeOwner.NMEA_SHARING).needsWifiLock)
+        assertTrue(disabled.needsWifiLock)
     }
 
     @Test fun restorePolicyBlocksEveryLiveRuntime(){

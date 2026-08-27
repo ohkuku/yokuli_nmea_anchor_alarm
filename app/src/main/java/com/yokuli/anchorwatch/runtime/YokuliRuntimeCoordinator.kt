@@ -103,7 +103,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private lateinit var anchorActor:AnchorRuntimeActor
  private lateinit var proxyActor:SerialRuntimeActor
  private lateinit var anchorRuntime:AnchorWatchRuntime
- private var scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private var stateReady=CompletableDeferred<Unit>();private val alarmTestGeneration=AtomicLong(0L);private val acceptedIncidentBatch=AtomicLong(0L);private val pendingCommands=AtomicInteger(0);private val audioArbiter=AlarmAudioArbiter();private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;private var lastSonarContinuity=SonarSurveyContinuityState.IDLE;@Volatile private var idleStopJob:Job?=null;@Volatile private var armPending=false;@Volatile private var alarmTestActive=false;@Volatile private var demoMode=false;@Volatile private var appLanguage=AppLanguage.ENGLISH;@Volatile private var started=false
+ private var scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);private var stateReady=CompletableDeferred<Unit>();private val alarmTestGeneration=AtomicLong(0L);private val acceptedIncidentBatch=AtomicLong(0L);private val pendingCommands=AtomicInteger(0);private val audioArbiter=AlarmAudioArbiter();private var alarmSnoozeMinutes=5;private var selectedAlarmSound=AlarmSound.SYSTEM_ALARM;private var customAlarmSoundUri:String?=null;private var lastSonarContinuity=SonarSurveyContinuityState.IDLE;@Volatile private var idleStopJob:Job?=null;@Volatile private var armPending=false;@Volatile private var alarmTestActive=false;@Volatile private var demoMode=false;@Volatile private var appLanguage=AppLanguage.ENGLISH;@Volatile private var started=false;@Volatile private var foregroundLocationType=false
 
  private data class SourcedFix(val source:GpsDataSource,val fix:NavigationFix)
  private data class PhoneOutputConfiguration(val output:NmeaDeviceOutputSettings,val readiness:PhoneVesselOutputReadiness)
@@ -137,7 +137,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   proxyActor=SerialRuntimeActor(scope,{startupReady.await()}){error->incidentLogger.exception("gps_proxy","ACTOR_FAILED",error,anchorRuntime.activeSession()?.id)}
   commandActor=SerialRuntimeActor(scope,{startupReady.await()}){error->incidentLogger.exception("service","COMMAND_ACTOR_FAILED",error,anchorRuntime.activeSession()?.id)}
   channels()
-  host.startForeground(notification(l("Starting safety monitor…","正在启动安全监控…"),false),location=false)
+  promoteForeground(notification(l("Starting safety monitor…","正在启动安全监控…"),false),location=false)
   // Subscribe before either state restoration or provider collection can publish a fix.
   // SharedFlow intentionally has no replay (a fix must never be processed twice), so a
   // normally-dispatched subscriber here creates a cold-start race that can lose the first
@@ -228,10 +228,14 @@ class YokuliRuntimeCoordinator @Inject constructor(
    combine(localNmeaServerSettings.settings,vesselMountCalibration.calibration,vesselAttitude.mountState){settings,calibration,mount->Triple(settings,calibration,mount)}
     .distinctUntilChanged().collect{(settings,calibration,mount)->
      val readiness=PhoneVesselOutputReadinessPolicy.evaluate(calibration,mount)
-     if(settings.serverRequested&&!localNmeaServer.enabled&&!readiness.ready){
-      localNmeaServerSettings.requestStop();localNmeaServer.configure(settings.copy(serverRequested=false))
-      notifySeparate("Phone NMEA service blocked","Align the phone to the vessel bow in Settings → Phone vessel sensors before publishing phone vessel data.",true)
-     }else localNmeaServer.configure(settings)
+     // Formal Start already validates heading alignment. A restored explicit
+     // same-boot lease must not be erased by the repositories' initial
+     // UNCALIBRATED emission; unavailable streams suppress themselves while
+     // Position/pressure and the listener continue.
+     if(settings.serverRequested)promoteForeground(notification(l("Restoring Phone NMEA service…","正在恢复本机 NMEA 服务…"),false),location=systemLocation.hasPermission())
+     localNmeaServer.configure(settings)
+     if(settings.serverRequested&&!readiness.ready)incidentLogger.record("local_nmea_server","RESTORED_WITH_HEADING_DEGRADED",IncidentSeverity.WARNING)
+     refreshNotification()
     }
   }
   scope.launch{
@@ -336,7 +340,11 @@ class YokuliRuntimeCoordinator @Inject constructor(
     refreshNotification();releaseIfIdle()
    }
    RuntimeCommand.RefreshPhoneSensorOutput->launchCommand{configurePhoneOutput(outputSettings.settings.first())}
-   RuntimeCommand.RefreshLocalNmeaServer->launchCommand{localNmeaServer.configure(localNmeaServerSettings.settings.first());refreshNotification()}
+   RuntimeCommand.RefreshLocalNmeaServer->launchCommand{
+    val settings=localNmeaServerSettings.settings.first()
+    if(settings.serverRequested)promoteForeground(notification(l("Starting Phone NMEA service…","正在启动本机 NMEA 服务…"),false),location=systemLocation.hasPermission())
+    localNmeaServer.configure(settings);refreshNotification()
+   }
    RuntimeCommand.StopAllNmeaSharing->launchCommand{
     outputSettings.requestStop();localNmeaServerSettings.requestStop()
     configurePhoneOutput(outputSettings.settings.first().copy(publicationEnabled=false))
@@ -569,12 +577,23 @@ class YokuliRuntimeCoordinator @Inject constructor(
   val activeAlertCount=(if(anchorAlarm)1 else 0)+(if(depthSafetyAlarm)1 else 0)+(if(windSafetyAlarm)1 else 0)+(if(shiftSafetyAlarm)1 else 0)
   val countedBase=if(activeAlertCount>1)l("$base • +${activeAlertCount-1} other active alert${if(activeAlertCount>2)"s" else ""}","$base · 另有 ${activeAlertCount-1} 项警报")else base
   val text=if(snoozed&&alarmCondition)l("$countedBase • snoozed, remind in ${remaining?:alarmSnoozeMinutes}m","$countedBase · 已暂停响铃，${remaining?:alarmSnoozeMinutes} 分钟后再次提醒")else countedBase
-  notificationCoordinator.publishForeground(notification(text,alarmCondition,snoozed))
+  // Updating through startForeground keeps the active service-type mask in
+  // sync with background GNSS ownership; NotificationManager.notify alone
+  // cannot promote an existing connected-device service to location use.
+  val currentNotification=notification(text,alarmCondition,snoozed)
+  val needsLocationType=resources.snapshot().needsSystemLocation&&systemLocation.hasPermission()
+  if(needsLocationType!=foregroundLocationType)promoteForeground(currentNotification,needsLocationType)
+  else notificationCoordinator.publishForeground(currentNotification)
  }
  private fun notification(text:String,alarm:Boolean,silent:Boolean=false):Notification=notificationCoordinator.foregroundNotification(text,alarm,silent,if(alarm)l("Anchor Watch alarm","Anchor Watch 锚警") else if(mockGps.status.value.state==MockGpsState.ACTIVE)l("NMEA GPS Proxy","NMEA GPS 代理") else l("Anchor Watch active","Anchor Watch 运行中"),l("SNOOZE ${alarmSnoozeMinutes} MIN","${alarmSnoozeMinutes} 分钟后提醒"))
  fun ensureCommandForeground():Boolean{
   idleStopJob?.cancel();idleStopJob=null
-  return started&&host.startForeground(notification(l("Processing safety action…","正在处理安全操作…"),false),location=false)
+  return started&&promoteForeground(notification(l("Processing safety action…","正在处理安全操作…"),false),location=foregroundLocationType||resources.snapshot().needsSystemLocation&&systemLocation.hasPermission())
+ }
+ private fun promoteForeground(value:Notification,location:Boolean):Boolean{
+  val promoted=started&&host.startForeground(value,location)
+  if(promoted)foregroundLocationType=location
+  return promoted
  }
  private fun notifySeparate(title:String,text:String,high:Boolean,context:RuntimeFeedbackContext=RuntimeFeedbackContext.GENERAL){
   val visibleTitle=serviceMessage(title);val visibleText=serviceMessage(text)
@@ -586,8 +605,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private fun reconcileAudio():com.yokuli.anchorwatch.runtime.notification.AlarmPlayback=if(audioArbiter.snapshot(wallClock.currentTimeMillis()).shouldSound)alarmAudio.start(selectedAlarmSound,customAlarmSoundUri)else{alarmAudio.stop();com.yokuli.anchorwatch.runtime.notification.AlarmPlayback(false,0)}
  private fun setConditionAlarmSources(value:ConditionRuntimeSnapshot){val active=conditionRuntime.audibleSources(wallClock.currentTimeMillis());audioArbiter.setActive(ConditionAlarmSource.DEPTH,ConditionAlarmSource.DEPTH in active);audioArbiter.setActive(ConditionAlarmSource.WIND_SPEED,ConditionAlarmSource.WIND_SPEED in active);audioArbiter.setActive(ConditionAlarmSource.WIND_SHIFT,ConditionAlarmSource.WIND_SHIFT in active);reconcileAudio()}
  private fun clearConditionSources(){audioArbiter.clear(ConditionAlarmSource.DEPTH);audioArbiter.clear(ConditionAlarmSource.WIND_SPEED);audioArbiter.clear(ConditionAlarmSource.WIND_SHIFT);reconcileAudio()}
- private fun enableSystemGps():Boolean{if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)return false;return host.startForeground(notification("System GPS anchor monitoring…",false),location=true)}
- private fun ensureLocationForeground(message:String)=host.startForeground(notification(message,false),location=true)
+ private fun enableSystemGps():Boolean{if(ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)return false;return promoteForeground(notification("System GPS anchor monitoring…",false),location=true)}
+ private fun ensureLocationForeground(message:String)=promoteForeground(notification(message,false),location=true)
  private suspend fun handleProxyResult(result:ProxyRuntimeResult?){
  result?:return
   result.eventType?.let{eventType->anchorActor.submit{logEvent(eventType,result.eventDetail)}}
@@ -661,6 +680,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  @Synchronized fun shutdown(){
   if(!started)return
   started=false
+  foregroundLocationType=false
   idleStopJob?.cancel();idleStopJob=null
   incidentLogger.record("service","STOPPED");commandActor.shutdown();anchorActor.shutdown();proxyActor.shutdown();phonePositionOutput.shutdown();localNmeaServer.shutdown();tripRuntime.shutdown();anchorTelemetry.shutdown();scope.cancel();navigation.releaseBackgroundConnection();runBlocking(Dispatchers.IO){withTimeoutOrNull(2000){proxyRuntime.shutdown()}};cleanup();diagnostics.serviceStopped()
  }

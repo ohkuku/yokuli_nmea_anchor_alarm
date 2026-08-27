@@ -55,7 +55,11 @@ class RuntimeOwnerRegistry {
         requirements.keys.toList().forEach{owner->
             val requirement=requirements.getValue(owner)
             val networkOwner=requirement.needsNmeaTransport||owner==RuntimeOwner.NMEA_SHARING
-            requirements[owner]=requirement.copy(needsWifiLock=enabled&&networkOwner)
+            // A user explicitly started a listening TCP service. Unlike an
+            // optional monitor preference, its network availability is the
+            // product itself and must survive screen-off until explicit Stop.
+            val mandatoryServerLock=owner==RuntimeOwner.NMEA_SHARING
+            requirements[owner]=requirement.copy(needsWifiLock=mandatoryServerLock||enabled&&networkOwner)
         }
     }
     @Synchronized fun snapshot():RuntimeResourceSnapshot{
@@ -85,7 +89,8 @@ class RuntimeResourceManager @Inject constructor(
     private val wifiManager=context.applicationContext.getSystemService(WifiManager::class.java)
     private val registry=RuntimeOwnerRegistry()
     private var wakeLock:PowerManager.WakeLock?=null
-    private var wifiLock:WifiManager.WifiLock?=null
+    private var highPerformanceWifiLock:WifiManager.WifiLock?=null
+    private var lowLatencyWifiLock:WifiManager.WifiLock?=null
     private val _state=MutableStateFlow(RuntimeResourceSnapshot())
     val state=_state.asStateFlow()
 
@@ -99,10 +104,20 @@ class RuntimeResourceManager @Inject constructor(
         val wanted=registry.snapshot()
         if(wanted.needsWakeLock){if(wakeLock?.isHeld!=true)wakeLock=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"anchorwatch:runtime").apply{setReferenceCounted(false);acquire()}}
         else{wakeLock?.takeIf{it.isHeld}?.release();wakeLock=null}
-        if(wanted.needsWifiLock){if(wifiLock?.isHeld!=true){val mode=if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q)WifiManager.WIFI_MODE_FULL_LOW_LATENCY else 3;wifiLock=wifiManager.createWifiLock(mode,"anchorwatch:nmea-runtime").apply{setReferenceCounted(false);acquire()}}}
-        else{wifiLock?.takeIf{it.isHeld}?.release();wifiLock=null}
+        if(wanted.needsWifiLock){
+            // LOW_LATENCY is documented to be active only while the screen is
+            // on. HIGH_PERF remains the effective lock after screen-off. Hold
+            // both on Android Q+ so the foreground service has the appropriate
+            // mode in each display state.
+            @Suppress("DEPRECATION")
+            if(highPerformanceWifiLock?.isHeld!=true)highPerformanceWifiLock=wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,"boatwatch:nmea-screen-off").apply{setReferenceCounted(false);acquire()}
+            if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q&&lowLatencyWifiLock?.isHeld!=true)lowLatencyWifiLock=wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY,"boatwatch:nmea-screen-on").apply{setReferenceCounted(false);acquire()}
+        }else{
+            highPerformanceWifiLock?.takeIf{it.isHeld}?.release();highPerformanceWifiLock=null
+            lowLatencyWifiLock?.takeIf{it.isHeld}?.release();lowLatencyWifiLock=null
+        }
         systemLocation.setBackgroundEnabled(wanted.needsSystemLocation)
         val sensorState=sensors.reconcile(wanted.needsPhoneMotion,wanted.needsPhoneHeading,wanted.needsPhonePressure)
-        _state.value=wanted.copy(wakeLockHeld=wakeLock?.isHeld==true,wifiLockHeld=wifiLock?.isHeld==true,phoneMotionActive=sensorState.phoneMotionActive,phoneHeadingActive=sensorState.phoneHeadingActive,phonePressureActive=sensorState.phonePressureActive)
+        _state.value=wanted.copy(wakeLockHeld=wakeLock?.isHeld==true,wifiLockHeld=highPerformanceWifiLock?.isHeld==true||lowLatencyWifiLock?.isHeld==true,phoneMotionActive=sensorState.phoneMotionActive,phoneHeadingActive=sensorState.phoneHeadingActive,phonePressureActive=sensorState.phonePressureActive)
     }
 }

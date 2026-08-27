@@ -35,6 +35,8 @@ Run the short matrix on at least one Pixel-class device and one vendor-modified 
 - [ ] Start NMEA Sharing with at least one client; start a sonar survey when fresh same-stream GPS and depth are available.
 - [ ] Turn the screen off for eight hours. Keep the phone on its intended charger and boat Wi-Fi.
 - [ ] At 1 h, 4 h and 8 h record battery percentage, device temperature if available, process survival, accepted fixes, reconnect count, wake/Wi-Fi lock state, client count and sonar sample count from Diagnostics.
+- [ ] Separately start **Data → Output → Phone NMEA service**, connect a second phone/dashboard, then lock the server phone for at least 15 minutes. Confirm sentences continue at 1 Hz, CPU/Wi-Fi locks remain Held, and a client reconnect while the server phone is still locked succeeds without reopening Boat Watch.
+- [ ] While that listener is running, simulate same-boot process reclamation (not device reboot) and confirm `START_STICKY` restores the listener and the saved port. Then reboot the device and confirm the listener remains stopped until an explicit Start.
 - [ ] Verify that no session source changed, no candidate centre was applied automatically, and no raw rejected position appeared on the map, in Sharing or in sonar samples.
 
 ## Controlled fault chain

@@ -411,7 +411,14 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{mockManager.status.collect{status->_ui.update{current->val defaultInactive=status.state==MockGpsState.INACTIVE&&status.message=="Android GPS is using the normal system source.";current.copy(mockGps=status,proxyFeedback=if(defaultInactive)current.proxyFeedback?:status.message else status.message)}}}
         viewModelScope.launch{alarmUi.snapshot.collect{snapshot->_ui.update{it.copy(alarmSnapshot=snapshot)}}}
         viewModelScope.launch{sharingServer.status.collect{status->_ui.update{it.copy(nmeaSharing=status)}}}
-        viewModelScope.launch{localNmeaServerSettingsRepository.settings.collect{value->_ui.update{it.copy(localNmeaServerSettings=value)}}}
+        viewModelScope.launch{localNmeaServerSettingsRepository.settings.collect{value->
+            _ui.update{it.copy(localNmeaServerSettings=value)}
+            // START_STICKY normally recreates the foreground service itself.
+            // If the user later reopens the Activity after an OEM/force-stop
+            // boundary, reclaim the still-explicit same-boot lease here while
+            // a visible Activity is allowed to start the service.
+            if(value.serverRequested&&!localNmeaServerRuntime.enabled)ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
+        }}
         viewModelScope.launch{localNmeaServerRuntime.status.collect{value->_ui.update{it.copy(localNmeaServerRuntime=value)}}}
         viewModelScope.launch{sonarDao.surveys().collect{surveys->
             val selected=_ui.value.selectedSonarSurveyId?.takeIf{selectedId->selectedId==CORRECTED_SONAR_HISTORY_ID||surveys.any{it.id==selectedId}}?:surveys.firstOrNull()?.id
@@ -780,7 +787,7 @@ class MainViewModel @Inject constructor(
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
     }
 
-    fun stopLocalNmeaServer(){
+    fun stopLocalNmeaServer()=viewModelScope.launch{
         localNmeaServerSettingsRepository.requestStop();_ui.update{it.copy(localNmeaServerSettings=it.localNmeaServerSettings.copy(serverRequested=false),connectionAttempt=ConnectionAttempt())}
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_LOCAL_NMEA_SERVER))
     }
@@ -788,7 +795,7 @@ class MainViewModel @Inject constructor(
     /** Emergency master stop. Product-specific Stop buttons remain independent,
      * while this action guarantees that "stop all sharing" revokes both live
      * leases before one foreground command performs both hard-stop paths. */
-    fun stopAllNmeaSharing(){
+    fun stopAllNmeaSharing()=viewModelScope.launch{
         outputSettingsRepository.requestStop()
         localNmeaServerSettingsRepository.requestStop()
         _ui.update{it.copy(
