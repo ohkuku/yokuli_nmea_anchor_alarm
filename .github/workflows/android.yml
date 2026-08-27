@@ -59,7 +59,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: boat-watch-debug-candidate-${{ github.sha }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
       - name: Upload explicitly unverified diagnostic APK
@@ -67,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: UNVERIFIED-boat-watch-debug-${{ github.sha }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
       - name: Upload unit-test and lint reports
@@ -292,7 +292,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: boat-watch-debug-verified-${{ github.sha }}
-          path: verified-apk/app-debug.apk
+          path: verified-apk/*.apk
           if-no-files-found: error
           retention-days: 30
       - name: Publish rolling development Debug APK
@@ -300,7 +300,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: boat-watch-development-debug-${{ github.run_number }}-${{ github.sha }}
-          path: verified-apk/app-debug.apk
+          path: verified-apk/*.apk
           if-no-files-found: error
           retention-days: 45
       - name: Verified artifact summary

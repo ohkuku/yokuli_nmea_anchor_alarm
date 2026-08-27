@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.yokuli.anchorwatch.R
+import com.yokuli.anchorwatch.BuildConfig
 import com.yokuli.anchorwatch.brand.ProductBrand
 import kotlinx.coroutines.launch
 
@@ -96,6 +97,7 @@ fun AboutScreen(onBack: () -> Unit, onFeedback: () -> Unit) {
                     }
                 }
                 item { LegalSection(::open) }
+                item { BuildIdentitySection() }
                 item { Spacer(Modifier.height(12.dp)) }
             }
         }
@@ -114,6 +116,16 @@ fun AboutScreen(onBack: () -> Unit, onFeedback: () -> Unit) {
             },
             dismissButton = { TextButton({ pendingSupportUrl = null }) { Text(aboutString(R.string.about_cancel)) } },
         )
+    }
+}
+
+@Composable
+private fun BuildIdentitySection(){
+    AboutSection("BUILD IDENTITY","Verifiable build"){
+        Text("${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${BuildConfig.BUILD_CHANNEL}",fontWeight=FontWeight.SemiBold)
+        Text("Git ${BuildConfig.BUILD_GIT_SHA.take(12)}${if(BuildConfig.BUILD_GIT_DIRTY)" · DIRTY" else " · clean"}",style=MaterialTheme.typography.bodySmall)
+        Text("${BuildConfig.BUILD_GIT_BRANCH} · ${BuildConfig.BUILD_TIMESTAMP_UTC}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("CI ${BuildConfig.BUILD_IN_CI} · DB schema ${BuildConfig.DATABASE_SCHEMA_VERSION}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

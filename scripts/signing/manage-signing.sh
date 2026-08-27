@@ -244,7 +244,10 @@ build_release() {
   export VERSION_CODE="$version_code"
   (cd "$REPO_ROOT" && ./gradlew --no-daemon assembleRelease bundleRelease)
   unset ANDROID_KEYSTORE_FILE ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD VERSION_NAME VERSION_CODE
-  note "Release APK: $REPO_ROOT/app/build/outputs/apk/release/app-release.apk"
+  local release_apk
+  release_apk="$(find "$REPO_ROOT/app/build/outputs/apk/release" -maxdepth 1 -type f -name '*.apk' -print -quit)"
+  [[ -n "$release_apk" ]] || die "Release APK was not produced."
+  note "Release APK: $release_apk"
   note "Release AAB: $REPO_ROOT/app/build/outputs/bundle/release/app-release.aab"
 }
 

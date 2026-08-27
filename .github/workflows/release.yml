@@ -254,20 +254,19 @@ jobs:
       - name: Verify APK signature and create checksums
         run: |
           apksigner_path="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f -print | sort -V | tail -n 1)"
+          release_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -x "$apksigner_path"
-          "$apksigner_path" verify --verbose app/build/outputs/apk/release/app-release.apk
-          sha256sum \
-            app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/bundle/release/app-release.aab \
-            > SHA256SUMS.txt
+          test -n "$release_apk"
+          "$apksigner_path" verify --verbose "$release_apk"
+          mkdir -p release-artifacts
+          cp "$release_apk" release-artifacts/
+          cp app/build/outputs/bundle/release/app-release.aab release-artifacts/
+          (cd release-artifacts && sha256sum *.apk *.aab > SHA256SUMS.txt)
       - name: Upload signed release artifacts
         uses: actions/upload-artifact@v6
         with:
           name: boat-watch-${{ needs.validate-release.outputs.release_tag }}-signed
-          path: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/bundle/release/app-release.aab
-            SHA256SUMS.txt
+          path: release-artifacts/*
           if-no-files-found: error
           retention-days: 90
       - name: Publish GitHub Release
@@ -277,9 +276,9 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.validate-release.outputs.release_channel }}
         run: |
           release_files=(
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/bundle/release/app-release.aab
-            SHA256SUMS.txt
+            release-artifacts/*.apk
+            release-artifacts/*.aab
+            release-artifacts/SHA256SUMS.txt
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${release_files[@]}" --clobber

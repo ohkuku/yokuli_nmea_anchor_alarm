@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.time.Instant
 
 plugins {
     alias(libs.plugins.android.application)
@@ -51,6 +52,14 @@ val linzSoundingLayerIds = "50858|50866|50506|50418|51612"
 val linzDepthAreaLayerIds = "50671|50553|50447|50852|51639"
 val linzDepthContourLayerIds = "50672|50554|50448|50849|51638"
 fun String.asBuildConfigString() = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
+fun gitValue(vararg args:String):String=runCatching{
+    providers.exec{commandLine("git",*args)}.standardOutput.asText.get().trim()
+}.getOrDefault("")
+val buildGitSha=(System.getenv("GITHUB_SHA")?.takeIf{it.isNotBlank()}?:gitValue("rev-parse","HEAD")).ifBlank{"unknown"}
+val buildGitBranch=(System.getenv("GITHUB_REF_NAME")?.takeIf{it.isNotBlank()}?:gitValue("branch","--show-current")).ifBlank{"detached"}
+val buildGitDirty=gitValue("status","--porcelain").isNotBlank()
+val buildTimestampUtc=System.getenv("BUILD_TIMESTAMP_UTC")?.takeIf{it.isNotBlank()}?:Instant.now().toString()
+val buildInCi=(System.getenv("GITHUB_ACTIONS")?:"false").equals("true",true)
 val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
 val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
@@ -81,6 +90,12 @@ android {
         buildConfigField("String", "YOKULI_CONTACT_EMAIL", yokuliContactEmail.asBuildConfigString())
         buildConfigField("String", "YOKULI_PRIVACY_URL", yokuliPrivacyUrl.asBuildConfigString())
         buildConfigField("String", "YOKULI_SOURCE_CODE_URL", yokuliSourceCodeUrl.asBuildConfigString())
+        buildConfigField("String", "BUILD_GIT_SHA", buildGitSha.asBuildConfigString())
+        buildConfigField("String", "BUILD_GIT_BRANCH", buildGitBranch.asBuildConfigString())
+        buildConfigField("boolean", "BUILD_GIT_DIRTY", buildGitDirty.toString())
+        buildConfigField("String", "BUILD_TIMESTAMP_UTC", buildTimestampUtc.asBuildConfigString())
+        buildConfigField("boolean", "BUILD_IN_CI", buildInCi.toString())
+        buildConfigField("int", "DATABASE_SCHEMA_VERSION", "21")
     }
     signingConfigs {
         if (releaseSigningAvailable) {
@@ -93,8 +108,12 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            buildConfigField("String", "BUILD_CHANNEL", "debug".asBuildConfigString())
+        }
         getByName("release") {
             signingConfig = signingConfigs.findByName("release")
+            buildConfigField("String", "BUILD_CHANNEL", "release".asBuildConfigString())
         }
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -106,6 +125,16 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     kotlinOptions { jvmTarget = "17" }
     sourceSets { getByName("androidTest").assets.srcDir("$projectDir/schemas") }
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            (output as? com.android.build.api.variant.impl.VariantOutputImpl)?.outputFileName?.set(
+                "boat-watch-${variant.name}-${android.defaultConfig.versionName}-${buildGitSha.take(8)}${if(buildGitDirty)"-dirty" else ""}.apk"
+            )
+        }
+    }
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }

@@ -20,7 +20,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.printToString
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -70,6 +69,7 @@ import java.io.Closeable
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.Locale
@@ -184,6 +184,33 @@ class AnchorSafetyFlowTest {
         assertFalse(active.paused)
         assertEquals(GpsDataSource.SYSTEM.name,active.positionSource)
         assertEquals(NmeaConnectionState.DISCONNECTED,navigation.connectionState.value)
+    }
+
+    @Test fun manualCoordinateWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor() = runBlocking<Unit>{
+        TestNmeaServer().use{server->
+            server.setEmitting(false)
+            val profile=liveProfile(server,true)
+            preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))
+            val anchorLatitude=-36.851234;val anchorLongitude=174.771234
+            val arm=Intent(context,AnchorForegroundService::class.java)
+                .setAction(AnchorForegroundService.ARM)
+                .putExtra("lat",anchorLatitude).putExtra("lon",anchorLongitude)
+                .putExtra("rode",0.0).putExtra("depth",Double.NaN).putExtra("bowHeight",0.0)
+                .putExtra("boatLength",Double.NaN).putExtra("antennaOffset",0.0)
+                .putExtra("warning",40.0).putExtra("alarm",50.0)
+                .putExtra("placement","CENTER_DROP").putExtra("rangeMode","BASIC")
+                .putExtra("safetyPreset","BALANCED").putExtra("positionSource",GpsDataSource.NMEA.name)
+                .putExtra("centerSource",AnchorCenterSource.MANUAL_COORDINATES.name)
+                .putExtra("originMode","MANUAL_COORDINATE").putExtra("depthSource","MANUAL")
+            ContextCompat.startForegroundService(context,arm)
+            val waiting=withTimeout(10_000){while(dao.active()?.monitoringPhase!="WAITING_FOR_GPS")delay(50);dao.active()!!}
+            assertEquals(anchorLatitude,waiting.anchorLatitude,0.0);assertEquals(anchorLongitude,waiting.anchorLongitude,0.0)
+            assertTrue(waiting.monitoringActivatedAt==null);assertTrue(dao.points(waiting.id).first().isEmpty())
+            server.setEmitting(true)
+            val armed=withTimeout(15_000){while(dao.active()?.monitoringPhase!="ARMED")delay(50);dao.active()!!}
+            assertEquals(anchorLatitude,armed.anchorLatitude,0.0);assertEquals(anchorLongitude,armed.anchorLongitude,0.0)
+            assertNotNull(armed.monitoringActivatedAt)
+        }
     }
 
     @Test fun activeNmeaWatchDisconnectDialogDoesNotOfferUnsafeHotSwitch() = runBlocking<Unit> {
@@ -361,7 +388,7 @@ class AnchorSafetyFlowTest {
         }
     }
 
-    @Test fun successfulSaveAndConnectMakesNmeaTheDefaultGpsSource() = runBlocking<Unit> {
+    @Test fun successfulConnectSuggestsNmeaButChangesGpsOnlyAfterExplicitConsent() = runBlocking<Unit> {
         TestNmeaServer().use { server ->
             preferences.save(AppSettings(profile=liveProfile(server,true),gpsDataSource=GpsDataSource.SYSTEM,demoMode=false))
             ActivityScenario.launch(MainActivity::class.java).use {
@@ -373,22 +400,16 @@ class AnchorSafetyFlowTest {
                 compose.onNodeWithText("127.0.0.1").assertExists()
                 compose.onNodeWithText(server.port.toString()).assertExists()
                 compose.onNodeWithTag("nmea_connect_input").performScrollTo().performClick()
-                val selected=withTimeoutOrNull(15_000){preferences.settings.first{it.gpsDataSource==GpsDataSource.NMEA}}
-                val attemptNode=compose.onAllNodesWithTag("nmea_connection_attempt",useUnmergedTree=true).fetchSemanticsNodes().firstOrNull()
-                val attemptText=attemptNode?.let{node->runCatching{node.config[SemanticsProperties.Text].joinToString()}.getOrNull()}
-                assertNotNull(
-                    "Save/connect did not select NMEA; acceptedSockets=${server.accepted.get()}, " +
-                        "connection=${navigation.connectionState.value}, attempt=$attemptText, settings=${preferences.settings.first()}" +
-                        "\nsemantics=${compose.onRoot(useUnmergedTree=true).printToString(maxDepth=12)}",
-                    selected,
-                )
-                requireNotNull(selected)
-                assertEquals(GpsDataSource.NMEA,selected.gpsDataSource)
-                assertTrue(!selected.demoMode)
+                withTimeout(15_000){navigation.fix.first{it?.valid==true}}
+                assertEquals("Connecting instruments must not change anchor GPS consent",GpsDataSource.SYSTEM,preferences.settings.first().gpsDataSource)
                 assertEquals("Save/connect must retain one formal RX socket, not open a disposable preflight client",1,server.accepted.get())
                 compose.onNodeWithTag("data_tab_vessel").performClick()
                 compose.onNodeWithTag("data_gps_controls").performScrollTo()
                 compose.onNodeWithTag("gps_source_nmea").assertIsEnabled()
+                compose.onNodeWithTag("nmea_gps_suggestion").performScrollTo().assertExists()
+                compose.onNodeWithText("Use NMEA GPS").performClick()
+                val selected=withTimeout(5_000){preferences.settings.first{it.gpsDataSource==GpsDataSource.NMEA}}
+                assertFalse(selected.demoMode)
             }
         }
     }
@@ -471,6 +492,7 @@ class AnchorSafetyFlowTest {
             compose.waitUntil(5_000){compose.onAllNodesWithText("Data").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithText("Data").performClick()
             compose.onNodeWithTag("data_tab_vessel").performClick()
+            compose.onNodeWithTag("data_gps_proxy_toggle").performScrollTo().performClick()
             compose.onNodeWithText("Enable global GPS proxy").performScrollTo().performClick()
             compose.onNodeWithText("Connect the NMEA server and wait for a fresh valid position before enabling the global proxy.").assertExists()
             compose.onNodeWithText("Select mock location app → Boat Watch.",substring=true).assertExists()
@@ -1107,6 +1129,7 @@ private class TestNmeaServer : Closeable {
     private val clients = CopyOnWriteArrayList<Socket>()
     val accepted = AtomicInteger()
     private val sentence=AtomicReference(rmc(-36.8485,174.7633))
+    private val emitting=AtomicBoolean(true)
     private val depthSentence=AtomicReference<ByteArray?>(null)
     val port: Int get() = server.localPort
 
@@ -1124,6 +1147,7 @@ private class TestNmeaServer : Closeable {
         try {
             var emitted = 0
             while (scope.isActive && !socket.isClosed) {
+                if(!emitting.get()){delay(100);continue}
                 socket.getOutputStream().write(sentence.get())
                 depthSentence.get()?.let{socket.getOutputStream().write(it)}
                 socket.getOutputStream().flush()
@@ -1139,6 +1163,7 @@ private class TestNmeaServer : Closeable {
     }
 
     fun setFix(latitude:Double,longitude:Double){sentence.set(rmc(latitude,longitude))}
+    fun setEmitting(value:Boolean){emitting.set(value)}
     fun setDepth(depthMeters:Double,offsetMeters:Double){depthSentence.set((NmeaChecksum.append("IIDPT,$depthMeters,$offsetMeters")+"\r\n").toByteArray())}
     fun closeConnections() { clients.toList().forEach { runCatching { it.close() } } }
     override fun close() { closeConnections(); runCatching { server.close() }; scope.cancel() }

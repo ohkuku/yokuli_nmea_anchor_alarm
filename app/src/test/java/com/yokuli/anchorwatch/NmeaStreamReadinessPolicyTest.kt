@@ -85,11 +85,12 @@ class NmeaStreamReadinessPolicyTest {
     }
 
     @Test fun invalidAttitudeSegmentSuppressesOnlyMotionOnEveryTransport(){
-        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
-        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.MOTION,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.RATE_OF_TURN,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.ATTITUDE,PhoneVesselMountState.MOUNT_SUSPECT))
         assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.POSITION,PhoneVesselMountState.MOUNT_SUSPECT))
         assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.PRESSURE,PhoneVesselMountState.MOUNT_SUSPECT))
-        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
     }
 
     @Test fun missingHeadingAlignmentBlocksOnlyAFormalStartNotAnExistingSession(){
@@ -97,7 +98,7 @@ class NmeaStreamReadinessPolicyTest {
             VesselMountCalibration(),
             PhoneVesselMountState.MOUNT_SUSPECT,
         )
-        assertTrue(FormalOutputSessionReadinessPolicy.blocksStart(requestedRunning=true,currentlyEnabled=false,readiness=blocked))
+        assertFalse(FormalOutputSessionReadinessPolicy.blocksStart(requestedRunning=true,currentlyEnabled=false,readiness=blocked))
         assertFalse(FormalOutputSessionReadinessPolicy.blocksStart(requestedRunning=true,currentlyEnabled=true,readiness=blocked))
     }
 }

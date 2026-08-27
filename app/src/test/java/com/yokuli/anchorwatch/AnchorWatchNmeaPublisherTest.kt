@@ -8,14 +8,22 @@ import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.domain.vessel.*
 import com.yokuli.anchorwatch.runtime.output.*
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
+import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import org.junit.Assert.*
 import org.junit.Test
 
 class AnchorWatchNmeaPublisherTest{
     private val mux=NmeaOutputMux()
     private val encoder=AnchorWatchNmeaFeedEncoder(mux)
-    private val dedicatedDestination=NmeaDeviceOutputSettings(phonePositionEnabled=true,transportMode=NmeaOutputTransportMode.DEDICATED_TCP)
-    private fun heading(value:Double,source:VesselDataSource=VesselDataSource.PHONE_MAGNETOMETER,received:Long=0)=VesselObservation(value,source,receivedElapsedRealtime=received,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.HELD,sourceClass=if(source==VesselDataSource.BOAT_NMEA)VesselSourceClass.BOAT_NMEA else VesselSourceClass.PHONE_VESSEL_HEADING)
+    private val dedicatedDestination=NmeaDeviceOutputSettings(phonePositionEnabled=true,phoneHeadingEnabled=true,phonePressureEnabled=true,includePressure=true,derivedWindPolicy=PublicationPolicy.ALWAYS,includeDerivedWind=true,transportMode=NmeaOutputTransportMode.DEDICATED_TCP)
+    private val aligned=VesselMountCalibration(version=3,calibratedAt=1,mountState=PhoneVesselMountState.VESSEL_MOUNTED,mountConfirmedVersion=3,headingAlignmentCompletedAt=2,headingAlignmentVersion=3)
+    private fun heading(value:Double,source:VesselDataSource=VesselDataSource.PHONE_MAGNETOMETER,received:Long=0):VesselObservation<Double>{
+        val phone=source!=VesselDataSource.BOAT_NMEA
+        val identity=if(phone)VesselSourceIdentity("phone:vessel-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone vessel heading")else null
+        return VesselObservation(value,source,receivedElapsedRealtime=received,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=identity,sourceClass=if(phone)VesselSourceClass.PHONE_VESSEL_HEADING else VesselSourceClass.BOAT_NMEA,provenanceDetail=if(phone)VesselProvenance.PhoneSensor("Mounted phone heading",3)else null)
+    }
+    private fun encodeHeading(snapshot:VesselDataSnapshot,now:Long,settings:NmeaDeviceOutputSettings=dedicatedDestination,inputGeneration:Long?=null,inputProfile:String?=null)=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,settings,now,inputTransportGeneration=inputGeneration,inputProfileId=inputProfile,mountCalibration=aligned,runtimeMountState=PhoneVesselMountState.VESSEL_MOUNTED)
 
     @Test fun everyStreamUsesOneHertzAndConstantHeadingNeverBecomesBlank(){
         assertTrue(AnchorWatchNmeaStream.entries.all{it.periodMillis==1_000L})
@@ -25,7 +33,7 @@ class AnchorWatchNmeaPublisherTest{
             if(AnchorWatchNmeaStream.HEADING in heartbeat.due(now)){
                 // The physical sensor heartbeat stays live while the numeric
                 // heading remains exactly unchanged.
-                val batch=encoder.encode(AnchorWatchNmeaStream.HEADING,VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=now)),NmeaDeviceOutputSettings(),now)
+                val batch=encodeHeading(VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=now)),now)
                 assertEquals(1,batch.sentences.size);assertTrue(batch.sentences.single().contains("HDT,123.40,T"));assertFalse(batch.sentences.single().contains("HDT,,"));writes+=now
             }
         }
@@ -51,7 +59,7 @@ class AnchorWatchNmeaPublisherTest{
             sourceClass=VesselSourceClass.BOAT_NMEA,
             receivedElapsedRealtime=0,
         )
-        val phoneCandidate=VesselSourceCandidate(metric=VesselMetricId.HEADING_TRUE,value=83.0,source=VesselSourceIdentity("phone-vessel-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone vessel compass"),sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=0)
+        val phoneCandidate=VesselSourceCandidate(metric=VesselMetricId.HEADING_TRUE,value=83.0,source=VesselSourceIdentity("phone-vessel-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone vessel compass"),sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=0,provenance=VesselProvenance.PhoneSensor("Mounted phone heading",3))
         val snapshot=VesselDataSnapshot(
             headingTrueDegrees=heading(271.0,VesselDataSource.BOAT_NMEA).copy(
                 sourceIdentity=boatCandidate.source,
@@ -59,14 +67,11 @@ class AnchorWatchNmeaPublisherTest{
             ),
             candidates=mapOf(VesselMetricId.HEADING_TRUE to listOf(boatCandidate,phoneCandidate)),
         )
-        val injected=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,NmeaDeviceOutputSettings(),0,inputTransportGeneration=1,inputProfileId="boat")
+        val injected=encodeHeading(snapshot,0,inputGeneration=1,inputProfile="boat")
         assertEquals(1,injected.sentences.size);assertTrue(injected.sentences.single().contains("HDT,83.00,T"));assertTrue(injected.sourceConflict)
         encoder.reset()
-        repeat(20){index->
-            val output=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,dedicatedDestination,index*200L).sentences.single()
-            assertTrue(output.contains("HDT,83.00,T"))
-            assertTrue(output.startsWith("\$IIHDT"))
-        }
+        val output=encodeHeading(snapshot,0).sentences.single()
+        assertTrue(output.contains("HDT,83.00,T"));assertTrue(output.startsWith("\$IIHDT"))
     }
 
     @Test fun selectedBoatValueFromOldInputGenerationCannotCrossReconnect(){
@@ -80,9 +85,9 @@ class AnchorWatchNmeaPublisherTest{
         assertTrue(encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot(2,95.0),NmeaDeviceOutputSettings(),1_400,inputTransportGeneration=2).sentences.isEmpty())
     }
 
-    @Test fun numericHeading_thenBlankHeartbeats_remainsHeldAndPublished(){
+    @Test fun numericHeading_thenBlankHeartbeats_stopsInsteadOfPublishingHeldHdt(){
         val source=VesselSourceIdentity("phone-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone heading")
-        repeat(3_001){index->
+        repeat(2){index->
             val now=index*200L
             val held=VesselObservation(
                 value=123.4,
@@ -93,6 +98,7 @@ class AnchorWatchNmeaPublisherTest{
                 freshness=if(now==0L)VesselDataFreshness.FRESH else VesselDataFreshness.HELD,
                 sourceIdentity=source,
                 sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING,
+                provenanceDetail=VesselProvenance.PhoneSensor("Mounted phone heading",3),
             )
             val candidate=VesselSourceCandidate(
                 metric=VesselMetricId.HEADING_TRUE,
@@ -101,53 +107,47 @@ class AnchorWatchNmeaPublisherTest{
                 sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING,
                 receivedElapsedRealtime=0L,
                 sourceHeartbeatElapsedRealtime=now,
+                provenance=VesselProvenance.PhoneSensor("Mounted phone heading",3),
             )
-            val sentence=encoder.encode(
-                AnchorWatchNmeaStream.HEADING,
-                VesselDataSnapshot(headingTrueDegrees=held,candidates=mapOf(VesselMetricId.HEADING_TRUE to listOf(candidate))),
-                dedicatedDestination,
-                now,
-            ).sentences.single()
-            assertTrue(sentence.contains("HDT,123.40,T"))
-            assertFalse(sentence.contains("HDT,,"))
+            val batch=encodeHeading(VesselDataSnapshot(headingTrueDegrees=held,candidates=mapOf(VesselMetricId.HEADING_TRUE to listOf(candidate))),now)
+            if(index==0)assertTrue(batch.sentences.single().contains("HDT,123.40,T")) else assertTrue(batch.sentences.isEmpty())
         }
     }
 
     @Test fun headingExplicitInvalid_stopsImmediatelyAndClearsThePublisherLease(){
         val source=VesselSourceIdentity("phone-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone heading")
-        val validCandidate=VesselSourceCandidate(VesselMetricId.HEADING_TRUE,123.4,source,VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=1_000)
+        val validCandidate=VesselSourceCandidate(VesselMetricId.HEADING_TRUE,123.4,source,VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=1_000,provenance=VesselProvenance.PhoneSensor("Mounted phone heading",3))
         val valid=VesselDataSnapshot(
-            headingTrueDegrees=VesselObservation(123.4,VesselDataSource.PHONE_MAGNETOMETER,receivedElapsedRealtime=1_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING),
+            headingTrueDegrees=VesselObservation(123.4,VesselDataSource.PHONE_MAGNETOMETER,receivedElapsedRealtime=1_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING,provenanceDetail=VesselProvenance.PhoneSensor("Mounted phone heading",3)),
             candidates=mapOf(VesselMetricId.HEADING_TRUE to listOf(validCandidate)),
         )
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.HEADING,valid,dedicatedDestination,1_000).sentences.isNotEmpty())
+        assertTrue(encodeHeading(valid,1_000).sentences.isNotEmpty())
         val invalid=VesselDataSnapshot(
             candidates=mapOf(VesselMetricId.HEADING_TRUE to listOf(validCandidate.copy(validity=CandidateValidity.INVALID,sourceHeartbeatElapsedRealtime=1_200))),
         )
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.HEADING,invalid,dedicatedDestination,1_200).sentences.isEmpty())
+        assertTrue(encodeHeading(invalid,1_200).sentences.isEmpty())
     }
 
     @Test fun readyHeadingSourceSwitchIsAtomicAndCreatesNoEmptyTick(){
         fun snapshot(id:String,value:Double,now:Long):VesselDataSnapshot{
             val source=VesselSourceIdentity(id,sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName=id,stableKey=id)
-            val candidate=VesselSourceCandidate(VesselMetricId.HEADING_TRUE,value,source,VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=now)
+            val candidate=VesselSourceCandidate(VesselMetricId.HEADING_TRUE,value,source,VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=now,provenance=VesselProvenance.PhoneSensor("Mounted phone heading",3))
             return VesselDataSnapshot(
-                headingTrueDegrees=VesselObservation(value,VesselDataSource.PHONE_MAGNETOMETER,receivedElapsedRealtime=now,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING),
+                headingTrueDegrees=VesselObservation(value,VesselDataSource.PHONE_MAGNETOMETER,receivedElapsedRealtime=now,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.PHONE_VESSEL_HEADING,provenanceDetail=VesselProvenance.PhoneSensor("Mounted phone heading",3)),
                 candidates=mapOf(VesselMetricId.HEADING_TRUE to listOf(candidate)),
             )
         }
-        val old=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot("phone:vessel-heading:a",83.0,1_000),dedicatedDestination,1_000)
-        val switched=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot("phone:vessel-heading:b",95.0,1_200),dedicatedDestination,1_200)
+        val old=encodeHeading(snapshot("phone:vessel-heading:a",83.0,1_000),1_000)
+        val switched=encodeHeading(snapshot("phone:vessel-heading:b",95.0,1_200),1_200)
         assertEquals(1,old.sentences.size);assertEquals(1,switched.sentences.size)
         assertTrue(old.sentences.single().contains("83.00"));assertTrue(switched.sentences.single().contains("95.00"))
         assertNotEquals(old.sourceStableKey,switched.sourceStableKey)
     }
 
-    @Test fun headingLeaseBridgesAQuietSourceButExpiresWithoutHeartbeat(){
+    @Test fun headingNeverBridgesAQuietSource(){
         val complete=VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=1_000).copy(freshness=VesselDataFreshness.FRESH))
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.HEADING,complete,NmeaDeviceOutputSettings(),1_000).sentences.isNotEmpty())
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.HEADING,VesselDataSnapshot(),NmeaDeviceOutputSettings(),15_000).sentences.isNotEmpty())
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.HEADING,VesselDataSnapshot(),NmeaDeviceOutputSettings(),16_001).sentences.isEmpty())
+        assertTrue(encodeHeading(complete,1_000).sentences.isNotEmpty())
+        assertTrue(encodeHeading(VesselDataSnapshot(),1_200).sentences.isEmpty())
     }
 
     @Test fun incompleteMeasurementsSuppressWholeSentences(){
@@ -165,7 +165,7 @@ class AnchorWatchNmeaPublisherTest{
             depthMeters=VesselObservation(8.2,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,sourceIdentity=depthSource,sourceClass=VesselSourceClass.BOAT_NMEA),
             speedThroughWaterKnots=VesselObservation(4.1,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,sourceIdentity=stwSource,sourceClass=VesselSourceClass.BOAT_NMEA),
         )
-        assertEquals(setOf("POSITION","HEADING","MOTION","PRESSURE","DERIVED_WIND"),AnchorWatchNmeaStream.entries.map{it.name}.toSet())
+        assertEquals(setOf("POSITION","HEADING","RATE_OF_TURN","ATTITUDE","PRESSURE","DERIVED_WIND"),AnchorWatchNmeaStream.entries.map{it.name}.toSet())
         val output=AnchorWatchNmeaStream.entries.flatMap{encoder.encode(it,snapshot,dedicatedDestination,1_000).sentences}
         assertTrue(output.none{mux.sentenceType(it) in setOf("DBT","DPT","VHW")})
     }
@@ -195,8 +195,8 @@ class AnchorWatchNmeaPublisherTest{
             rateOfTurnDegreesPerMinute=VesselObservation(18.5,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,sourceHeartbeatElapsedRealtime=1_000,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=source,sourceClass=VesselSourceClass.BOAT_NMEA),
             candidates=mapOf(VesselMetricId.RATE_OF_TURN to listOf(VesselSourceCandidate(VesselMetricId.RATE_OF_TURN,18.5,source,VesselSourceClass.BOAT_NMEA,receivedElapsedRealtime=1_000))),
         )
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.MOTION,snapshot,NmeaDeviceOutputSettings(),1_000).sentences.isEmpty())
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.MOTION,snapshot,dedicatedDestination,1_000).sentences.isEmpty())
+        assertTrue(encoder.encode(AnchorWatchNmeaStream.RATE_OF_TURN,snapshot,NmeaDeviceOutputSettings(phoneRateOfTurnEnabled=true),1_000).sentences.isEmpty())
+        assertTrue(encoder.encode(AnchorWatchNmeaStream.ATTITUDE,snapshot,dedicatedDestination.copy(phoneAttitudeEnabled=true),1_000).sentences.isEmpty())
     }
 
     @Test fun independentPositionFeedUsesOnlyTheAtomicPhoneFix(){
@@ -219,7 +219,7 @@ class AnchorWatchNmeaPublisherTest{
         assertTrue(disabled.sentences.isEmpty())
         assertEquals("USER_DISABLED",disabled.suppressionReason)
         val enabled=encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),NmeaDeviceOutputSettings(phonePositionEnabled=true),1_100,phone)
-        assertEquals(listOf("RMC","GGA","VTG","ZDA"),enabled.sentences.mapNotNull(mux::sentenceType))
+        assertEquals(listOf("RMC","GGA","ZDA"),enabled.sentences.mapNotNull(mux::sentenceType))
     }
 
     @Test fun mockOrNetworkPositionCanNeverEnterPhoneOutput(){
@@ -255,8 +255,8 @@ class AnchorWatchNmeaPublisherTest{
             candidates=mapOf(VesselMetricId.HEADING_TRUE to candidates),
         )
         repeat(25){tick->
-            val batch=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,NmeaDeviceOutputSettings(),1_000+tick*200L,inputTransportGeneration=4,inputProfileId="boat-primary")
-            assertEquals(1,batch.sentences.size);assertTrue(batch.sentences.single().contains("HDT,83.00,T"));assertTrue(batch.sourceConflict)
+            val batch=encodeHeading(snapshot,1_000+tick*200L,inputGeneration=4,inputProfile="boat-primary")
+            if(tick==0){assertEquals(1,batch.sentences.size);assertTrue(batch.sentences.single().contains("HDT,83.00,T"));assertTrue(batch.sourceConflict)}else if(tick*200L>2_000L)assertTrue(batch.sentences.isEmpty())
         }
     }
 
@@ -270,28 +270,35 @@ class AnchorWatchNmeaPublisherTest{
                 VesselSourceCandidate(VesselMetricId.PRESSURE,1013.2,phoneSource,VesselSourceClass.PHONE_BAROMETER,receivedElapsedRealtime=1_000,provenance=VesselProvenance.PhoneSensor("Android pressure sensor")),
             )),
         )
-        val batch=encoder.encode(AnchorWatchNmeaStream.PRESSURE,snapshot,NmeaDeviceOutputSettings(),1_000,inputTransportGeneration=5,inputProfileId="boat-primary")
+        val batch=encoder.encode(AnchorWatchNmeaStream.PRESSURE,snapshot,NmeaDeviceOutputSettings(phonePressureEnabled=true,includePressure=true),1_000,inputTransportGeneration=5,inputProfileId="boat-primary")
         assertEquals(1,batch.sentences.size);assertTrue(batch.sentences.single().contains("1.01320,B,PHONE_BARO"));assertTrue(batch.sourceConflict)
     }
 
-    @Test fun appDerivedWindIsPublishableButDirectBoatWindIsNot(){
+    @Test fun appDerivedWindWithBoatAncestorsIsBlockedOnEveryTransport(){
         val headingSource=VesselSourceIdentity("nmea:boat:9:HDT","boat-primary",9,VesselSourceType.NMEA_INPUT,sentenceType="HDT",displayName="Boat HDT")
         val windSource=VesselSourceIdentity("nmea:boat:9:MWV","boat-primary",9,VesselSourceType.NMEA_INPUT,sentenceType="MWV",displayName="Boat MWV")
         fun derived(value:Double)=VesselObservation(value,VesselDataSource.DERIVED,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.FRESH,sourceIdentity=VesselSourceIdentity("derived:true-wind",sourceType=VesselSourceType.APP_DERIVED,displayName="True wind"),sourceClass=VesselSourceClass.DERIVED_WATER,provenanceDetail=VesselProvenance.Derived("true wind",listOf(headingSource,windSource)))
         val snapshot=VesselDataSnapshot(trueWind=VesselWindObservation(derived(12.0),derived(220.0),derived(35.0)))
-        assertEquals(3,encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,snapshot,NmeaDeviceOutputSettings(),1_000,inputTransportGeneration=9,inputProfileId="boat-primary").sentences.size)
-        encoder.reset();assertEquals(3,encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,snapshot,dedicatedDestination,1_000).sentences.size)
+        val enabled=NmeaDeviceOutputSettings(derivedWindPolicy=PublicationPolicy.ALWAYS,includeDerivedWind=true)
+        assertTrue(encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,snapshot,enabled,1_000,inputTransportGeneration=9,inputProfileId="boat-primary").sentences.isEmpty())
+        encoder.reset();assertTrue(encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,snapshot,dedicatedDestination,1_000).sentences.isEmpty())
     }
 
     @Test fun directBoatWindIsBlockedWhileProvenLocalDerivedWindIsAllowed(){
         val boatSource=VesselSourceIdentity("nmea:boat:3:MWD","boat-primary",3,VesselSourceType.NMEA_INPUT,sentenceType="MWD",displayName="Boat MWD")
         fun boat(value:Double)=VesselObservation(value,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.FRESH,sourceIdentity=boatSource,sourceClass=VesselSourceClass.BOAT_NMEA,provenanceDetail=VesselProvenance.Nmea(boatSource))
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,VesselDataSnapshot(trueWind=VesselWindObservation(boat(9.0),boat(180.0),boat(20.0))),NmeaDeviceOutputSettings(),1_000,inputTransportGeneration=3,inputProfileId="boat-primary").sentences.isEmpty())
+        val windEnabled=NmeaDeviceOutputSettings(derivedWindPolicy=PublicationPolicy.ALWAYS,includeDerivedWind=true)
+        assertTrue(encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,VesselDataSnapshot(trueWind=VesselWindObservation(boat(9.0),boat(180.0),boat(20.0))),windEnabled,1_000,inputTransportGeneration=3,inputProfileId="boat-primary").sentences.isEmpty())
 
         val phoneGnss=VesselSourceIdentity("phone:gnss",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="GNSS",displayName="Phone GNSS")
         val phoneHeading=VesselSourceIdentity("phone:vessel-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone heading")
         fun local(value:Double)=VesselObservation(value,VesselDataSource.DERIVED,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.FRESH,sourceIdentity=VesselSourceIdentity("derived:local-wind",sourceType=VesselSourceType.APP_DERIVED,displayName="Local wind"),sourceClass=VesselSourceClass.DERIVED_GROUND,provenanceDetail=VesselProvenance.Derived("local-only wind",listOf(phoneGnss,phoneHeading)))
-        encoder.reset();assertEquals(3,encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,VesselDataSnapshot(trueWind=VesselWindObservation(local(9.0),local(180.0),local(20.0))),NmeaDeviceOutputSettings(),1_000,inputTransportGeneration=3,inputProfileId="boat-primary").sentences.size)
+        val phoneCandidates=listOf(
+            VesselSourceCandidate(VesselMetricId.TRUE_WIND_SPEED,1.0,phoneGnss,VesselSourceClass.PHONE_GNSS,receivedElapsedRealtime=1_000,provenance=VesselProvenance.PhoneSensor("GNSS")),
+            VesselSourceCandidate(VesselMetricId.HEADING_TRUE,1.0,phoneHeading,VesselSourceClass.PHONE_VESSEL_HEADING,receivedElapsedRealtime=1_000,provenance=VesselProvenance.PhoneSensor("heading",3)),
+        )
+        val localSnapshot=VesselDataSnapshot(trueWind=VesselWindObservation(local(9.0),local(180.0),local(20.0)),candidates=mapOf(VesselMetricId.TRUE_WIND_SPEED to phoneCandidates))
+        encoder.reset();assertEquals(3,encoder.encode(AnchorWatchNmeaStream.DERIVED_WIND,localSnapshot,windEnabled,1_000,inputTransportGeneration=3,inputProfileId="boat-primary").sentences.size)
     }
 
     @Test fun phoneTxEchoIdentityIsAlwaysDeniedBySameSocketFirewall(){
@@ -306,7 +313,7 @@ class AnchorWatchNmeaPublisherTest{
 
     @Test fun normalProductFeedNeverPublishesHiddenProprietaryOrRawBoatSentences(){
         val snapshot=VesselDataSnapshot(headingTrueDegrees=heading(45.0))
-        val normal=AnchorWatchNmeaStream.entries.flatMap{encoder.encode(it,snapshot,NmeaDeviceOutputSettings(proprietaryStatusEnabled=true),0).sentences}
+        val normal=encodeHeading(snapshot,0,dedicatedDestination.copy(proprietaryStatusEnabled=true)).sentences
         assertTrue(normal.isNotEmpty());assertTrue(normal.none{it.contains("PYOK")||it.contains("RAW_BOAT")})
     }
 
@@ -320,10 +327,10 @@ class AnchorWatchNmeaPublisherTest{
 
     @Test fun phoneServiceAndBoatClient_canEncodeTheSameOwnedFeedWithoutSharingLifecycle(){
         val snapshot=VesselDataSnapshot(headingTrueDegrees=heading(83.0))
-        val tcpClient=NmeaPublisherConfig(transportMode=com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode.DEDICATED_TCP,transportConfigured=true,publicationEnabled=true).asOutputSettings()
-        val tcpServer=NmeaPublisherConfig(transportMode=com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode.TCP_SERVER,transportConfigured=true,publicationEnabled=true).asOutputSettings()
-        encoder.reset();val clientFeed=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,tcpClient,1_000).sentences
-        encoder.reset();val serverFeed=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,tcpServer,1_000).sentences
+        val tcpClient=NmeaPublisherConfig(transportMode=com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode.DEDICATED_TCP,phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true).asOutputSettings()
+        val tcpServer=NmeaPublisherConfig(transportMode=com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode.TCP_SERVER,phoneHeadingEnabled=true,transportConfigured=true,publicationEnabled=true).asOutputSettings()
+        encoder.reset();val clientFeed=encodeHeading(snapshot,1_000,tcpClient).sentences
+        encoder.reset();val serverFeed=encodeHeading(snapshot,1_000,tcpServer).sentences
         assertEquals(clientFeed,serverFeed);assertEquals(1,clientFeed.size)
         assertFalse(NmeaOutputEndpointPolicy.isValid(tcpServer,com.yokuli.anchorwatch.data.nmea.ConnectionProfile()))
     }
@@ -336,7 +343,7 @@ class AnchorWatchNmeaPublisherTest{
 
     @Test fun allOutputsOffEmitsZeroBytesEvenWhenPhoneSensorsStillHaveValues(){
         val gate=NmeaPublicationSessionGate();val generated=encoder.encode(AnchorWatchNmeaStream.HEADING,VesselDataSnapshot(headingTrueDegrees=heading(123.4)),NmeaDeviceOutputSettings(),0).sentences
-        assertTrue(generated.isNotEmpty());assertFalse(gate.accepts(gate.current()))
+        assertTrue(generated.isEmpty());assertFalse(gate.accepts(gate.current()))
         val socketWrites=generated.filter{gate.accepts(gate.current())};assertTrue(socketWrites.isEmpty())
     }
 

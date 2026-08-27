@@ -115,24 +115,8 @@ class NmeaConnectionManagerTest {
         }finally{manager.disconnect();managerScope.cancel();runCatching{server.close()};serverJob.cancelAndJoin()}
     }}
 
-    @Test fun sharedWriteStallAbortTargetsOnlyTheExpectedTransportGenerationAndRunsOnce() = runBlocking {
-        val server=ServerSocket(0);val accepted=CompletableDeferred<Socket>()
-        var serverClient:Socket?=null
-        val serverJob=launch(Dispatchers.IO){runCatching{accepted.complete(server.accept());awaitCancellation()}}
-        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
-        try{
-            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort,autoReconnect=false)))
-            serverClient=withTimeout(3_000){accepted.await()}
-            withTimeout(3_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
-            val generation=manager.diagnostics.value.connectionGeneration
-            assertFalse("An old queued generation must never close the current socket",manager.abortWriteStall(generation-1,"old generation"))
-            assertTrue(manager.abortWriteStall(generation,"test write stall"))
-            assertFalse("The same generation may be aborted only once",manager.abortWriteStall(generation,"duplicate abort"))
-            assertEquals("TX_WRITE_STALL",manager.diagnostics.value.lastFailureCategory)
-            assertEquals("TX_WRITE_STALL_ABORT",manager.diagnostics.value.lastOperation)
-        }finally{
-            manager.disconnect();managerScope.cancel();runCatching{serverClient?.close()};runCatching{server.close()};serverJob.cancelAndJoin()
-        }
+    @Test fun optionalOutputHasNoApiThatCanAbortTheSafetyOwnedInput(){
+        assertTrue(NmeaConnectionManager::class.java.methods.none{it.name=="abortWriteStall"})
     }
 
     @Test fun queuedBatchFromOldTransportGenerationIsNeverWrittenAfterReconnect() = runBlocking {

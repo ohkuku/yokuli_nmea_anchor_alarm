@@ -28,11 +28,11 @@ import java.util.concurrent.TimeUnit
 class NmeaDeviceOutputPolicyTest{
     private val input=ConnectionProfile(protocol=Protocol.TCP,host="192.168.20.10",port=10110)
 
-    @Test fun sameInputSocketIsTheAuthoritativeFreshInstallRouteWhileStoredAdvancedRoutesSurvive(){
-        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportDefaults.restore(null))
-        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportDefaults.restore("BROKEN_LEGACY_VALUE"))
+    @Test fun separateTxIsTheSafeFreshInstallRouteWhileStoredAdvancedRoutesSurvive(){
+        assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportDefaults.restore(null))
+        assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportDefaults.restore("BROKEN_LEGACY_VALUE"))
         assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportDefaults.restore(NmeaOutputTransportMode.DEDICATED_TCP.name))
-        assertEquals(NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET,NmeaOutputDestination().transport)
+        assertEquals(NmeaDestinationTransport.DEDICATED_TCP,NmeaOutputDestination().transport)
     }
 
     @Test fun dedicatedTxIsValidWithoutOwningTheInputTransport(){
@@ -113,21 +113,19 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(canonical.proprietaryStatusEnabled);assertFalse(canonical.autoStartOutput)
     }
 
-    @Test fun matchingTcpEndpointIsAutomaticallyNormalisedToTheExistingInputConnection(){
-        assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(),input))
+    @Test fun matchingTcpEndpointIsRejectedInsteadOfSharingTheSafetySocket(){
+        assertFalse(NmeaOutputEndpointPolicy.duplicateEndpointRisk(NmeaDeviceOutputSettings(),input))
         val duplicate=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=input.host,outputPort=input.port)
         assertTrue(NmeaOutputEndpointPolicy.duplicateEndpointRisk(duplicate,input))
         val automatic=NmeaOutputEndpointPolicy.automatic(duplicate,input)
-        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,automatic.transportMode)
+        assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,automatic.transportMode)
         assertEquals(input.host to input.port,NmeaOutputEndpointPolicy.resolved(automatic,input))
-        assertTrue(NmeaOutputEndpointPolicy.needsInputTransport(automatic))
-        assertTrue(NmeaOutputEndpointPolicy.isValid(duplicate,input))
-        // A raw dedicated writer still has a defensive guard. Product callers
-        // normalise first and therefore never reach it as a second connection.
+        assertFalse(NmeaOutputEndpointPolicy.needsInputTransport(automatic))
+        assertFalse(NmeaOutputEndpointPolicy.isValid(duplicate,input))
         assertTrue(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(duplicate,input))
     }
 
-    @Test fun matchingEndpointChoosesReuseByConfigurationEvenBeforeRxEverOpened(){
+    @Test fun matchingEndpointIsRejectedEvenBeforeRxEverOpened(){
         val neverStartedRx=ConnectionProfile(protocol=Protocol.TCP,host="Fragile-Gateway.local.",port=10110)
         val tx=NmeaDeviceOutputSettings(
             transportMode=NmeaOutputTransportMode.DEDICATED_TCP,
@@ -138,8 +136,8 @@ class NmeaDeviceOutputPolicyTest{
             phoneHeadingEnabled=true,
         )
         val automatic=NmeaOutputEndpointPolicy.automatic(tx,neverStartedRx)
-        assertEquals(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,automatic.transportMode)
-        assertTrue("Endpoint equality chooses reuse without consulting RX runtime state",NmeaOutputEndpointPolicy.isValid(tx,neverStartedRx))
+        assertEquals(NmeaOutputTransportMode.DEDICATED_TCP,automatic.transportMode)
+        assertFalse("Endpoint equality is rejected without consulting RX runtime state",NmeaOutputEndpointPolicy.isValid(tx,neverStartedRx))
         assertTrue("Unnormalised direct dedicated writers remain guarded",NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,neverStartedRx))
     }
 
@@ -151,8 +149,8 @@ class NmeaDeviceOutputPolicyTest{
             phoneHeadingEnabled=true,
         )
         assertFalse(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(tx,input))
-        assertTrue(NmeaOutputEndpointPolicy.needsInputTransport(tx))
-        assertTrue(NmeaOutputEndpointPolicy.isValid(tx,input))
+        assertFalse(NmeaOutputEndpointPolicy.needsInputTransport(tx))
+        assertFalse(NmeaOutputEndpointPolicy.isValid(tx,input))
     }
 
     @Test fun independentTxMayUseTheSameHostOnlyOnTheServersSeparateReceivePort(){
