@@ -124,12 +124,30 @@ internal fun DataPage(state:MainUiState,vm:MainViewModel){
 @Composable @OptIn(ExperimentalMaterial3Api::class) private fun VesselDataSourcesPage(state:MainUiState,vm:MainViewModel){
     val data=state.vesselData
     var detailMetric by remember{mutableStateOf<VesselMetricId?>(null)}
+    var showGpsProxy by remember{mutableStateOf(false)}
+    var showDeveloperTools by remember{mutableStateOf(false)}
     LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{PageHeader(tr("Position & vessel sources","定位与船舶数据源"),tr("This is the only place to choose the App GPS source, Demo GPS and Android GPS proxy. Anchor setup only reports the choice made here.","这里是选择 App GPS 来源、演示 GPS 和 Android GPS 代理的唯一入口。下锚设置只会显示这里已经作出的选择。"))}
         item{Column(Modifier.fillMaxWidth().testTag("data_gps_controls"),verticalArrangement=Arrangement.spacedBy(12.dp)){
             GpsDataSourceCard(state,vm)
-            GpsProxyCard(state,vm)
-            DeveloperSettingsCard(state,vm)
+            OutlinedButton(
+                onClick={showGpsProxy=!showGpsProxy},
+                modifier=Modifier.fillMaxWidth().testTag("data_gps_proxy_toggle"),
+            ){
+                Icon(if(showGpsProxy)Icons.Default.ExpandLess else Icons.Default.GpsFixed,null)
+                Spacer(Modifier.width(6.dp))
+                Text(if(showGpsProxy)tr("Hide NMEA → Android GPS proxy","收起 NMEA → Android GPS 代理")else tr("NMEA → Android GPS proxy","NMEA → Android GPS 代理"))
+            }
+            if(showGpsProxy)GpsProxyCard(state,vm)
+            OutlinedButton(
+                onClick={showDeveloperTools=!showDeveloperTools},
+                modifier=Modifier.fillMaxWidth().testTag("data_developer_tools_toggle"),
+            ){
+                Icon(if(showDeveloperTools)Icons.Default.ExpandLess else Icons.Default.Code,null)
+                Spacer(Modifier.width(6.dp))
+                Text(if(showDeveloperTools)tr("Hide Developer & Demo tools","收起开发者与演示工具")else tr("Developer & Demo tools","开发者与演示工具"))
+            }
+            if(showDeveloperTools)DeveloperSettingsCard(state,vm)
         }}
         item{HorizontalDivider();Text(tr("Instrument routing","仪表数据路由"),style=MaterialTheme.typography.titleMedium);Text(tr("These preferences only decide which proven sensor feeds App instruments and calculations. They do not change the GPS source selected above or publish Boat input back onto NMEA.","这里的偏好只决定哪个可信传感器供 App 仪表和计算使用，不会改变上方选择的 GPS 来源，也不会把船载输入重新发布回 NMEA。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         item{Card{Column{
@@ -384,7 +402,10 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
         RuntimeOwner.NMEA_SHARING->null // phone-hosted service never owns the boat RX transport
         else->null
     }}
-    val nowElapsed=android.os.SystemClock.elapsedRealtime()
+    val retryClock by produceState(android.os.SystemClock.elapsedRealtime()){
+        while(true){kotlinx.coroutines.delay(1_000);value=android.os.SystemClock.elapsedRealtime()}
+    }
+    val nowElapsed=retryClock
     val tripCanContinueWithPhone=RuntimeOwner.TRIP_WATCH in state.runtimeResources.nmeaOwners&&state.activeTrip?.paused==false&&state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&nowElapsed-it.receivedElapsedRealtime in 0L..3_000L}==true
     val draftProfile=profile.copy(port=portText.toIntOrNull()?:0)
     val validationError=vm.validateProfile(draftProfile)
@@ -414,7 +435,28 @@ internal fun ConnectionPage(state: MainUiState, vm: MainViewModel) {
                 Button({validationRequested=true;if(validationError==null)vm.saveAndConnect(draftProfile)},Modifier.fillMaxWidth().testTag("nmea_connect_input"),enabled=state.settingsReady&&!testing){if(testing)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else Icon(Icons.Default.Link,null);Spacer(Modifier.width(6.dp));Text(if(testing)tr("Connecting…","正在连接…")else tr("Connect input","连接输入"))}
             }else{
                 Text("${profile.protocol} · ${profile.host}:${profile.port}",style=MaterialTheme.typography.bodyMedium)
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect","重连"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f).testTag("nmea_stop_input"),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(tr("Stop input","停止输入"))}}
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(vm::reconnectNmea,Modifier.weight(1f),enabled=!testing&&state.connection !in setOf(NmeaConnectionState.CONNECTING,NmeaConnectionState.RECONNECTING)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Reconnect now","立即重连"))};Button({when{activeWatchUsesNmea->showWatchDisconnect=true;nmeaDependencies.isNotEmpty()->showDependencyDisconnect=true;else->vm.disconnect()}},Modifier.weight(1f).testTag("nmea_stop_input"),enabled=!testing){Icon(Icons.Default.LinkOff,null);Spacer(Modifier.width(6.dp));Text(if(state.nmeaTransportDiagnostics.safetyOwnedRetry)tr("Stop recovery","停止恢复")else tr("Stop input","停止输入"))}}
+            }
+            if(state.nmeaTransportDiagnostics.desiredConnected){
+                val retryIn=state.nmeaTransportDiagnostics.nextRetryElapsedRealtime?.let{((it-nowElapsed).coerceAtLeast(0L)+999L)/1_000L}
+                Surface(
+                    color=if(state.nmeaTransportDiagnostics.safetyOwnedRetry)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    shape=MaterialTheme.shapes.medium,
+                    modifier=Modifier.fillMaxWidth().testTag("nmea_retry_status"),
+                ){
+                    Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                        Text(if(state.nmeaTransportDiagnostics.safetyOwnedRetry)tr("Automatic safety recovery is running","安全自动恢复正在运行")else tr("Automatic reconnect is enabled","自动重连已启用"),fontWeight=FontWeight.SemiBold)
+                        Text(
+                            listOfNotNull(
+                                tr("attempt ${state.nmeaTransportDiagnostics.reconnectAttempt}","第 ${state.nmeaTransportDiagnostics.reconnectAttempt} 次尝试"),
+                                retryIn?.let{tr("next retry in ${it}s","${it} 秒后再次尝试")},
+                                state.nmeaTransportDiagnostics.lastFailureCategory,
+                            ).joinToString(" · "),
+                            style=MaterialTheme.typography.bodySmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
             feedbackMessage?.let{message->Surface(color=when{feedbackIsError->MaterialTheme.colorScheme.errorContainer;feedbackIsWarning->MaterialTheme.colorScheme.tertiaryContainer;else->MaterialTheme.colorScheme.surfaceVariant},shape=MaterialTheme.shapes.medium,modifier=Modifier.fillMaxWidth().testTag("nmea_connection_attempt")){Row(Modifier.padding(10.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.Top){if(testing)CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)else Icon(if(feedbackIsError)Icons.Default.ErrorOutline else Icons.Default.Info,null,Modifier.size(18.dp));Text(localizeKnownMessage(message),style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))}}}
             if(!state.settingsReady)Text(tr("Loading saved connection settings…","正在加载已保存的连接设置…"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -510,6 +552,13 @@ private fun ConnectionResultCard(state: MainUiState) {
                 tr("Socket generation / retry", "Socket 代次 / 重试"),
                 "${state.nmeaTransportDiagnostics.connectionGeneration} / ${state.nmeaTransportDiagnostics.reconnectAttempt}",
             )
+            DiagnosticsRow(
+                tr("Recovery policy", "恢复策略"),
+                buildString{
+                    append(state.nmeaTransportDiagnostics.retryPolicyName)
+                    state.nmeaTransportDiagnostics.nextRetryElapsedRealtime?.let{append(" · ");append(((it-now).coerceAtLeast(0L)+999L)/1_000L);append("s")}
+                },
+            )
             state.nmeaTransportDiagnostics.lastDisconnectReason?.let { reason ->
                 DiagnosticsRow(
                     tr("Last transport failure", "最近传输故障"),
@@ -520,8 +569,8 @@ private fun ConnectionResultCard(state: MainUiState) {
             DiagnosticsRow(tr("Depth / STW", "水深 / 对水航速"),"${age(state.liveDepth.receivedElapsedRealtime.takeUnless{state.liveDepth.isDemo})} / ${age(state.nmeaInstruments.speedThroughWaterKnots?.second)}")
             Text(
                 tr(
-                    "${state.diagnostics.validSentences} valid • ${state.diagnostics.invalidSentences} invalid • ${state.diagnostics.echoedAppTxSentences} echoed App TX",
-                    "${state.diagnostics.validSentences} 条有效 · ${state.diagnostics.invalidSentences} 条无效 · ${state.diagnostics.echoedAppTxSentences} 条应用发送回显",
+                    "${state.diagnostics.validSentences} valid • ${state.diagnostics.invalidSentences} invalid • ${state.diagnostics.echoedAppTxSentences} exact App TX echoes",
+                    "${state.diagnostics.validSentences} 条有效 · ${state.diagnostics.invalidSentences} 条无效 · ${state.diagnostics.echoedAppTxSentences} 条精确 App TX 回显",
                 ),
             )
             state.nmeaFix?.let {
@@ -572,7 +621,7 @@ internal fun NmeaDataPage(state: MainUiState, vm: MainViewModel) {
         }}}
         item{RuntimeHealthCard(state,tileDiagnostics,healthExpanded){healthExpanded=!healthExpanded}}
         item{Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Raw sentences","原始语句"),style=MaterialTheme.typography.titleMedium);Text(if(paused)tr("Display paused; incoming data is not discarded.","显示已暂停；新到数据不会被丢弃。")else tr("Live display · App TX echoes are labelled and excluded from vessel sources","实时显示 · 应用发送回显会被标记且不会进入船舶数据源"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton({paused=!paused}){Icon(if(paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(4.dp));Text(if(paused)tr("Resume","继续")else tr("Pause","暂停"))}}
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(tr("Raw sentences","原始语句"),style=MaterialTheme.typography.titleMedium);Text(if(paused)tr("Display paused; incoming data is not discarded.","显示已暂停；新到数据不会被丢弃。")else tr("Live display · byte-identical App TX echoes are labelled and excluded","实时显示 · 字节完全相同的 App TX 回显会被标记并排除"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};TextButton({paused=!paused}){Icon(if(paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(4.dp));Text(if(paused)tr("Resume","继续")else tr("Pause","暂停"))}}
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton({vm.clearDiagnostics();displayed=emptyList()},Modifier.weight(1f)){Icon(Icons.Default.DeleteSweep,null);Spacer(Modifier.width(4.dp));Text(tr("Clear","清空"))};OutlinedButton({context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("NMEA",displayed.joinToString("\n")))},Modifier.weight(1f),enabled=displayed.isNotEmpty()){Icon(Icons.Default.ContentCopy,null);Spacer(Modifier.width(4.dp));Text(tr("Copy","复制"))}}
         }}
         item{SelectionContainer{Surface(Modifier.fillMaxWidth(),color=Color.Black,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){

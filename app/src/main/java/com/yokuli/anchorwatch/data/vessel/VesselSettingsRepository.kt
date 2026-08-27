@@ -54,10 +54,13 @@ fun VesselDataSettings.withLayout(preset:TripInstrumentPreset,value:List<Instrum
 data class NmeaDeviceOutputSettings(
     val phonePositionEnabled:Boolean=false,
     val phoneHeadingEnabled:Boolean=false,
+    /** Compatibility aggregate for backups written before streams were split. */
     val phoneMotionEnabled:Boolean=false,
+    val phoneRateOfTurnEnabled:Boolean=phoneMotionEnabled,
+    val phoneAttitudeEnabled:Boolean=phoneMotionEnabled,
     val phonePressureEnabled:Boolean=false,
     val proprietaryStatusEnabled:Boolean=false,
-    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
+    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.DEDICATED_TCP,
     val outputHost:String="",
     val outputPort:Int=10110,
     val phoneHeadingFormat:PhoneHeadingOutputFormat=PhoneHeadingOutputFormat.HDT_TRUE,
@@ -66,6 +69,8 @@ data class NmeaDeviceOutputSettings(
     val positionPolicy:PublicationPolicy=if(phonePositionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     val headingPolicy:PublicationPolicy=if(phoneHeadingEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     val motionPolicy:PublicationPolicy=if(phoneMotionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    val rateOfTurnPolicy:PublicationPolicy=if(phoneRateOfTurnEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    val attitudePolicy:PublicationPolicy=if(phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     val pressurePolicy:PublicationPolicy=if(phonePressureEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     val derivedWindPolicy:PublicationPolicy=PublicationPolicy.OFF,
     val destinations:List<NmeaOutputDestination> = emptyList(),
@@ -78,15 +83,26 @@ data class NmeaDeviceOutputSettings(
     val purpose:NmeaOutputPurpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
     val autoStartOutput:Boolean=false,
     val includePressure:Boolean=true,
-    val includeDerivedWind:Boolean=true,
+    val includeDerivedWind:Boolean=false,
 )
 enum class NmeaOutputTransportMode { SAME_AS_INPUT_CONNECTION, DEDICATED_TCP, TCP_SERVER, UDP_UNICAST, UDP_BROADCAST }
 enum class PhoneHeadingOutputFormat { HDT_TRUE, HDG_MAGNETIC, HDT_AND_HDG }
 val NmeaDeviceOutputSettings.effectivePositionPolicy get()=if(phonePositionEnabled)positionPolicy.takeIf{it!=PublicationPolicy.OFF}?:PublicationPolicy.ALWAYS else PublicationPolicy.OFF
 val NmeaDeviceOutputSettings.effectiveHeadingPolicy get()=headingPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneHeadingEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
 val NmeaDeviceOutputSettings.effectiveMotionPolicy get()=motionPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneMotionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
+val NmeaDeviceOutputSettings.effectiveRateOfTurnPolicy get()=rateOfTurnPolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneRateOfTurnEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
+val NmeaDeviceOutputSettings.effectiveAttitudePolicy get()=attitudePolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
 val NmeaDeviceOutputSettings.effectivePressurePolicy get()=pressurePolicy.takeIf{it!=PublicationPolicy.OFF}?:if(phonePressureEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF
-val NmeaDeviceOutputSettings.anyStreamSelected:Boolean get()=effectivePositionPolicy!=PublicationPolicy.OFF||effectiveHeadingPolicy!=PublicationPolicy.OFF||effectiveMotionPolicy!=PublicationPolicy.OFF||effectivePressurePolicy!=PublicationPolicy.OFF||derivedWindPolicy!=PublicationPolicy.OFF||proprietaryStatusEnabled
+val NmeaDeviceOutputSettings.anyStreamSelected:Boolean get()=effectivePositionPolicy!=PublicationPolicy.OFF||effectiveHeadingPolicy!=PublicationPolicy.OFF||effectiveRateOfTurnPolicy!=PublicationPolicy.OFF||effectiveAttitudePolicy!=PublicationPolicy.OFF||effectivePressurePolicy!=PublicationPolicy.OFF||derivedWindPolicy!=PublicationPolicy.OFF||proprietaryStatusEnabled
+
+enum class NmeaOutputPreset { KC2W_MINIMAL, POSITION_ONLY, HEADING_AND_ROT, FULL_PHONE_SENSORS, CUSTOM }
+fun NmeaDeviceOutputSettings.withPreset(preset:NmeaOutputPreset)=when(preset){
+    NmeaOutputPreset.KC2W_MINIMAL->copy(phonePositionEnabled=false,phoneHeadingEnabled=true,phoneMotionEnabled=false,phoneRateOfTurnEnabled=false,phoneAttitudeEnabled=false,phonePressureEnabled=false,includePressure=false,includeDerivedWind=false,positionPolicy=PublicationPolicy.OFF,headingPolicy=PublicationPolicy.ALWAYS,motionPolicy=PublicationPolicy.OFF,rateOfTurnPolicy=PublicationPolicy.OFF,attitudePolicy=PublicationPolicy.OFF,pressurePolicy=PublicationPolicy.OFF,derivedWindPolicy=PublicationPolicy.OFF)
+    NmeaOutputPreset.POSITION_ONLY->copy(phonePositionEnabled=true,phoneHeadingEnabled=false,phoneMotionEnabled=false,phoneRateOfTurnEnabled=false,phoneAttitudeEnabled=false,phonePressureEnabled=false,includePressure=false,includeDerivedWind=false,positionPolicy=PublicationPolicy.ALWAYS,headingPolicy=PublicationPolicy.OFF,motionPolicy=PublicationPolicy.OFF,rateOfTurnPolicy=PublicationPolicy.OFF,attitudePolicy=PublicationPolicy.OFF,pressurePolicy=PublicationPolicy.OFF,derivedWindPolicy=PublicationPolicy.OFF)
+    NmeaOutputPreset.HEADING_AND_ROT->copy(phonePositionEnabled=false,phoneHeadingEnabled=true,phoneMotionEnabled=true,phoneRateOfTurnEnabled=true,phoneAttitudeEnabled=false,phonePressureEnabled=false,includePressure=false,includeDerivedWind=false,positionPolicy=PublicationPolicy.OFF,headingPolicy=PublicationPolicy.ALWAYS,motionPolicy=PublicationPolicy.ALWAYS,rateOfTurnPolicy=PublicationPolicy.ALWAYS,attitudePolicy=PublicationPolicy.OFF,pressurePolicy=PublicationPolicy.OFF,derivedWindPolicy=PublicationPolicy.OFF)
+    NmeaOutputPreset.FULL_PHONE_SENSORS->copy(phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phoneRateOfTurnEnabled=true,phoneAttitudeEnabled=true,phonePressureEnabled=true,includePressure=true,includeDerivedWind=false,positionPolicy=PublicationPolicy.ALWAYS,headingPolicy=PublicationPolicy.ALWAYS,motionPolicy=PublicationPolicy.ALWAYS,rateOfTurnPolicy=PublicationPolicy.ALWAYS,attitudePolicy=PublicationPolicy.ALWAYS,pressurePolicy=PublicationPolicy.ALWAYS,derivedWindPolicy=PublicationPolicy.OFF)
+    NmeaOutputPreset.CUSTOM->this
+}
 val NmeaDeviceOutputSettings.anyEnabled:Boolean get()=publicationEnabled&&transportConfigured&&anyStreamSelected
 object NmeaOutputLeasePolicy{
     /** Output owns a socket and can displace the only reader accepted by a
@@ -117,7 +133,7 @@ class VesselSettingsRepository @Inject constructor(@ApplicationContext private v
 
 @Singleton
 class OutputSettingsRepository @Inject constructor(@ApplicationContext private val context:Context){
-    private object K{val purpose=stringPreferencesKey("output_purpose");val autoStart=booleanPreferencesKey("output_auto_start");val phonePosition=booleanPreferencesKey("phone_position_enabled");val phonePositionOptIn=booleanPreferencesKey("phone_position_publish_opt_in_v2");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val proprietary=booleanPreferencesKey("phone_proprietary_enabled");val mode=stringPreferencesKey("transport_mode");val host=stringPreferencesKey("output_host");val port=intPreferencesKey("output_port");val headingFormat=stringPreferencesKey("phone_heading_format");val transportConfigured=booleanPreferencesKey("transport_configured");val publicationEnabled=booleanPreferencesKey("publication_enabled");val positionPolicy=stringPreferencesKey("publication_position_policy");val headingPolicy=stringPreferencesKey("publication_heading_policy");val motionPolicy=stringPreferencesKey("publication_motion_policy");val pressurePolicy=stringPreferencesKey("publication_pressure_policy");val windPolicy=stringPreferencesKey("publication_derived_wind_policy");val destinations=stringPreferencesKey("output_destinations_json");val includePressure=booleanPreferencesKey("canonical_feed_include_pressure");val includeDerivedWind=booleanPreferencesKey("canonical_feed_include_derived_wind")}
+    private object K{val purpose=stringPreferencesKey("output_purpose");val autoStart=booleanPreferencesKey("output_auto_start");val phonePosition=booleanPreferencesKey("phone_position_enabled");val phonePositionOptIn=booleanPreferencesKey("phone_position_publish_opt_in_v2");val phoneHeading=booleanPreferencesKey("phone_heading_enabled");val phoneHeadingOptIn=booleanPreferencesKey("phone_heading_publish_opt_in_v3");val phoneMotion=booleanPreferencesKey("phone_motion_enabled");val phoneRot=booleanPreferencesKey("phone_rot_enabled");val phoneRotOptIn=booleanPreferencesKey("phone_rot_publish_opt_in_v3");val phoneAttitude=booleanPreferencesKey("phone_attitude_enabled");val phoneAttitudeOptIn=booleanPreferencesKey("phone_attitude_publish_opt_in_v3");val phonePressure=booleanPreferencesKey("phone_pressure_enabled");val phonePressureOptIn=booleanPreferencesKey("phone_pressure_publish_opt_in_v3");val proprietary=booleanPreferencesKey("phone_proprietary_enabled");val mode=stringPreferencesKey("transport_mode");val host=stringPreferencesKey("output_host");val port=intPreferencesKey("output_port");val headingFormat=stringPreferencesKey("phone_heading_format");val transportConfigured=booleanPreferencesKey("transport_configured");val publicationEnabled=booleanPreferencesKey("publication_enabled");val positionPolicy=stringPreferencesKey("publication_position_policy");val headingPolicy=stringPreferencesKey("publication_heading_policy");val motionPolicy=stringPreferencesKey("publication_motion_policy");val rotPolicy=stringPreferencesKey("publication_rot_policy");val attitudePolicy=stringPreferencesKey("publication_attitude_policy");val pressurePolicy=stringPreferencesKey("publication_pressure_policy");val windPolicy=stringPreferencesKey("publication_derived_wind_policy");val destinations=stringPreferencesKey("output_destinations_json");val includePressure=booleanPreferencesKey("canonical_feed_include_pressure");val includeDerivedWind=booleanPreferencesKey("canonical_feed_include_derived_wind");val derivedWindOptIn=booleanPreferencesKey("derived_wind_publish_opt_in_v2")}
     private val gson=Gson();private val destinationType=object:TypeToken<List<NmeaOutputDestination>>(){}.type
     private val outputRunning=MutableStateFlow(false)
     private val persistedSettings=context.outputSettingsStore.data.map{p->
@@ -131,7 +147,11 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
         val mode=NmeaOutputTransportDefaults.restore(p[K.mode]);val host=p[K.host].orEmpty();val port=p[K.port]?:10110;val configured=p[K.transportConfigured]?:p.contains(K.mode)
         val restoredDestinations=p[K.destinations]?.let{json->runCatching{gson.fromJson<List<NmeaOutputDestination>>(json,destinationType)}.getOrNull()}?.filter{it.id.isNotBlank()&&it.port in 1..65535}?.map{it.copy(enabled=false)}.orEmpty()
         val migratedDestination=NmeaOutputDestination(transport=mode.destinationTransport(),host=host,port=port,enabled=false)
-        val includePressure=p[K.includePressure]?:true;val includeWind=p[K.includeDerivedWind]?:true
+        val publishHeading=(p[K.phoneHeadingOptIn]?:false)&&(p[K.phoneHeading]?:false)
+        val publishRot=(p[K.phoneRotOptIn]?:false)&&(p[K.phoneRot]?:false)
+        val publishAttitude=(p[K.phoneAttitudeOptIn]?:false)&&(p[K.phoneAttitude]?:false)
+        val includePressure=(p[K.phonePressureOptIn]?:false)&&(p[K.phonePressure]?:false)
+        val includeWind=(p[K.derivedWindOptIn]?:false)&&(p[K.includeDerivedWind]?:false)
         // Older releases wrote phone_position_enabled=true unconditionally and
         // offered no user control, so that key is not evidence of consent.
         // Only the new explicit opt-in key may restore Phone GNSS publication.
@@ -142,13 +162,15 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
         // republished merely because an independent endpoint was selected.
         NmeaDeviceOutputSettings(
             purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
-            phonePositionEnabled=publishPhonePosition,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=includePressure,
+            phonePositionEnabled=publishPhonePosition,phoneHeadingEnabled=publishHeading,phoneMotionEnabled=publishRot||publishAttitude,phoneRateOfTurnEnabled=publishRot,phoneAttitudeEnabled=publishAttitude,phonePressureEnabled=includePressure,
             transportMode=mode,outputHost=host,outputPort=port,
             phoneHeadingFormat=p[K.headingFormat]?.let{runCatching{PhoneHeadingOutputFormat.valueOf(it)}.getOrNull()}?:PhoneHeadingOutputFormat.HDT_TRUE,
             transportConfigured=configured,
             positionPolicy=if(publishPhonePosition)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            headingPolicy=PublicationPolicy.ALWAYS,
-            motionPolicy=PublicationPolicy.ALWAYS,
+            headingPolicy=if(publishHeading)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            motionPolicy=if(publishRot||publishAttitude)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            rateOfTurnPolicy=if(publishRot)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            attitudePolicy=if(publishAttitude)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
             pressurePolicy=if(includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
             derivedWindPolicy=if(includeWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
             destinations=if(restoredDestinations.isNotEmpty())restoredDestinations else if(configured)listOf(migratedDestination)else emptyList(),
@@ -159,13 +181,17 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
     suspend fun activateAutoStart(){outputRunning.value=NmeaOutputLeasePolicy.shouldAutoStart(persistedSettings.first())}
     private fun canonical(value:NmeaDeviceOutputSettings)=value.copy(
             purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
-            phonePositionEnabled=value.phonePositionEnabled,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=value.includePressure,
+            phonePositionEnabled=value.phonePositionEnabled,phoneHeadingEnabled=value.phoneHeadingEnabled,phoneMotionEnabled=value.phoneRateOfTurnEnabled||value.phoneAttitudeEnabled,phoneRateOfTurnEnabled=value.phoneRateOfTurnEnabled,phoneAttitudeEnabled=value.phoneAttitudeEnabled,phonePressureEnabled=value.phonePressureEnabled,
             proprietaryStatusEnabled=false,
             positionPolicy=if(value.phonePositionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            headingPolicy=PublicationPolicy.ALWAYS,
-            motionPolicy=PublicationPolicy.ALWAYS,
-            pressurePolicy=if(value.includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-            derivedWindPolicy=if(value.includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            headingPolicy=if(value.phoneHeadingEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            motionPolicy=if(value.phoneRateOfTurnEnabled||value.phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            rateOfTurnPolicy=if(value.phoneRateOfTurnEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            attitudePolicy=if(value.phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            pressurePolicy=if(value.phonePressureEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            derivedWindPolicy=if(value.derivedWindPolicy!=PublicationPolicy.OFF||value.includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+            includePressure=value.phonePressureEnabled,
+            includeDerivedWind=value.derivedWindPolicy!=PublicationPolicy.OFF||value.includeDerivedWind,
             autoStartOutput=false,
         )
 
@@ -185,9 +211,9 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
     private suspend fun persist(canonical:NmeaDeviceOutputSettings){
         context.outputSettingsStore.edit{preferences->
             preferences[K.purpose]=canonical.purpose.name;preferences[K.autoStart]=false;preferences.remove(K.publicationEnabled)
-            preferences[K.phonePosition]=canonical.phonePositionEnabled;preferences[K.phonePositionOptIn]=canonical.phonePositionEnabled;preferences[K.phoneHeading]=canonical.phoneHeadingEnabled;preferences[K.phoneMotion]=canonical.phoneMotionEnabled;preferences[K.phonePressure]=canonical.phonePressureEnabled
-            preferences[K.positionPolicy]=canonical.positionPolicy.name;preferences[K.headingPolicy]=canonical.headingPolicy.name;preferences[K.motionPolicy]=canonical.motionPolicy.name;preferences[K.pressurePolicy]=canonical.pressurePolicy.name;preferences[K.windPolicy]=canonical.derivedWindPolicy.name
-            preferences[K.proprietary]=false;preferences[K.mode]=canonical.transportMode.name;preferences[K.host]=canonical.outputHost.trim();preferences[K.port]=canonical.outputPort.coerceIn(1,65535);preferences[K.headingFormat]=canonical.phoneHeadingFormat.name;preferences[K.transportConfigured]=canonical.transportConfigured;preferences[K.includePressure]=canonical.includePressure;preferences[K.includeDerivedWind]=canonical.includeDerivedWind
+            preferences[K.phonePosition]=canonical.phonePositionEnabled;preferences[K.phonePositionOptIn]=canonical.phonePositionEnabled;preferences[K.phoneHeading]=canonical.phoneHeadingEnabled;preferences[K.phoneHeadingOptIn]=canonical.phoneHeadingEnabled;preferences[K.phoneMotion]=canonical.phoneMotionEnabled;preferences[K.phoneRot]=canonical.phoneRateOfTurnEnabled;preferences[K.phoneRotOptIn]=canonical.phoneRateOfTurnEnabled;preferences[K.phoneAttitude]=canonical.phoneAttitudeEnabled;preferences[K.phoneAttitudeOptIn]=canonical.phoneAttitudeEnabled;preferences[K.phonePressure]=canonical.phonePressureEnabled;preferences[K.phonePressureOptIn]=canonical.phonePressureEnabled
+            preferences[K.positionPolicy]=canonical.positionPolicy.name;preferences[K.headingPolicy]=canonical.headingPolicy.name;preferences[K.motionPolicy]=canonical.motionPolicy.name;preferences[K.rotPolicy]=canonical.rateOfTurnPolicy.name;preferences[K.attitudePolicy]=canonical.attitudePolicy.name;preferences[K.pressurePolicy]=canonical.pressurePolicy.name;preferences[K.windPolicy]=canonical.derivedWindPolicy.name
+            preferences[K.proprietary]=false;preferences[K.mode]=canonical.transportMode.name;preferences[K.host]=canonical.outputHost.trim();preferences[K.port]=canonical.outputPort.coerceIn(1,65535);preferences[K.headingFormat]=canonical.phoneHeadingFormat.name;preferences[K.transportConfigured]=canonical.transportConfigured;preferences[K.includePressure]=canonical.includePressure;preferences[K.includeDerivedWind]=canonical.includeDerivedWind;preferences[K.derivedWindOptIn]=canonical.includeDerivedWind
             val primary=(canonical.destinations.firstOrNull{destination->destination.id=="boat-gateway"}?:NmeaOutputDestination()).copy(transport=canonical.transportMode.destinationTransport(),host=canonical.outputHost.trim(),port=canonical.outputPort.coerceIn(1,65535),enabled=false)
             preferences[K.destinations]=gson.toJson(listOf(primary)+canonical.destinations.filterNot{destination->destination.id=="boat-gateway"}.map{it.copy(enabled=false)}.take(7))
         }
@@ -196,6 +222,6 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
 }
 
 object NmeaOutputTransportDefaults{
-    val AUTHORITATIVE_PHONE_TO_BOAT=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
+    val AUTHORITATIVE_PHONE_TO_BOAT=NmeaOutputTransportMode.DEDICATED_TCP
     fun restore(stored:String?)=stored?.let{runCatching{NmeaOutputTransportMode.valueOf(it)}.getOrNull()}?:AUTHORITATIVE_PHONE_TO_BOAT
 }

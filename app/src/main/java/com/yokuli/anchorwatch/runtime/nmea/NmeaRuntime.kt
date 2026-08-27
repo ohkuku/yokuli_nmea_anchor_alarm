@@ -29,7 +29,12 @@ class NmeaRuntime @Inject constructor(
             navigation.acquireBackgroundConnection(profile)
         }
     }
-    fun releaseIfUnowned(){if(!resources.snapshot().needsNmeaTransport)navigation.releaseBackgroundConnection()}
+    suspend fun ensureSafetyConnected(profile:ConnectionProfile){
+        navigation.setSafetyOwnedRetry(true)
+        ensureConnected(profile)
+    }
+    fun releaseSafetyRecovery(){navigation.setSafetyOwnedRetry(false)}
+    fun releaseIfUnowned(){if(!resources.snapshot().needsNmeaTransport){navigation.setSafetyOwnedRetry(false);navigation.releaseBackgroundConnection()}}
     suspend fun userDisconnected()=manualDisconnect.current().suppressed||navigation.isUserDisconnected()
     suspend fun markUserDisconnected(){manualDisconnect.suppress()}
     suspend fun clearUserDisconnect(){manualDisconnect.clear();navigation.clearUserDisconnectLatch()}

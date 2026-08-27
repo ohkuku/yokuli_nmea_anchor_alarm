@@ -8,7 +8,7 @@ import com.yokuli.anchorwatch.data.nmea.NmeaWireBatch
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.data.vessel.anyEnabled
-import com.yokuli.anchorwatch.data.vessel.effectiveMotionPolicy
+import com.yokuli.anchorwatch.data.vessel.effectiveAttitudePolicy
 import com.yokuli.anchorwatch.data.vessel.effectivePressurePolicy
 import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.PublisherOwnershipState
@@ -65,28 +65,23 @@ data class NmeaPacketPathDiagnostic(
 object NmeaOutputEndpointPolicy{
     fun resolved(settings:NmeaDeviceOutputSettings,input:ConnectionProfile)=when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.host to input.port;NmeaOutputTransportMode.TCP_SERVER->"local-service" to settings.outputPort;else->settings.outputHost.trim() to settings.outputPort}
     private fun sameTcpEndpoint(host:String,port:Int,input:ConnectionProfile)=input.protocol==Protocol.TCP&&host.trim().trimEnd('.').equals(input.host.trim().trimEnd('.'),true)&&port==input.port&&host.isNotBlank()
-    /** Socket ownership is an implementation detail. A TCP destination matching
-     * RX automatically leases the already-open full-duplex connection; a
-     * different TCP destination remains an independent write-only transport. */
+    /** Optional output must never be able to block or close the safety-owned RX
+     * socket. Same-socket TX is retained only for settings/backup readability
+     * and is rejected until a cancellable non-blocking transport exists. */
     fun automatic(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):NmeaDeviceOutputSettings{
-        if(settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
-            return settings.copy(outputHost=input.host.trim(),outputPort=input.port)
-        }
-        if(settings.transportMode==NmeaOutputTransportMode.DEDICATED_TCP&&sameTcpEndpoint(settings.outputHost,settings.outputPort,input)){
-            return settings.copy(transportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,outputHost=input.host.trim(),outputPort=input.port)
-        }
         return settings
     }
-    fun tcpDestination(settings:NmeaDeviceOutputSettings,input:ConnectionProfile,host:String,port:Int)=automatic(settings.copy(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=host.trim(),outputPort=port),input)
+    fun tcpDestination(settings:NmeaDeviceOutputSettings,input:ConnectionProfile,host:String,port:Int)=settings.copy(transportMode=NmeaOutputTransportMode.DEDICATED_TCP,outputHost=host.trim(),outputPort=port)
     fun isValid(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):Boolean{
         val effective=automatic(settings,input)
         return when(effective.transportMode){
-            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->input.protocol==Protocol.TCP&&input.host.isNotBlank()&&input.port in 1..65535
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->false
             NmeaOutputTransportMode.TCP_SERVER->false
-            NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
+            NmeaOutputTransportMode.DEDICATED_TCP->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535&&!opensSecondTransportOnInputEndpoint(effective,input)
+            NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
         }
     }
-    fun needsInputTransport(settings:NmeaDeviceOutputSettings)=settings.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
+    fun needsInputTransport(@Suppress("UNUSED_PARAMETER") settings:NmeaDeviceOutputSettings)=false
     fun duplicateEndpointRisk(settings:NmeaDeviceOutputSettings,input:ConnectionProfile):Boolean{val resolved=resolved(settings,input);return when(settings.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->true;NmeaOutputTransportMode.TCP_SERVER->false;else->resolved.first.equals(input.host,true)&&resolved.second==input.port}}
     /** Defensive detector for an unnormalised legacy call site. Production code
      * passes settings through [automatic], so a matching endpoint is reused
@@ -96,7 +91,7 @@ object NmeaOutputEndpointPolicy{
         val outputHost=settings.outputHost.trim().trimEnd('.');val inputHost=input.host.trim().trimEnd('.')
         return outputHost.isNotBlank()&&inputHost.isNotBlank()&&outputHost.equals(inputHost,true)&&settings.outputPort==input.port
     }
-    const val DUPLICATE_ENDPOINT_MESSAGE="The output endpoint matches NMEA input and must reuse the App's existing connection."
+    const val DUPLICATE_ENDPOINT_MESSAGE="The output endpoint matches safety-owned NMEA input. Choose a separate TX port; same-socket TX is disabled."
 }
 
 data class NmeaTxStatus(
@@ -336,7 +331,6 @@ class NmeaDeviceOutputConnection @Inject constructor(
     private var endpointBlocked=false
     private var dedicatedCircuitOpen=false
     private var activeWriteInputGeneration:Long?=null
-    private var abortRequestedInputGeneration:Long?=null
 
     fun recordGenerated(stream:String,sentences:List<String>,now:Long=SystemClock.elapsedRealtime(),generation:Long=publicationGeneration,sourceStableKey:String?=null,path:NmeaPacketPath=NmeaPacketPath.LOCAL_SENSOR_INJECTION,inputTransportGeneration:Long?=null):Long?=synchronized(guard){
         if(generation!=publicationGeneration||!configured.anyOutputEnabled)return@synchronized null
@@ -354,7 +348,6 @@ class NmeaDeviceOutputConnection @Inject constructor(
     fun recordDecision(stream:String,policy:PublicationPolicy,decision:PublicationDecision,dataReady:Boolean,readiness:NmeaStreamReadiness=if(dataReady)NmeaStreamReadiness.READY else NmeaStreamReadiness.STANDBY){synchronized(guard){val old=_status.value.streams[stream]?:NmeaStreamTxStatus();_status.value=_status.value.copy(streams=_status.value.streams+(stream to old.copy(policy=policy,ownership=decision.ownership,dataReady=dataReady,readiness=if(!decision.publish&&decision.ownership in setOf(PublisherOwnershipState.STANDBY_EXTERNAL_PRESENT,PublisherOwnershipState.TAKEOVER_PENDING))NmeaStreamReadiness.STANDBY else readiness,suppressionReason=decision.suppression?.name)))}}
 
     fun refreshTransportState(){
-        var abortGeneration:Long?=null
         synchronized(guard){
             val activeSince=_status.value.activeWriteStartedElapsed
             if(activeSince!=null){
@@ -365,21 +358,16 @@ class NmeaDeviceOutputConnection @Inject constructor(
                         backpressureState=pressure,
                         connectionState=if(pressure==NmeaWriteBackpressureState.STALLED)NmeaTxConnectionState.ERROR else _status.value.connectionState,
                         lastError=if(pressure==NmeaWriteBackpressureState.STALLED)"The shared NMEA socket write has been blocked for ${elapsed} ms." else _status.value.lastError,
-                        message=when(pressure){NmeaWriteBackpressureState.NORMAL->_status.value.message;NmeaWriteBackpressureState.CONGESTED->"NMEA output is congested; only the latest 1 Hz values are retained.";NmeaWriteBackpressureState.STALLED->"NMEA output write stalled; aborting this transport generation once."},
+                        message=when(pressure){NmeaWriteBackpressureState.NORMAL->_status.value.message;NmeaWriteBackpressureState.CONGESTED->"NMEA output is congested; only the latest 1 Hz values are retained.";NmeaWriteBackpressureState.STALLED->"Optional NMEA output is stalled. Boat input is protected and will not be closed."},
                     )
-                }
-                val expected=activeWriteInputGeneration
-                if(pressure==NmeaWriteBackpressureState.STALLED&&configured.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION&&expected!=null&&abortRequestedInputGeneration!=expected){
-                    abortRequestedInputGeneration=expected;abortGeneration=expected
-                    _status.value=_status.value.copy(backpressureAbortCount=_status.value.backpressureAbortCount+1)
                 }
             }
         }
-        abortGeneration?.let{generation->navigation.abortBoatWriteStall(generation,"Shared NMEA output write exceeded ${NmeaWriteBackpressurePolicy.STALLED_AFTER_MILLIS} ms.")}
     }
 
     fun configure(requested:NmeaDeviceOutputSettings,input:ConnectionProfile,generation:Long=publicationGeneration+1,newSessionId:String?=null){
-        val value=NmeaOutputEndpointPolicy.automatic(requested,input)
+        val normalized=NmeaOutputEndpointPolicy.automatic(requested,input)
+        val value=if(normalized.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION)normalized.copy(publicationEnabled=false)else normalized
         lastInputProfile=input
         if(!value.anyOutputEnabled){
             synchronized(guard){_status.value=_status.value.copy(connectionState=NmeaTxConnectionState.STOPPING,message="Stopping Phone/App boat output…")}
@@ -408,7 +396,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
                         publicationGeneration=generation,sessionId=null,lastSessionId=previousSession?:_status.value.lastSessionId,
                         stoppedAtElapsed=SystemClock.elapsedRealtime(),
                     )
-                    activeWriteInputGeneration=null;abortRequestedInputGeneration=null
+                    activeWriteInputGeneration=null
                     return@synchronized
                 }
                 configured=value;sessionId=newSessionId
@@ -430,7 +418,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
                     dedicatedClient.isConnected(endpoint.first,endpoint.second)->NmeaTxConnectionState.CONNECTED
                     else->NmeaTxConnectionState.DISCONNECTED
                 }
-                activeWriteInputGeneration=null;abortRequestedInputGeneration=null
+                activeWriteInputGeneration=null
                 _status.value=_status.value.copy(enabled=true,mode=value.transportMode,endpointHost=endpoint.first,endpointPort=endpoint.second,connectionState=state,message=when(value.transportMode){NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Waiting for the input TCP connection.";NmeaOutputTransportMode.DEDICATED_TCP->"Dedicated boat-network TX ready.";NmeaOutputTransportMode.TCP_SERVER->"Legacy TCP-server route blocked.";NmeaOutputTransportMode.UDP_UNICAST->"UDP unicast destination ready.";NmeaOutputTransportMode.UDP_BROADCAST->"UDP broadcast destination ready."},lastError=null,activeWriteStartedElapsed=null,backpressureState=NmeaWriteBackpressureState.NORMAL,recentGenerated=generated.toList(),recentTx=recent.toList(),streams=if(previousSession==newSessionId)_status.value.streams else emptyMap(),publicationGeneration=generation,sessionId=newSessionId,stoppedAtElapsed=null)
             }
         }
@@ -499,7 +487,7 @@ class NmeaDeviceOutputConnection @Inject constructor(
             val timestamp=java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS"))
             val streamLabel=logicalStream?:sentenceTypes.sorted().joinToString("+").ifBlank{"SOCKET"}
             if(result.writtenSentenceCount>0)sentences.forEach{line->recent.addLast("$timestamp  [$streamLabel] ${line.trim()}");while(recent.size>RECENT_LIMIT)recent.removeFirst()}
-            val logicalStreams=buildSet{if(sentenceTypes.any{it in setOf("RMC","GGA","VTG","ZDA")})add("POSITION");if(sentenceTypes.any{it in setOf("HDT","HDG","HDM")})add("HEADING");if("ROT" in sentenceTypes||("XDR" in sentenceTypes&&settings.effectiveMotionPolicy!=PublicationPolicy.OFF))add("MOTION");if("XDR" in sentenceTypes&&settings.effectivePressurePolicy!=PublicationPolicy.OFF)add("PRESSURE");if(sentenceTypes.any{it in setOf("MWD","MWV","VWT")})add("DERIVED_WIND");if("YOK" in sentenceTypes)add("STATUS")}
+            val logicalStreams=buildSet{if(sentenceTypes.any{it in setOf("RMC","GGA","VTG","ZDA")})add("POSITION");if(sentenceTypes.any{it in setOf("HDT","HDG","HDM")})add("HEADING");if("ROT" in sentenceTypes)add("RATE_OF_TURN");if("XDR" in sentenceTypes&&settings.effectiveAttitudePolicy!=PublicationPolicy.OFF)add("ATTITUDE");if("XDR" in sentenceTypes&&settings.effectivePressurePolicy!=PublicationPolicy.OFF)add("PRESSURE");if(sentenceTypes.any{it in setOf("MWD","MWV","VWT")})add("DERIVED_WIND");if("YOK" in sentenceTypes)add("STATUS")}
             val streamUpdates=(sentenceTypes+logicalStreams+listOfNotNull(logicalStream)).fold(_status.value.streams){map,type->val old=map[type]?:NmeaStreamTxStatus();val rate=old.lastWrittenElapsed?.let{previous->(completedAt-previous).takeIf{it>0}?.let{1_000.0/it}}?:old.socketWriteRateHz;map+(type to old.copy(lastWrittenElapsed=completedAt,suppressionReason=null,writtenCount=old.writtenCount+1,lastWrittenSequence=if(type==logicalStream&&generationSequence!=null)generationSequence else old.lastGeneratedSequence,socketWriteRateHz=rate,readiness=NmeaStreamReadiness.PUBLISHING))}
             val hasReceiverWrite=result.writtenSentenceCount>0
             val stage=if(hasReceiverWrite)NmeaPacketStage.WRITTEN else NmeaPacketStage.QUEUED_TO_SERVER_CLIENT

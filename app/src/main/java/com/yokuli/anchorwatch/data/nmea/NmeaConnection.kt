@@ -31,7 +31,14 @@ data class NmeaTransportDiagnostics(
  val circuitOpen:Boolean=false,
  val desiredConnected:Boolean=false,
  val lastOperation:String="IDLE",
+ val safetyOwnedRetry:Boolean=false,
+ val retryPolicyName:String="IDLE_BOUNDED",
 )
+
+object NmeaSafetyRetryPolicy{
+ private val sequence=listOf(2_000L,5_000L,10_000L,15_000L,30_000L)
+ fun delayMillis(attempt:Int)=sequence[(attempt-1).coerceIn(0,sequence.lastIndex)]
+}
 
 enum class NmeaTransportWriteFailure { NONE, TRANSPORT_UNAVAILABLE, STALE_TRANSPORT_GENERATION, WRITE_FAILED }
 
@@ -64,9 +71,11 @@ class NmeaConnectionManager(
  private var profile:ConnectionProfile?=null
  private var transport:Closeable?=null
  private var lastManualReconnectElapsed=Long.MIN_VALUE
+ @Volatile private var safetyOwnedRetry=false
  private val _state=MutableStateFlow(NmeaConnectionState.DISCONNECTED); val state=_state.asStateFlow()
  private val _lines=MutableSharedFlow<String>(extraBufferCapacity=256); val lines=_lines.asSharedFlow()
  private val _diagnostics=MutableStateFlow(NmeaTransportDiagnostics());val diagnostics=_diagnostics.asStateFlow()
+ fun setSafetyOwnedRetry(enabled:Boolean)=synchronized(guard){safetyOwnedRetry=enabled;_diagnostics.value=_diagnostics.value.copy(safetyOwnedRetry=enabled,retryPolicyName=if(enabled)"SAFETY_CONTINUOUS_BOUNDED" else "IDLE_BOUNDED")}
  fun connect(p:ConnectionProfile):Boolean=synchronized(guard){
   // Connect is the one live transport attempt, not a disposable test followed
   // by a second socket. Even a coroutine already reporting ERROR must finish
@@ -89,17 +98,6 @@ class NmeaConnectionManager(
   startLocked(p,retryPolicy.reconnectCoalesceMillis,NmeaConnectionState.RECONNECTING,"USER_RECONNECT")
  }
  fun write(sentences:List<String>):Boolean=writeExpected(sentences,null).success
- /** A blocking full-duplex write cannot be interrupted portably without
-  * closing that exact Socket. The output watchdog may do this once for the
-  * current generation; the existing bounded RX reconnect policy then owns all
-  * recovery and no second concurrent transport is created. */
- fun abortWriteStall(expectedGeneration:Long,reason:String):Boolean=synchronized(guard){
-  if(expectedGeneration!=transportGeneration)return@synchronized false
-  val socket=transport as? Socket?:return@synchronized false
-  if(socket.isClosed)return@synchronized false
-  _diagnostics.value=_diagnostics.value.copy(lastDisconnectReason=reason,lastFailureCategory="TX_WRITE_STALL",lastFailureElapsedRealtime=monotonicMillis(),lastOperation="TX_WRITE_STALL_ABORT")
-  runCatching{socket.close()}.isSuccess
- }
  /** Writes only to the transport generation that produced the queued batch.
   * A reconnect must never make an old batch appear on the replacement socket. */
  fun writeExpected(sentences:List<String>,expectedGeneration:Long?):NmeaTransportWriteResult{
@@ -154,9 +152,10 @@ class NmeaConnectionManager(
     if(!currentCoroutineContext().isActive||!isCurrent(mine))break
     continuousFailures++
     recordDisconnectReason(mine,error,continuousFailures)
-    if(!p.autoReconnect){stopAfterFailure(mine,continuousFailures);break}
-    if(continuousFailures>=retryPolicy.maxContinuousFailures){openCircuit(mine,continuousFailures);break}
-    val retryDelay=if(opened)retryPolicy.peerDisconnectRetryMillis else retryPolicy.openFailureRetryMillis
+    val safetyRetry=safetyOwnedRetry
+    if(!safetyRetry&&!p.autoReconnect){stopAfterFailure(mine,continuousFailures);break}
+    if(!safetyRetry&&continuousFailures>=retryPolicy.maxContinuousFailures){openCircuit(mine,continuousFailures);break}
+    val retryDelay=if(safetyRetry)NmeaSafetyRetryPolicy.delayMillis(continuousFailures) else if(opened)retryPolicy.peerDisconnectRetryMillis else retryPolicy.openFailureRetryMillis
     scheduleRetry(mine,retryDelay,continuousFailures);setState(mine,NmeaConnectionState.RECONNECTING)
     delay(retryDelay);attempt++
    }
@@ -210,17 +209,12 @@ class NmeaConnectionManager(
  private fun markSentence(mine:Long,now:Long){synchronized(guard){if(mine==generation)_diagnostics.value=_diagnostics.value.copy(lastSentenceReceivedElapsedRealtime=now)}}
  private fun markNoDataIfExpired(mine:Long,timeoutSeconds:Int){synchronized(guard){if(mine!=generation)return;val diagnostic=_diagnostics.value;val reference=diagnostic.lastByteReceivedElapsedRealtime?:diagnostic.connectedAtElapsedRealtime?:return;if(monotonicMillis()-reference>timeoutSeconds.coerceIn(3,120)*1_000L)_state.value=NmeaConnectionState.CONNECTED_NO_DATA}}
  private fun recordDisconnectReason(mine:Long,error:Throwable,failures:Int){synchronized(guard){
-  if(mine!=generation)return@synchronized
+ if(mine!=generation)return@synchronized
   val current=_diagnostics.value
-  // Closing the exact shared Socket is the only portable way to interrupt a
-  // blocked OutputStream write. Preserve that cause when the RX loop observes
-  // the resulting SocketException; otherwise diagnostics misleadingly turn a
-  // deliberate TX stall abort into an unrelated generic socket failure.
-  val writeStallAbort=current.lastOperation=="TX_WRITE_STALL_ABORT"&&current.lastFailureCategory=="TX_WRITE_STALL"
   _diagnostics.value=current.copy(
-   lastDisconnectReason=if(writeStallAbort)current.lastDisconnectReason else error.javaClass.simpleName+(error.message?.let{": $it"}?:""),
-   lastFailureCategory=if(writeStallAbort)current.lastFailureCategory else failureCategory(error),
-   lastFailureElapsedRealtime=if(writeStallAbort)current.lastFailureElapsedRealtime else monotonicMillis(),
+   lastDisconnectReason=error.javaClass.simpleName+(error.message?.let{": $it"}?:""),
+   lastFailureCategory=failureCategory(error),
+   lastFailureElapsedRealtime=monotonicMillis(),
    reconnectAttempt=failures,
   )
  }}

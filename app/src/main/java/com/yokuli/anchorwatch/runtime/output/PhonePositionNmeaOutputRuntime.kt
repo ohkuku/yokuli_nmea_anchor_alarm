@@ -23,20 +23,24 @@ typealias PhonePositionOutputStatus=NmeaTxStatus
  * are normalized to ALWAYS before this boundary. A destination changes only
  * where the Phone/App-owned bytes go, never which data sources may publish. */
 data class NmeaPublisherConfig(
-    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
+    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.DEDICATED_TCP,
     val host:String="",
     val port:Int=10110,
     val headingFormat:PhoneHeadingOutputFormat=PhoneHeadingOutputFormat.HDT_TRUE,
     val phonePositionEnabled:Boolean=false,
-    val includePressure:Boolean=true,
-    val includeDerivedWind:Boolean=true,
+    val phoneHeadingEnabled:Boolean=false,
+    val phoneRateOfTurnEnabled:Boolean=false,
+    val phoneAttitudeEnabled:Boolean=false,
+    val includePressure:Boolean=false,
+    val includeDerivedWind:Boolean=false,
     val transportConfigured:Boolean=false,
     val publicationEnabled:Boolean=false,
 ){
     val running:Boolean get()=transportConfigured&&publicationEnabled
     fun asOutputSettings()=NmeaDeviceOutputSettings(
         transportMode=transportMode,outputHost=host,outputPort=port,
-        phoneHeadingFormat=headingFormat,phonePositionEnabled=phonePositionEnabled,includePressure=includePressure,
+        phoneHeadingFormat=headingFormat,phonePositionEnabled=phonePositionEnabled,phoneHeadingEnabled=phoneHeadingEnabled,
+        phoneRateOfTurnEnabled=phoneRateOfTurnEnabled,phoneAttitudeEnabled=phoneAttitudeEnabled,phonePressureEnabled=includePressure,includePressure=includePressure,
         includeDerivedWind=includeDerivedWind,transportConfigured=transportConfigured,
         publicationEnabled=publicationEnabled,
     ).publisherConfiguration()
@@ -49,6 +53,9 @@ data class NmeaPublisherConfig(
                 port=productFeed.outputPort,
                 headingFormat=productFeed.phoneHeadingFormat,
                 phonePositionEnabled=productFeed.phonePositionEnabled,
+                phoneHeadingEnabled=productFeed.phoneHeadingEnabled,
+                phoneRateOfTurnEnabled=productFeed.phoneRateOfTurnEnabled,
+                phoneAttitudeEnabled=productFeed.phoneAttitudeEnabled,
                 includePressure=productFeed.includePressure,
                 includeDerivedWind=productFeed.includeDerivedWind,
                 transportConfigured=productFeed.transportConfigured,
@@ -166,14 +173,14 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         // one-emission-old cache and then require another tap.
         val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState)
         val readinessBlocksNewSession=FormalOutputSessionReadinessPolicy.blocksStart(requested.running,enabled,readiness)
-        val safe=if(readinessBlocksNewSession||requested.running&&NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input))requested.copy(publicationEnabled=false) else requested
+        val safe=if(readinessBlocksNewSession||requested.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION||requested.running&&NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input))requested.copy(publicationEnabled=false) else requested
         if(safe==config&&input==inputProfile&&enabled==safe.running)return
         pending.clear().forEach{outputConnection.recordDropped(it.stream)}
         val generation=if(safe.running)sessionGate.start()else sessionGate.stop()
         config=safe;inputProfile=input;enabled=safe.running;heartbeat.reset();encoder.reset()
         val effective=safe.asOutputSettings()
         outputConnection.configure(effective,input,generation,if(enabled)java.util.UUID.randomUUID().toString().take(8)else null)
-        if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=true,needsNmeaTransport=safe.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=true,needsPhoneMotion=false,needsPhonePressure=safe.includePressure))
+        if(enabled)resources.set(RuntimeOwner.PHONE_NMEA_OUTPUT,RuntimeRequirement(needsSystemLocation=safe.phonePositionEnabled,needsNmeaTransport=false,needsWakeLock=true,needsWifiLock=true,needsPhoneHeading=safe.phoneHeadingEnabled,needsPhoneMotion=safe.phoneRateOfTurnEnabled||safe.phoneAttitudeEnabled,needsPhonePressure=safe.includePressure))
         else resources.release(RuntimeOwner.PHONE_NMEA_OUTPUT)
     }
     @Synchronized fun configure(value:Boolean)=configure(NmeaDeviceOutputSettings(transportConfigured=value,publicationEnabled=value))
@@ -198,7 +205,7 @@ class AnchorWatchNmeaPublisher @Inject constructor(
                 outputConnection.recordSuppressed(name,runtimeSuppression)
                 return@mapNotNull null
             }
-            val batch=encoder.encode(stream,snapshot,effectiveSettings,now,phoneFix,inputTransportGeneration,inputProfile.stableId)
+            val batch=encoder.encode(stream,snapshot,effectiveSettings,now,phoneFix,inputTransportGeneration,inputProfile.stableId,calibration,mountState)
             val ready=batch.sentences.isNotEmpty();val ownership=when{ready&&batch.sourceConflict->PublisherOwnershipState.SOURCE_CONFLICT;ready->PublisherOwnershipState.PHONE_ACTIVE;else->PublisherOwnershipState.SUPPRESSED}
             val publicationDecision=PublicationDecision(ready,ownership)
             // Locally-owned Phone/App values never yield merely because the
@@ -235,7 +242,9 @@ class AnchorWatchNmeaPublisher @Inject constructor(
 typealias PhonePositionNmeaOutputRuntime=AnchorWatchNmeaPublisher
 
 object FormalOutputSessionReadinessPolicy{
-    fun blocksStart(requestedRunning:Boolean,currentlyEnabled:Boolean,readiness:PhoneVesselOutputReadiness)=requestedRunning&&!currentlyEnabled&&!readiness.ready
+    /** Calibration is stream-local. It suppresses HDT/Motion but must not stop
+     * an explicitly requested socket carrying independent Position/Pressure. */
+    fun blocksStart(@Suppress("UNUSED_PARAMETER") requestedRunning:Boolean,@Suppress("UNUSED_PARAMETER") currentlyEnabled:Boolean,@Suppress("UNUSED_PARAMETER") readiness:PhoneVesselOutputReadiness)=false
 }
 
 /** Runtime degradation is stream-local. Heading alignment is independent from
@@ -246,7 +255,7 @@ object FormalOutputSessionReadinessPolicy{
 object PhoneOwnedRuntimeSafety{
     fun suppression(mode:NmeaOutputTransportMode,stream:AnchorWatchNmeaStream,mountState:PhoneVesselMountState):String?{
         @Suppress("UNUSED_VARIABLE") val destinationOnly=mode
-        if(stream!=AnchorWatchNmeaStream.MOTION)return null
+        if(stream !in setOf(AnchorWatchNmeaStream.RATE_OF_TURN,AnchorWatchNmeaStream.ATTITUDE,AnchorWatchNmeaStream.HEADING))return null
         if(mountState==PhoneVesselMountState.VESSEL_MOUNTED)return null
         return if(mountState==PhoneVesselMountState.MOUNT_SUSPECT)"MOUNT_SUSPECT" else "PHONE_NOT_MOUNTED"
     }
@@ -256,15 +265,19 @@ fun NmeaDeviceOutputSettings.publisherConfiguration():NmeaDeviceOutputSettings{
     return copy(
     purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
     phonePositionEnabled=phonePositionEnabled,
-    phoneHeadingEnabled=true,
-    phoneMotionEnabled=true,
-    phonePressureEnabled=includePressure,
+    phoneHeadingEnabled=phoneHeadingEnabled,
+    phoneMotionEnabled=phoneRateOfTurnEnabled||phoneAttitudeEnabled,
+    phoneRateOfTurnEnabled=phoneRateOfTurnEnabled,
+    phoneAttitudeEnabled=phoneAttitudeEnabled,
+    phonePressureEnabled=phonePressureEnabled,
     proprietaryStatusEnabled=false,
     positionPolicy=if(phonePositionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-    headingPolicy=PublicationPolicy.ALWAYS,
-    motionPolicy=PublicationPolicy.ALWAYS,
-    pressurePolicy=if(includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-    derivedWindPolicy=if(includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    headingPolicy=if(phoneHeadingEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    motionPolicy=if(phoneRateOfTurnEnabled||phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    rateOfTurnPolicy=if(phoneRateOfTurnEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    attitudePolicy=if(phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    pressurePolicy=if(phonePressureEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+    derivedWindPolicy=if(derivedWindPolicy!=PublicationPolicy.OFF||includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     autoStartOutput=false,
 )
 }
@@ -272,7 +285,8 @@ fun NmeaDeviceOutputSettings.publisherConfiguration():NmeaDeviceOutputSettings{
 private fun NmeaDeviceOutputSettings.policyFor(stream:AnchorWatchNmeaStream)=when(stream){
     AnchorWatchNmeaStream.POSITION->effectivePositionPolicy
     AnchorWatchNmeaStream.HEADING->effectiveHeadingPolicy
-    AnchorWatchNmeaStream.MOTION->effectiveMotionPolicy
+    AnchorWatchNmeaStream.RATE_OF_TURN->effectiveRateOfTurnPolicy
+    AnchorWatchNmeaStream.ATTITUDE->effectiveAttitudePolicy
     AnchorWatchNmeaStream.PRESSURE->effectivePressurePolicy
     AnchorWatchNmeaStream.DERIVED_WIND->derivedWindPolicy
 }

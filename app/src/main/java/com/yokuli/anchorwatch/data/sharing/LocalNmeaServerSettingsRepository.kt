@@ -26,7 +26,7 @@ private val Context.localNmeaServerSettingsStore by preferencesDataStore("local_
 data class LocalNmeaServerSettings(
     val port:Int=10111,
     val includePressure:Boolean=true,
-    val includeDerivedWind:Boolean=true,
+    val includeDerivedWind:Boolean=false,
     val configured:Boolean=true,
     val serverRequested:Boolean=false,
 )
@@ -39,6 +39,7 @@ class LocalNmeaServerSettingsRepository @Inject constructor(
         val port=intPreferencesKey("listen_port")
         val includePressure=booleanPreferencesKey("include_phone_pressure")
         val includeDerivedWind=booleanPreferencesKey("include_app_derived_wind")
+        val includeDerivedWindOptIn=booleanPreferencesKey("include_app_derived_wind_opt_in_v2")
         val configured=booleanPreferencesKey("configured")
         val runRequested=booleanPreferencesKey("run_requested_same_boot")
         val runBootCount=intPreferencesKey("run_requested_boot_count")
@@ -54,7 +55,7 @@ class LocalNmeaServerSettingsRepository @Inject constructor(
         LocalNmeaServerSettings(
             port=(preferences[K.port]?:10111).takeIf{it in 1024..65535}?:10111,
             includePressure=preferences[K.includePressure]?:true,
-            includeDerivedWind=preferences[K.includeDerivedWind]?:true,
+            includeDerivedWind=(preferences[K.includeDerivedWindOptIn]?:false)&&(preferences[K.includeDerivedWind]?:false),
             configured=preferences[K.configured]?:true,
             serverRequested=requested,
         )
@@ -69,6 +70,7 @@ class LocalNmeaServerSettingsRepository @Inject constructor(
             preferences[K.port]=value.port
             preferences[K.includePressure]=value.includePressure
             preferences[K.includeDerivedWind]=value.includeDerivedWind
+            preferences[K.includeDerivedWindOptIn]=value.includeDerivedWind
             preferences[K.configured]=true
         }
     }

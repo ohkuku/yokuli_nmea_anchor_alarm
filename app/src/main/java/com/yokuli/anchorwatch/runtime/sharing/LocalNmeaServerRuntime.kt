@@ -12,6 +12,8 @@ import com.yokuli.anchorwatch.data.vessel.VesselPositionRepository
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselAttitudeRepository
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
+import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
+import com.yokuli.anchorwatch.location.vessel.VesselMountCalibrationRepository
 import com.yokuli.anchorwatch.runtime.RuntimeOwner
 import com.yokuli.anchorwatch.runtime.RuntimeRequirement
 import com.yokuli.anchorwatch.runtime.RuntimeResourceManager
@@ -56,6 +58,7 @@ class LocalNmeaServerRuntime @Inject constructor(
     private val encoder:AnchorWatchNmeaFeedEncoder,
     private val resources:RuntimeResourceManager,
     vesselAttitude:PhoneVesselAttitudeRepository,
+    mountCalibration:VesselMountCalibrationRepository,
 ){
     private var scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val heartbeat=AnchorWatchNmeaHeartbeat()
@@ -64,11 +67,13 @@ class LocalNmeaServerRuntime @Inject constructor(
     val status=_status.asStateFlow()
     @Volatile private var settings=LocalNmeaServerSettings()
     @Volatile private var mountState=PhoneVesselMountState.UNCALIBRATED
+    @Volatile private var calibration=VesselMountCalibration()
     @Volatile private var running=false
     val enabled:Boolean get()=running
 
     init{
         scope.launch{vesselAttitude.mountState.collect{mountState=it}}
+        scope.launch{mountCalibration.calibration.collect{calibration=it}}
         scope.launch{while(isActive){delay(100L);publishDue(SystemClock.elapsedRealtime())}}
     }
 
@@ -124,7 +129,7 @@ class LocalNmeaServerRuntime @Inject constructor(
                 suppressed[stream.name]=reason
                 return@forEach
             }
-            val batch=encoder.encode(stream,snapshot,feedSettings,now,phoneFix,inputProfileId="local-phone-nmea-service")
+            val batch=encoder.encode(stream,snapshot,feedSettings,now,phoneFix,inputProfileId="local-phone-nmea-service",mountCalibration=calibration,runtimeMountState=mountState)
             if(batch.sentences.isEmpty()){
                 batch.suppressionReason?.let{suppressed[stream.name]=it}
                 return@forEach
