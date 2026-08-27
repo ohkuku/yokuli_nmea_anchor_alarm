@@ -354,3 +354,14 @@ object Migration19To20:Migration(19,20){
  }
 
 }
+
+/** Makes session creation distinct from live position monitoring. */
+object Migration20To21:Migration(20,21){
+ override fun migrate(db:SupportSQLiteDatabase){
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN anchorOriginMode TEXT NOT NULL DEFAULT 'CURRENT_ACCEPTED_POSITION'")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN monitoringPhase TEXT NOT NULL DEFAULT 'ARMED'")
+  db.execSQL("ALTER TABLE anchor_sessions ADD COLUMN monitoringActivatedAt INTEGER")
+  db.execSQL("""UPDATE anchor_sessions SET anchorOriginMode=CASE WHEN placementMode='BACKDOWN' THEN 'BACKDOWN_FROM_ACCEPTED_POSITION' WHEN centerSource='MANUAL_COORDINATES' THEN 'MANUAL_COORDINATE' WHEN centerSource='MAP_PICK' THEN 'MAP_PICK' ELSE 'CURRENT_ACCEPTED_POSITION' END""")
+  db.execSQL("""UPDATE anchor_sessions SET monitoringPhase=CASE WHEN active=0 OR endedAt IS NOT NULL THEN 'ENDED' WHEN paused=1 THEN 'PAUSED' WHEN placementMode='BACKDOWN' AND centerStatus!='RESOLVED' THEN 'LEARNING' ELSE 'ARMED' END, monitoringActivatedAt=CASE WHEN active=1 AND paused=0 THEN startedAt ELSE NULL END""")
+ }
+}

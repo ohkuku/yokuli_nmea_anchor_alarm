@@ -75,6 +75,10 @@ enum class AnchorPlacementMode { CENTER_DROP, BACKDOWN }
 enum class AnchorPositionMode { KNOWN, ESTIMATE }
 enum class KnownAnchorMethod { CURRENT_POSITION, MANUAL_COORDINATES, MAP_PICK }
 enum class AnchorCenterSource { UNKNOWN, CURRENT_POSITION, MANUAL_COORDINATES, MAP_PICK, ESTIMATED_USER_ACCEPTED }
+/** Auditable origin of the coordinate that created an anchor session. */
+enum class AnchorOriginMode { CURRENT_ACCEPTED_POSITION, BACKDOWN_FROM_ACCEPTED_POSITION, MANUAL_COORDINATE, MAP_PICK }
+/** Persisted safety phase. A saved session is not necessarily monitoring yet. */
+enum class AnchorMonitoringPhase { WAITING_FOR_GPS, ARMED, LEARNING, PAUSED, ENDED }
 enum class CandidateDecision { NONE, AVAILABLE, ACCEPTED, REJECTED }
 enum class AnchorCenterStatus { LEARNING, CANDIDATE_READY, RESOLVED }
 enum class AnchorRangeMode { BASIC, ADVANCED }

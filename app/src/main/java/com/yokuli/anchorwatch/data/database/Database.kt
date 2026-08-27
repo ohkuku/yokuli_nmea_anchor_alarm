@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 20
+const val DATABASE_SCHEMA_VERSION = 21
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -108,6 +108,11 @@ data class AnchorSessionEntity(
     val anchoragePlaceId:Long?=null,
     val anchorageSpotId:Long?=null,
     val anchorageVisitId:Long?=null,
+    /** Explicit setup truth; never inferred from mutable UI state. */
+    @ColumnInfo(defaultValue = "'CURRENT_ACCEPTED_POSITION'") val anchorOriginMode:String="CURRENT_ACCEPTED_POSITION",
+    /** A stored session may exist before any trustworthy live position. */
+    @ColumnInfo(defaultValue = "'ARMED'") val monitoringPhase:String="ARMED",
+    val monitoringActivatedAt:Long?=null,
 )
 
 @Entity(tableName="saved_anchorages",indices=[Index("updatedAt"),Index("lastVisitedAt")])
