@@ -32,6 +32,8 @@ data class AcceptedPositionState(
     val disposition: String = "WAITING",
     val reason: String? = null,
     val lastAcceptedElapsedRealtime: Long? = null,
+    /** Transport generation that produced [acceptedFix]. Only meaningful for NMEA. */
+    val acceptedConnectionGeneration: Long? = null,
     val integrityLastDurationMicros: Long = 0,
     val integrityMaxDurationMicros: Long = 0,
     val headingEvidence:AnchorHeadingEvidence=AnchorHeadingEvidence(reason="NOT_EVALUATED"),
@@ -67,7 +69,7 @@ class AcceptedPositionRepository @Inject constructor(
     @Volatile private var headingPreference=VesselSourcePreference.AUTO
     @Volatile private var headingSourceExplicitlyPinned=false
     @Volatile private var phoneHeadingAlignment=PhoneVesselHeadingAlignment()
-    private var lastSubmissionKey: Triple<GpsDataSource, Long, String>? = null
+    private var lastSubmissionKey: List<Any?>? = null
 
     init{
         scope.launch{vesselSettings.settings.collect{headingPreference=it.headingPreference;headingSourceExplicitlyPinned=!it.boatHeadingSourceId.isNullOrBlank()}}
@@ -98,6 +100,7 @@ class AcceptedPositionRepository @Inject constructor(
             disposition = "WAITING",
             reason = null,
             lastAcceptedElapsedRealtime = null,
+            acceptedConnectionGeneration = null,
         )
     }
 
@@ -112,7 +115,7 @@ class AcceptedPositionRepository @Inject constructor(
     fun seed(source: GpsDataSource, fix: NavigationFix, sessionId: Long? = null) {
         if (sessionId != null) lockSource(sessionId, source) else changeSourceIfNeeded(source)
         filter.seed(fix)
-        lastSubmissionKey = Triple(source, fix.receivedElapsedRealtime, fix.sourceSentence)
+        lastSubmissionKey = listOf(source, fix.receivedElapsedRealtime, fix.sourceSentence, null)
         _state.value = _state.value.copy(
             rawFix = fix,
             acceptedFix = fix,
@@ -121,13 +124,14 @@ class AcceptedPositionRepository @Inject constructor(
             disposition = "SEEDED_FROM_PERSISTED_ACCEPTED_FIX",
             reason = "AWAITING_FRESH_CONFIRMATION",
             lastAcceptedElapsedRealtime = fix.receivedElapsedRealtime,
+            acceptedConnectionGeneration = null,
         )
     }
 
     @Synchronized
-    fun submit(source: GpsDataSource, rawFix: NavigationFix) {
+    fun submit(source: GpsDataSource, rawFix: NavigationFix, connectionGeneration: Long? = null) {
         if (_state.value.selectedSource != source) return
-        val key = Triple(source, rawFix.receivedElapsedRealtime, rawFix.sourceSentence)
+        val key = listOf(source, rawFix.receivedElapsedRealtime, rawFix.sourceSentence, connectionGeneration)
         if (lastSubmissionKey == key) return
         lastSubmissionKey = key
         phoneHeading.setPosition(rawFix.latitude, rawFix.longitude, rawFix.altitudeMeters, rawFix.timestampUtcMillis)
@@ -164,6 +168,7 @@ class AcceptedPositionRepository @Inject constructor(
                         disposition = "ACCEPTED",
                         reason = accepted.reason,
                         lastAcceptedElapsedRealtime = accepted.fix.receivedElapsedRealtime,
+                        acceptedConnectionGeneration = connectionGeneration.takeIf { source == GpsDataSource.NMEA },
                         integrityLastDurationMicros = integrityMicros,
                         integrityMaxDurationMicros = integrityMaxMicros,
                         headingEvidence = evidence,

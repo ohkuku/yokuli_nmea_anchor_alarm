@@ -264,7 +264,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
   // and stop the Service before Android sees its foreground acknowledgement.
   idleStopJob?.cancel();idleStopJob=null
   when(command){
-   is RuntimeCommand.ArmWatch->{armPending=true;val request=ArmRequest(command.config,command.placement,command.rangeMode,command.safetyPreset,command.boatLength,command.positionSource,command.centerSource,command.usePhoneHeading,command.depthSource,command.conditions);launchCommand{try{
+   is RuntimeCommand.ArmWatch->{armPending=true;val request=ArmRequest(command.config,command.placement,command.rangeMode,command.safetyPreset,command.boatLength,command.positionSource,command.centerSource,command.usePhoneHeading,command.depthSource,command.conditions,command.originMode);launchCommand{try{
     val now=monotonicClock.elapsedRealtime();val demo=command.positionSource==GpsDataSource.DEMO
     val sensors=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.Sensors(
      instrumentStream=com.yokuli.anchorwatch.domain.condition.ConditionGuardAvailability.hasInstrumentTraffic(navigation.connectionState.value),
@@ -559,6 +559,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
    condition.windSpeed.dataUnavailable||condition.windShift.dataUnavailable->l("WIND DATA LOST • guard cannot evaluate","风数据丢失 · 警戒无法判断")
    active?.paused==true&&proxy.state==MockGpsState.ACTIVE->l("Anchor session paused • NMEA GPS proxy active","锚泊监控已暂停 · NMEA GPS 代理运行中")
    active?.paused==true->l("Anchor session paused","锚泊监控已暂停")
+   active?.monitoringPhase==com.yokuli.anchorwatch.domain.model.AnchorMonitoringPhase.WAITING_FOR_GPS.name->l("Anchor session saved • waiting for accepted ${if(anchor.gpsSource==GpsDataSource.NMEA)"NMEA GPS" else "Phone GNSS"} • movement not monitored","锚泊会话已保存 · 等待可信${if(anchor.gpsSource==GpsDataSource.NMEA)" NMEA GPS" else "手机 GNSS"} · 尚未监测船位移动")
    active?.centerStatus==AnchorCenterStatus.CANDIDATE_READY.name->l("Watch active • estimated centre awaits approval","锚警监控中 · 估算中心等待确认")
    active?.centerStatus==AnchorCenterStatus.LEARNING.name->l("Watch active • temporary boundary armed • ${anchor.learningSampleCount} fixes","锚警监控中 · 临时边界已布防 · ${anchor.learningSampleCount} 个定位点")
    active!=null&&anchor.gpsSource==GpsDataSource.NMEA&&anchor.nmeaLossAnnounced->l("Watch active • NMEA connection lost • recovery required","锚警监控中 · NMEA 连接丢失 · 需要恢复")
@@ -736,8 +737,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
    message=="Anchor watch paused"->"锚警已暂停"
    message=="This anchor session and its centre were kept; NMEA was disconnected."->"本次锚泊会话及其中心已保留，NMEA 已断开。"
    message=="NMEA connection lost"->"NMEA 连接丢失"
-   message.startsWith("Anchor watch is still active. Automatic reconnect is enabled")->"锚警仍在运行。连接真正断开时会自动重试；无数据、过期或无定位连接仍可能需要手动重连。"
-   message.startsWith("Anchor watch is still active, but automatic reconnect is off")->"锚警仍在运行，但自动重连已关闭；请手动重连，或暂停并恢复同一会话。"
+   message.startsWith("Anchor watch is still active. Safety-owned recovery continues")->"锚警仍在运行。安全恢复会按有上限的间隔持续重试，直到 NMEA 恢复，或你明确暂停/停止恢复；若可信船位未恢复，GPS 数据丢失警报仍会触发。"
    message=="NMEA GPS restored"->"NMEA GPS 已恢复"
    message.startsWith("Valid NMEA positions are flowing again")->"有效 NMEA 位置已恢复，锚警始终保持运行。"
    message=="Anchor centre resolved"->"锚点中心已确定"

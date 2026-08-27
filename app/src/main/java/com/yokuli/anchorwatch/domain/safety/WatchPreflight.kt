@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.yokuli.anchorwatch.data.preferences.AppSettings
 import com.yokuli.anchorwatch.data.sonar.SonarRecorderStatus
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
+import com.yokuli.anchorwatch.domain.model.AnchorOriginMode
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.sonar.SonarDepthHoldState
@@ -65,6 +66,41 @@ data class WatchSafetyInput(
     val nmeaConnectionStartedElapsedRealtime:Long?=null,
 )
 
+data class AnchorSetupReadinessInput(
+    val originMode:AnchorOriginMode?,
+    val acceptedPositionReady:Boolean,
+    val coordinateValid:Boolean,
+    val notificationPermission:Boolean,
+    val sourceCompatible:Boolean,
+    val geometryValid:Boolean=true,
+    val rangeValid:Boolean=true,
+    val depthGuardReady:Boolean=true,
+    val windGuardReady:Boolean=true,
+    val windShiftReady:Boolean=true,
+)
+data class AnchorSetupReadiness(val canStart:Boolean,val blockers:List<String>,val willWaitForGps:Boolean)
+
+/** One source of truth for setup/preflight blockers. A Manual or Map origin is
+ * an explicit coordinate and may persist a WAITING_FOR_GPS session; Current
+ * and Backdown origins may never be created without accepted-position proof. */
+object AnchorSetupReadinessEvaluator{
+    fun evaluate(input:AnchorSetupReadinessInput):AnchorSetupReadiness{
+        val acceptedRequired=input.originMode in setOf(AnchorOriginMode.CURRENT_ACCEPTED_POSITION,AnchorOriginMode.BACKDOWN_FROM_ACCEPTED_POSITION)
+        val blockers=buildList{
+            if(!input.sourceCompatible)add("POSITION_SOURCE_INCOMPATIBLE")
+            if(!input.notificationPermission)add("NOTIFICATION_PERMISSION_REQUIRED")
+            if(!input.coordinateValid)add("ANCHOR_COORDINATE_REQUIRED")
+            if(acceptedRequired&&!input.acceptedPositionReady)add("ACCEPTED_POSITION_REQUIRED")
+            if(!input.geometryValid)add("ANCHOR_GEOMETRY_INVALID")
+            if(!input.rangeValid)add("ALARM_RANGE_INVALID")
+            if(!input.depthGuardReady)add("DEPTH_GUARD_NOT_READY")
+            if(!input.windGuardReady)add("WIND_GUARD_NOT_READY")
+            if(!input.windShiftReady)add("WIND_SHIFT_NOT_READY")
+        }
+        return AnchorSetupReadiness(blockers.isEmpty(),blockers,!acceptedRequired&&!input.acceptedPositionReady&&input.coordinateValid)
+    }
+}
+
 object WatchPreflightEvaluator {
     private const val FRESH_FIX_MILLIS = 10_000L
     private const val ALARM_CONFIRMATION_MAX_AGE = 30L * 24L * 60L * 60L * 1_000L
@@ -75,6 +111,7 @@ object WatchPreflightEvaluator {
         val checks = mutableListOf<SafetyCheck>()
         val fix = input.selectedFix
         val age = fix?.let { input.nowElapsed - it.receivedElapsedRealtime }
+        val sharedReadiness=AnchorSetupReadinessEvaluator.evaluate(AnchorSetupReadinessInput(null,fix?.valid==true,coordinateValid=true,notificationPermission=input.device.notificationPermission,sourceCompatible=true))
         checks += when {
             fix?.valid != true -> warning("gps_fresh", "GPS fix", "No valid fix", "The session can start, but movement checks and track recording wait for GPS and the active watch will notify you.")
             age == null || age !in 0..FRESH_FIX_MILLIS -> warning("gps_fresh", "GPS fix", "Stale by ${age?.div(1_000) ?: "?"} s", "The session can start from the confirmed anchor coordinate; stale fixes are ignored until live GPS recovers.")
@@ -98,7 +135,7 @@ object WatchPreflightEvaluator {
             input.nmeaConnection==NmeaConnectionState.CONNECTED->warning("nmea", "NMEA source", "Position unavailable, stale or poor quality", "The session can start now; current-generation quality rules still exclude unsafe fixes from movement calculations.")
             else->warning("nmea", "NMEA source", input.nmeaConnection.name, "The session can start now and will notify you that the selected GPS source is unavailable.")
         }
-        checks += if (input.device.notificationPermission) ok("notifications", "Alarm notifications", "Allowed")
+        checks += if (!sharedReadiness.blockers.contains("NOTIFICATION_PERMISSION_REQUIRED")) ok("notifications", "Alarm notifications", "Allowed")
         else blocker("notifications", "Alarm notifications", "Permission denied", "Android may hide critical anchor alarm notifications.")
         checks += if(input.device.fullScreenAlarmAllowed)ok("full_screen_alarm","Full-screen alarm","Allowed")
         else warning("full_screen_alarm","Full-screen alarm","Needs action","Android may show only a lock-screen heads-up alert instead of opening the alarm screen.")

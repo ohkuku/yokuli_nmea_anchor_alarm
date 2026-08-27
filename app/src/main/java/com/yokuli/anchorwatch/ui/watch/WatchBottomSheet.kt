@@ -39,6 +39,7 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.*
 import com.google.maps.android.compose.*
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
+import com.yokuli.anchorwatch.data.nmea.NmeaTransportDiagnostics
 import com.yokuli.anchorwatch.data.nmea.Protocol
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.domain.anchor.AnchorGeometry
@@ -57,6 +58,7 @@ import com.yokuli.anchorwatch.domain.model.CandidateDecision
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.AnchorRangeMode
 import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
+import com.yokuli.anchorwatch.domain.model.AnchorMonitoringPhase
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
@@ -114,8 +116,9 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
         GpsDataSource.DEMO->state.systemFix?.let{it.valid&&it.positionProvider==com.yokuli.anchorwatch.domain.model.PositionProvider.ANDROID_GNSS&&(it.horizontalAccuracyMeters?:Double.POSITIVE_INFINITY)<=30.0&&now-it.receivedElapsedRealtime in 0L until state.settings.gpsLossSeconds*1_000L}==true
     }
     val centerReady=active?.centerStatus==AnchorCenterStatus.RESOLVED.name
-    val learningDistance=if(fix!=null&&active!=null&&!centerReady)AnchorGeometry.distanceMeters(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,fix.latitude,fix.longitude)else null
-    val distance = if (fix != null && active != null&&centerReady) AnchorGeometry.distanceMeters(active.anchorLatitude, active.anchorLongitude, fix.latitude, fix.longitude) else null
+    val waitingForGps=active?.monitoringPhase==AnchorMonitoringPhase.WAITING_FOR_GPS.name
+    val learningDistance=if(!waitingForGps&&fix!=null&&active!=null&&!centerReady)AnchorGeometry.distanceMeters(active.learningReferenceLatitude?:active.anchorLatitude,active.learningReferenceLongitude?:active.anchorLongitude,fix.latitude,fix.longitude)else null
+    val distance = if (!waitingForGps&&fix != null && active != null&&centerReady) AnchorGeometry.distanceMeters(active.anchorLatitude, active.anchorLongitude, fix.latitude, fix.longitude) else null
     // The one-shot map prompt may be dismissed for the current approach episode,
     // but Watch must retain a discoverable reference while the boat remains within
     // the same 1 NM policy used by the approach engine. Do not reintroduce the old
@@ -123,7 +126,7 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
     val nearby=if(active==null)state.anchorageApproach.nearbyClusters else emptyList()
     Surface(tonalElevation = 3.dp) { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) {
-            Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
+            Text(when{active==null->tr("ANCHOR WATCH OFF","锚警已关闭");active.paused->tr("ANCHOR SESSION PAUSED","锚泊监控已暂停");waitingForGps->tr("ANCHOR SESSION · WAITING FOR GPS","锚泊会话 · 等待 GPS");!centerReady->tr("ANCHOR WATCH · LEARNING CENTRE","锚警 · 正在学习中心");else->tr("ANCHOR WATCH ACTIVE","锚警监控中")}, style = MaterialTheme.typography.labelLarge)
             Text(when{
                 active==null&&state.settings.gpsDataSource==GpsDataSource.NMEA&&!nmeaPositionReady->when{
                     nmeaInstrumentsConnected->tr("NMEA GPS selected · position health is degraded · Set anchor remains available","已选择 NMEA GPS · 船位健康降级 · 仍可设置锚点")
@@ -131,12 +134,14 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
                 }
                 active==null->if(freshFix)tr("Ready to set anchor${if(newAnchorSource==GpsDataSource.DEMO)" · Demo uses the confirmed start coordinate" else ""}","已可下锚${if(newAnchorSource==GpsDataSource.DEMO)" · 演示使用已确认的起点坐标" else ""}") else tr("GPS health is degraded · Set anchor remains available and monitoring will warn after start","GPS 健康降级 · 仍可设置锚点，启动后监控会发出警告")
                 active.paused->tr("Centre, track and ${active.alarmRadiusMeters.toInt()} m range preserved","中心、轨迹和 ${active.alarmRadiusMeters.toInt()} 米范围已保留")
+                waitingForGps->tr("Anchor coordinate saved · vessel movement is not being monitored yet","锚点坐标已保存 · 尚未开始监测船位移动")
                 !centerReady->tr("${learningDistance?.toInt()?:"--"} m / ${active.alarmRadiusMeters.toInt()} m temporary boundary • ${state.points.size} fixes","临时边界 ${learningDistance?.toInt()?:"--"} / ${active.alarmRadiusMeters.toInt()} 米 · ${state.points.size} 个定位点")
                 else->tr("${distance?.toInt() ?: "--"} m / ${active.alarmRadiusMeters.toInt()} m","${distance?.toInt() ?: "--"} / ${active.alarmRadiusMeters.toInt()} 米")
-            }, style = if(active==null||active.paused||!centerReady)MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            }, style = if(active==null||active.paused||waitingForGps||!centerReady)MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         } }
-        if(active!=null&&!centerReady)Text(if(active.candidateDecision==CandidateDecision.AVAILABLE.name)tr("A candidate is ready. The orange working boundary will not move until you approve it.","候选锚点已就绪；在你确认前，橙色工作边界不会移动。")else tr("Orange is the active temporary alarm boundary. Blue is the possible anchor region and shrinks only as accepted evidence accumulates.","橙色是当前生效的临时报警边界；蓝色是可能锚位范围，只会随可信证据积累而缩小。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        if(active!=null&&!centerReady)LearningGeometryCard(active)
+        if(waitingForGps)Surface(Modifier.fillMaxWidth().testTag("anchor_waiting_for_gps"),color=MaterialTheme.colorScheme.tertiaryContainer,shape=MaterialTheme.shapes.medium){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(tr("Monitoring has not started","尚未开始监控"),fontWeight=FontWeight.SemiBold);Text(tr("Waiting for a current accepted ${if(active?.positionSource==GpsDataSource.NMEA.name)"NMEA GPS position" else "Phone GNSS position"}. No track, distance, alarm timer or centre evidence is being produced.","正在等待当前可信的${if(active?.positionSource==GpsDataSource.NMEA.name)" NMEA 船位" else "手机 GNSS 船位"}。当前不会生成轨迹、距离、报警计时或中心证据。"),style=MaterialTheme.typography.bodySmall)}}
+        if(active!=null&&!waitingForGps&&!centerReady)Text(if(active.candidateDecision==CandidateDecision.AVAILABLE.name)tr("A candidate is ready. The orange working boundary will not move until you approve it.","候选锚点已就绪；在你确认前，橙色工作边界不会移动。")else tr("Orange is the active temporary alarm boundary. Blue is the possible anchor region and shrinks only as accepted evidence accumulates.","橙色是当前生效的临时报警边界；蓝色是可能锚位范围，只会随可信证据积累而缩小。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(active!=null&&!waitingForGps&&!centerReady)LearningGeometryCard(active)
         if(active!=null&&active.estimationEpoch>0L){val evidence=state.acceptedPosition.headingEvidence;val evidenceSource=when(evidence.source){com.yokuli.anchorwatch.domain.model.HeadingSource.NMEA_PHYSICAL->state.vesselData.headingTrueDegrees.sourceIdentity?.displayName?:evidence.sourceId?:tr("Boat heading","船载船艏向");com.yokuli.anchorwatch.domain.model.HeadingSource.PHONE->tr("Phone vessel heading","手机船体船艏向");else->tr("Currently unavailable","当前不可用")};val evidenceStatus=when{evidence.trueDegrees!=null->tr("Participating in centre estimation","正在参与中心估算");evidence.reason=="AUTO_SOURCE_CONFLICT"->tr("Conflicting heading sources; temporarily excluded","船艏向来源冲突，暂不参与");evidence.reason.contains("MOUNT")||evidence.reason.contains("PHONE_NOT")->tr("Phone is not securely vessel-mounted; temporarily excluded","手机未牢固固定于船体，暂不参与");evidence.reason.contains("STABLE")->tr("Phone heading is moving or unstable; temporarily excluded","手机船艏向正在移动或不稳定，暂不参与");else->tr("No eligible heading; GPS, rode geometry and wind continue","暂无符合条件的船艏向；GPS、锚链几何和风数据继续估算")};Surface(color=MaterialTheme.colorScheme.secondaryContainer,shape=MaterialTheme.shapes.medium){Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(tr("Heading evidence","船艏向证据"),fontWeight=FontWeight.SemiBold);Text(tr("Automatic","自动"),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)};Text(tr("Current source: $evidenceSource","当前来源：$evidenceSource"),style=MaterialTheme.typography.bodySmall);Text(evidenceStatus,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);TextButton(manageVesselData,Modifier.align(Alignment.End).testTag("manage_vessel_heading_source")){Text(tr("Manage vessel data sources","管理船舶数据源"))};TextButton({confirmAnalysisReset=true},Modifier.align(Alignment.End).testTag("reset_centre_analysis")){Text(tr("Start a new analysis epoch","开始新的估算阶段"))}}}}
         if(active==null){Button({when{!state.settingsReady->startBlocker=loadingStartBlocker;state.activeTrip!=null->startBlocker=tripStartBlocker;else->arm()}},Modifier.fillMaxWidth().testTag("set_anchor_primary")){Text(tr("Set anchor","设置锚点"))};if(state.activeTrip!=null)Text(tr("Trip Watch is active. Tap Set anchor to see the required recovery action.","航程监控正在运行。点击“设置锚点”可查看处理方法。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}
         else{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({if(active.paused){resumeFeedbackBaseline=state.runtimeDiagnostics.lastUserFeedback?.id?:0L;resumeFailure=null;resumePending=true;resume()}else pause()},Modifier.weight(1f),enabled=!resumePending){if(resumePending){CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp);Spacer(Modifier.width(6.dp))}else Icon(if(active.paused)Icons.Default.PlayArrow else Icons.Default.Pause,null);Spacer(Modifier.width(6.dp));Text(if(resumePending)tr("Resuming…","正在继续…")else if(active.paused)tr("Resume","继续") else tr("Pause","暂停"))};OutlinedButton(adjust,Modifier.weight(1f)){Icon(Icons.Default.Tune,null);Spacer(Modifier.width(6.dp));Text(tr("Adjust range","调整范围"))}};resumeFailure?.let{Text(it,Modifier.testTag("anchor_resume_error"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)};OutlinedButton({showConditions=true},Modifier.fillMaxWidth()){Icon(Icons.Default.Air,null);Spacer(Modifier.width(6.dp));Text(tr("Condition alerts","环境警戒"))};if(centerReady){OutlinedButton(recalculateCentre,Modifier.fillMaxWidth().testTag("recalculate_centre_from_track")){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(6.dp));Text(tr("Recalculate centre from track","根据轨迹重新计算中心"))};Text(tr("Runs once on the accepted track and never moves the safety centre without confirmation.","只对可信轨迹执行一次分析，未经确认绝不会移动安全中心。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);OutlinedButton(openAnchorMap,Modifier.fillMaxWidth().testTag("open_anchor_google_maps")){Icon(Icons.Default.Place,null);Spacer(Modifier.width(6.dp));Text(tr("Open anchor in Google Maps","在 Google 地图中打开锚点"))}};TextButton(lift,Modifier.align(Alignment.End),colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Anchor,null);Spacer(Modifier.width(6.dp));Text(tr("Lift anchor","起锚"))}}
@@ -151,7 +156,7 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
         if(nmeaPositionFault)NmeaWatchRecoveryCard(
             paused=active?.paused==true,
             connection=state.connection,
-            autoReconnect=state.settings.profile.autoReconnect,
+            diagnostics=state.nmeaTransportDiagnostics,
             pause=pause,
             reconnect=reconnectNmea,
             openNmea=openNmea,
@@ -204,12 +209,16 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
 private fun NmeaWatchRecoveryCard(
     paused:Boolean,
     connection:NmeaConnectionState,
-    autoReconnect:Boolean,
+    diagnostics:NmeaTransportDiagnostics,
     pause:()->Unit,
     reconnect:()->Unit,
     openNmea:()->Unit,
     openGpsSources:()->Unit,
 ){
+    val retryNow by produceState(android.os.SystemClock.elapsedRealtime()){
+        while(true){kotlinx.coroutines.delay(1_000);value=android.os.SystemClock.elapsedRealtime()}
+    }
+    val retryIn=diagnostics.nextRetryElapsedRealtime?.let{((it-retryNow).coerceAtLeast(0L)+999L)/1_000L}
     Surface(
         modifier=Modifier.fillMaxWidth().testTag("nmea_watch_recovery"),
         color=MaterialTheme.colorScheme.errorContainer,
@@ -227,22 +236,31 @@ private fun NmeaWatchRecoveryCard(
                 if(paused)tr(
                     "This session is safely paused. Reconnect or configure NMEA, or verify Phone GPS for the same session; then Resume.",
                     "本会话已安全暂停。请重连或重新配置 NMEA，也可以为同一会话验证手机 GPS；完成后再继续监控。",
-                )else if(autoReconnect)tr(
-                    "The watch never switches silently. Automatic retry is enabled for a broken transport; quiet, stale or no-fix connections may still need Reconnect now. A GPS-data-loss alarm follows on timeout. Pause to recover without losing the session.",
-                    "锚警绝不会静默切源。连接真正断开时会自动重试；但连接无数据、定位过期或无定位时仍可能需要立即点“重连”。GPS 超时后会报警，暂停恢复不会丢失 session。",
                 )else tr(
-                    "The watch never switches silently, and automatic reconnect is off. Reconnect now, or Pause to configure another server or verify Phone GPS without losing this session.",
-                    "锚警绝不会静默切源，且自动重连已关闭。请立即重连，或暂停后配置另一台服务器/验证手机 GPS；本次会话不会丢失。",
+                    "The watch never switches silently. Safety-owned recovery keeps retrying with a bounded delay, even if the ordinary profile auto-reconnect switch is off. You may also reconnect now, or pause to change the source without losing this session.",
+                    "锚警绝不会静默切源。安全恢复会按有上限的间隔持续重试，即使普通配置的自动重连已关闭。你也可以立即重连，或暂停后更换来源；本次会话不会丢失。",
                 ),
                 style=MaterialTheme.typography.bodySmall,
                 color=MaterialTheme.colorScheme.onErrorContainer,
             )
-            if(!paused)Button(pause,Modifier.fillMaxWidth().testTag("pause_for_source_recovery")){Icon(Icons.Default.PauseCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Pause safely to recover","安全暂停并恢复"))}
+            Text(
+                listOfNotNull(
+                    if(diagnostics.safetyOwnedRetry)tr("Automatic recovery running","自动恢复运行中")else tr("Automatic recovery stopped","自动恢复已停止"),
+                    tr("attempt ${diagnostics.reconnectAttempt}","第 ${diagnostics.reconnectAttempt} 次尝试"),
+                    retryIn?.let{tr("next in ${it}s","${it} 秒后重试")},
+                    diagnostics.lastFailureCategory,
+                    diagnostics.lastDisconnectReason,
+                ).joinToString(" · "),
+                style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.onErrorContainer,
+                modifier=Modifier.testTag("nmea_watch_retry_status"),
+            )
+            if(!paused)Button(pause,Modifier.fillMaxWidth().testTag("pause_for_source_recovery")){Icon(Icons.Default.PauseCircle,null);Spacer(Modifier.width(6.dp));Text(tr("Pause watch & stop recovery","暂停锚警并停止恢复"))}
             else{
                 Button(openGpsSources,Modifier.fillMaxWidth().testTag("recover_with_system_gps")){Icon(Icons.Default.GpsFixed,null);Spacer(Modifier.width(6.dp));Text(tr("Open GPS source recovery","打开 GPS 数据源恢复"))}
             }
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                OutlinedButton(reconnect,Modifier.weight(1f)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(4.dp));Text(tr("Reconnect","重连"))}
+                OutlinedButton(reconnect,Modifier.weight(1f)){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(4.dp));Text(tr("Reconnect now","立即重连"))}
                 OutlinedButton(openNmea,Modifier.weight(1f)){Icon(Icons.Default.SettingsEthernet,null);Spacer(Modifier.width(4.dp));Text(tr("Server","服务器"))}
             }
         }

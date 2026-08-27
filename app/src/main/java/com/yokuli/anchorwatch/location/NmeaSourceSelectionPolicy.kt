@@ -72,8 +72,8 @@ object NmeaSourceSelectionPolicy {
  * or freshness fault must not silently turn an explicitly selected NMEA watch
  * into a Phone-GPS watch. The runtime records the session immediately and then
  * reports/recoveries GPS health independently. Fresh installs still default to
- * Phone GPS in [AppSettings]; NMEA is only selected after the user chooses it or
- * the live-source auto-promotion has observed a real position. */
+ * Phone GPS in [AppSettings]; NMEA is selected only after an explicit user
+ * choice in Data -> Sources. Availability never mutates consent. */
 object NewAnchorPositionSourcePolicy {
     fun resolve(
         configuredSource: GpsDataSource,

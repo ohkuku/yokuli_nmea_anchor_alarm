@@ -64,6 +64,7 @@ import com.yokuli.anchorwatch.domain.model.CandidateDecision
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.AnchorRangeMode
 import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
+import com.yokuli.anchorwatch.domain.model.AnchorMonitoringPhase
 import com.yokuli.anchorwatch.domain.model.DemoScenario
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
@@ -118,6 +119,7 @@ internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel
     var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
     var showPreflight by remember{mutableStateOf(false)}
     var showSetup by remember{mutableStateOf(false)}
+    LaunchedEffect(state.anchorSetupDraft?.referenceKey){state.anchorSetupDraft?.let{draft->setupReference=draft.takeIf{it.referenceKey!="none"}?.let{AnchorageSetupReference(it.referenceAlarmRadiusMeters,it.referenceWaterDepthMeters,it.referenceRodeMeters)};showSetup=true}}
 
     fun openDetails(cluster:com.yokuli.anchorwatch.domain.anchorage.AnchorageCluster){
         when(val resolved=com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsPolicy.resolve(cluster)){
@@ -172,7 +174,7 @@ internal fun AnchorageApproachDestinationHost(state:MainUiState,vm:MainViewModel
     )}
     if(state.approachDisclaimerTargetId!=null)AnchorageApproachDisclaimerDialog(vm::confirmAnchorageApproachDisclaimer,vm::dismissAnchorageApproachDisclaimer)
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false;setupReference=null}){showPreflight=false;showSetup=true}
-    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview,openGpsSettings={showSetup=false;setupReference=null;vm.openDataSection(0)}){lat,lon,input->vm.arm(lat,lon,input)}
+    if(showSetup)AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview,openGpsSettings={showSetup=false;setupReference=null;vm.openDataSection(0)},saveDraft=vm::saveAnchorSetupDraft,clearDraft=vm::clearAnchorSetupDraft){lat,lon,input->vm.arm(lat,lon,input)}
 }
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
@@ -181,6 +183,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
     var anchorageDetails by remember{mutableStateOf<SavedAnchorageEntity?>(null)}
     var anchorageListDetails by remember{mutableStateOf<List<Long>?>(null)}
     var setupReference by remember{mutableStateOf<AnchorageSetupReference?>(null)}
+    LaunchedEffect(state.anchorSetupDraft?.referenceKey){state.anchorSetupDraft?.let{draft->setupReference=draft.takeIf{it.referenceKey!="none"}?.let{AnchorageSetupReference(it.referenceAlarmRadiusMeters,it.referenceWaterDepthMeters,it.referenceRodeMeters)};showSetup=true}}
     val openAnchorageList:(List<Long>)->Unit={ids->anchorageDetails=null;anchorageListDetails=ids.distinct()}
     val nearbyActions=SavedAnchorageCardActions(
         approach={saved->anchorageListDetails=null;vm.approachSavedAnchorage(saved.id)},
@@ -197,7 +200,8 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
             is com.yokuli.anchorwatch.domain.anchorage.AnchorageDetailsTarget.AnchorageList->openAnchorageList(target.ids)
         }
     }
-    val fix = state.fix; val active = state.active
+    val active = state.active
+    val fix = state.fix.takeUnless{active?.monitoringPhase==AnchorMonitoringPhase.WAITING_FOR_GPS.name}
     // Map, instruments and NMEA output consume the same canonical presentation
     // selection. Safety/evidence applies stricter quality gates downstream, but
     // the map must not invent a second heading priority tree or use COG as bow.
@@ -439,7 +443,7 @@ internal fun AnchorWatchPage(state: MainUiState, vm: MainViewModel) {
         }
     }
     if (showSetup) {
-        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview,openGpsSettings={showSetup=false;setupReference=null;vm.openDataSection(0)}){lat,lon,input->vm.arm(lat,lon,input)}
+        AnchorSetupSheet(state,{showSetup=false;setupReference=null},reference=setupReference,previewPhoneGps=vm::setAnchorSetupGpsPreview,openGpsSettings={showSetup=false;setupReference=null;vm.openDataSection(0)},saveDraft=vm::saveAnchorSetupDraft,clearDraft=vm::clearAnchorSetupDraft){lat,lon,input->vm.arm(lat,lon,input)}
     }
     if(showPreflight)WatchPreflightSheet(state,{showPreflight=false}){showPreflight=false;showSetup=true}
     if(showAdjust&&active!=null)AnchorSettingsDialog(fix,active,{showAdjust=false}){input->vm.updateAnchorSettings(input);showAdjust=false}

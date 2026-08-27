@@ -5,7 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
 import com.yokuli.anchorwatch.data.NavigationRepository
 import com.yokuli.anchorwatch.data.NmeaInstrumentState
 import com.yokuli.anchorwatch.data.AlarmUiRepository
@@ -52,6 +54,7 @@ import com.yokuli.anchorwatch.domain.sonar.SonarGrid
 import com.yokuli.anchorwatch.domain.sonar.DepthUiState
 import com.yokuli.anchorwatch.data.sonar.SonarGridScope
 import com.yokuli.anchorwatch.domain.model.AnchorCenterSource
+import com.yokuli.anchorwatch.domain.model.AnchorOriginMode
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
 import com.yokuli.anchorwatch.domain.model.AnchorRangeMode
 import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
@@ -116,6 +119,9 @@ import com.yokuli.anchorwatch.data.vessel.VesselDataSettings
 import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
+import com.yokuli.anchorwatch.data.vessel.NmeaOutputPreset
+import com.yokuli.anchorwatch.data.vessel.withPreset
+import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
 import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
@@ -167,6 +173,35 @@ enum class ConnectionAttemptState { IDLE, TESTING, WARNING, FAILED }
 data class ConnectionAttempt(val state:ConnectionAttemptState=ConnectionAttemptState.IDLE,val message:String="")
 data class CentreRecalculationUiState(val sessionId:Long?=null,val sessionActive:Boolean=false,val loading:Boolean=false,val result:AnchorCentreRecalculationResult?=null)
 const val CORRECTED_SONAR_HISTORY_ID = -1L
+
+data class AnchorSetupDraft(
+    val referenceKey:String="none",
+    val referenceAlarmRadiusMeters:Double?=null,
+    val referenceWaterDepthMeters:Double?=null,
+    val referenceRodeMeters:Double?=null,
+    val estimate:Boolean=false,
+    val knownMethod:String=AnchorCenterSource.CURRENT_POSITION.name,
+    val manualCoordinate:String="",
+    val mapLatitude:Double?=null,
+    val mapLongitude:Double?=null,
+    val rangeMode:String=AnchorRangeMode.BASIC.name,
+    val safetyPreset:String=AnchorSafetyPreset.BALANCED.name,
+    val depthSource:String=AnchorDepthSource.MANUAL.name,
+    val depth:String="",
+    val rode:String="40",
+    val bowHeight:String="",
+    val boatLength:String="",
+    val alarmRadius:String="",
+    val depthGuard:Boolean=false,
+    val shallowDepth:String="",
+    val deepGuard:Boolean=false,
+    val deepDepth:String="",
+    val windGuard:Boolean=false,
+    val windWarning:String="",
+    val windAlarm:String="",
+    val windShift:Boolean=false,
+    val windShiftDegrees:String="",
+)
 
 data class MainUiState(
     val fix:NavigationFix?=null,
@@ -248,6 +283,7 @@ data class MainUiState(
     val phoneVesselMountState:PhoneVesselMountState=PhoneVesselMountState.UNCALIBRATED,
     val vesselCalibrationFeedback:String?=null,
     val runtimeResources:RuntimeResourceSnapshot=RuntimeResourceSnapshot(),
+    val anchorSetupDraft:AnchorSetupDraft?=null,
 )
 
 private data class PositionSources(val selected:NavigationFix?,val nmea:NavigationFix?,val system:NavigationFix?,val settings:AppSettings)
@@ -259,7 +295,7 @@ private data class PositionRoutingSnapshot(
     val connection:NmeaConnectionState,
     val connectionStartedElapsed:Long?,
 )
-data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=true,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig())
+data class AnchorWatchInput(val placement:AnchorPlacementMode,val rangeMode:AnchorRangeMode,val safetyPreset:AnchorSafetyPreset,val depthMeters:Double?,val rodeMeters:Double,val bowHeightMeters:Double,val boatLengthMeters:Double?,val alarmRadiusMeters:Double,val positionSource:GpsDataSource=GpsDataSource.SYSTEM,val centerSource:AnchorCenterSource=AnchorCenterSource.CURRENT_POSITION,val usePhoneHeading:Boolean=true,val depthSource:AnchorDepthSource=AnchorDepthSource.MANUAL,val conditions:ConditionGuardConfig=ConditionGuardConfig(),val originMode:AnchorOriginMode=AnchorOriginMode.CURRENT_ACCEPTED_POSITION)
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -309,8 +345,11 @@ class MainViewModel @Inject constructor(
     private val tripDashboardRepository:TripDashboardRepository,
     private val tripReportEngine:TripReportEngine,
     private val anchorReportEngine:AnchorReportEngine,
+    private val savedStateHandle:SavedStateHandle,
 ):AndroidViewModel(app){
-    private val _ui=MutableStateFlow(MainUiState());val ui=_ui.asStateFlow()
+    private val draftGson=Gson()
+    private val restoredAnchorSetupDraft=savedStateHandle.get<String>(ANCHOR_SETUP_DRAFT_KEY)?.let{json->runCatching{draftGson.fromJson(json,AnchorSetupDraft::class.java)}.getOrNull()}
+    private val _ui=MutableStateFlow(MainUiState(anchorSetupDraft=restoredAnchorSetupDraft));val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
     private var observedSessionId:Long?=null
     private var sonarSamplesJob:Job?=null
@@ -321,7 +360,6 @@ class MainViewModel @Inject constructor(
     private var selectedApproachMemberIds:Set<Long> = emptySet()
     private var gisApproachTarget:AnchorageCluster?=null
     private var lastApproachHeadingRefreshElapsed=0L
-    private var nmeaAutoPromotionJob:Job?=null
 
     init{
         // Safety and recording repositories consume the full provider rate. Compose/map only
@@ -344,7 +382,7 @@ class MainViewModel @Inject constructor(
                 val source=lockedSource?:NewAnchorPositionSourcePolicy.resolve(settings.gpsDataSource,settings.demoMode)
                 if(active!=null)acceptedPosition.lockSource(active.id,source)else{acceptedPosition.unlockSource(null);acceptedPosition.selectSource(source)}
                 val raw=when(source){GpsDataSource.NMEA->positions.nmea;GpsDataSource.SYSTEM->positions.system;GpsDataSource.DEMO->positions.demo.takeIf{positions.demoStatus.running}}
-                raw?.let{acceptedPosition.submit(source,it)}
+                raw?.let{acceptedPosition.submit(source,it,nav.connectionGeneration().takeIf{source==GpsDataSource.NMEA})}
             }
         }
         viewModelScope.launch{
@@ -442,7 +480,21 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{combine(acceptedPosition.state.map{it.acceptedFix}.distinctUntilChanged(),prefs.settings.map{it.showLinzDepthReference}.distinctUntilChanged()){fix,enabled->fix to enabled}.conflate().collect{(fix,enabled)->delay(2_000);if(enabled&&fix?.valid==true)linzDepthRepository.refresh(fix.latitude,fix.longitude)}}
         viewModelScope.launch{while(true){refreshDepthUi();refreshWatchSafety();refreshAnchorageApproach();delay(1_000)}}
         viewModelScope.launch{while(true){refreshStorageHealth();delay(30_000)}}
-        incidentLogger.record("app","UI_STARTED")
+        incidentLogger.record(
+            "app",
+            "UI_STARTED",
+            details=mapOf(
+                "versionName" to BuildConfig.VERSION_NAME,
+                "versionCode" to BuildConfig.VERSION_CODE,
+                "gitSha" to BuildConfig.BUILD_GIT_SHA,
+                "gitBranch" to BuildConfig.BUILD_GIT_BRANCH,
+                "gitDirty" to BuildConfig.BUILD_GIT_DIRTY,
+                "buildTimestampUtc" to BuildConfig.BUILD_TIMESTAMP_UTC,
+                "buildChannel" to BuildConfig.BUILD_CHANNEL,
+                "buildInCi" to BuildConfig.BUILD_IN_CI,
+                "databaseSchemaVersion" to BuildConfig.DATABASE_SCHEMA_VERSION,
+            ),
+        )
     }
 
     private companion object {
@@ -450,6 +502,7 @@ class MainViewModel @Inject constructor(
         const val MAX_ACTIVE_TRAIL_POINTS=4_800
         const val PHONE_HEADING_ALIGNMENT_FRESH_MILLIS=2_000L
         const val NMEA_HEADING_ALIGNMENT_FRESH_MILLIS=3_000L
+        const val ANCHOR_SETUP_DRAFT_KEY="anchor_setup_draft_v1"
     }
 
     private fun refreshWatchSafety(){
@@ -600,7 +653,6 @@ class MainViewModel @Inject constructor(
         // endpoint immediately; CONNECTED_NO_DATA remains a successful live
         // connection and the normal state/health cards continue observing it.
         prefs.save(previous.copy(profile=profile))
-        scheduleNmeaAutoPromotion(profile,previous.gpsDataSource)
         observeNmeaConnectionOutcome(generation)
     }
 
@@ -621,27 +673,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun scheduleNmeaAutoPromotion(profile:ConnectionProfile,sourceAtConnect:GpsDataSource){
-        nmeaAutoPromotionJob?.cancel()
-        if(sourceAtConnect==GpsDataSource.NMEA||_ui.value.settings.demoMode)return
-        nmeaAutoPromotionJob=viewModelScope.launch{
-            val timeout=maxOf(15_000L,profile.noDataTimeoutSeconds.coerceAtLeast(1)*1_000L).coerceAtMost(60_000L)
-            val usable=withTimeoutOrNull(timeout){
-                combine(nav.connectionState,nav.fix,nav.connectionStartedElapsed){connection,fix,started->Triple(connection,fix,started)}.first{(connection,fix,started)->
-                    NmeaSourceSelectionPolicy.isUsablePosition(connection,fix,started,android.os.SystemClock.elapsedRealtime(),_ui.value.settings.gpsLossSeconds*1_000L)
-                }
-            }?:return@launch
-            val current=prefs.settings.first()
-            val session=_ui.value.active
-            if(current.profile==profile&&current.gpsDataSource==sourceAtConnect&&!current.demoMode&&session==null){
-                prefs.save(current.copy(gpsDataSource=GpsDataSource.NMEA))
-                incidentLogger.record("nmea","POSITION_SOURCE_AUTO_SELECTED",details=mapOf("host" to profile.host,"port" to profile.port,"connectionStartedElapsed" to usable.third))
-            }
-        }
-    }
-
     fun disconnect(){
-        nmeaAutoPromotionJob?.cancel();nmeaAutoPromotionJob=null
         if(_ui.value.active?.paused==false&&_ui.value.active?.positionSource==GpsDataSource.NMEA.name){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"This active anchor session is locked to NMEA. Pause the watch before disconnecting, or lift the anchor to end the session."))}
             return
@@ -772,10 +804,6 @@ class MainViewModel @Inject constructor(
     fun startLocalNmeaServer()=viewModelScope.launch{
         val state=_ui.value
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
-        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){
-            fail("Align the phone to the vessel bow in Settings → Phone vessel sensors before starting the Phone NMEA service.")
-            return@launch
-        }
         if(!state.localNmeaServerSettings.configured||state.localNmeaServerSettings.port !in 1024..65535){
             fail("Save a valid Phone NMEA service listening port first.")
             return@launch
@@ -809,9 +837,9 @@ class MainViewModel @Inject constructor(
     fun setMapType(mapType:Int){val value=mapType.takeIf{it in 1..3}?:1;val updated=_ui.value.settings.copy(mapType=value);_ui.update{it.copy(settings=updated)};viewModelScope.launch{prefs.save(updated)}}
     fun setGpsDataSource(source:GpsDataSource)=switchGpsDataSource(source)
     fun switchGpsDataSource(source:GpsDataSource)=viewModelScope.launch{
-        // Any explicit source tap, including re-selecting the current source,
-        // overrides a pending post-connect automatic NMEA promotion.
-        nmeaAutoPromotionJob?.cancel();nmeaAutoPromotionJob=null
+        // Source consent changes only on this explicit user action. Connection
+        // and accepted-fix collectors are observational and never persist a
+        // different GPS source behind the user's back.
         val current=_ui.value.settings
         if(current.demoMode){
             if(source!=GpsDataSource.DEMO)_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Demo mode owns the App GPS source. Lift the current anchor and disable Demo mode before choosing System or NMEA."))}
@@ -953,11 +981,32 @@ class MainViewModel @Inject constructor(
         _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
     }
     fun setNmeaPhonePositionPublishing(enabled:Boolean)=viewModelScope.launch{
-        val current=_ui.value.outputSettings
-        val updated=current.copy(
+        updateNmeaOutputStreams{current->current.copy(
             phonePositionEnabled=enabled,
             positionPolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
-        )
+        )}
+    }
+    fun setNmeaPhoneHeadingPublishing(enabled:Boolean)=viewModelScope.launch{
+        updateNmeaOutputStreams{it.copy(phoneHeadingEnabled=enabled,headingPolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF)}
+    }
+    fun setNmeaPhoneRateOfTurnPublishing(enabled:Boolean)=viewModelScope.launch{
+        updateNmeaOutputStreams{it.copy(phoneMotionEnabled=enabled||it.phoneAttitudeEnabled,phoneRateOfTurnEnabled=enabled,rateOfTurnPolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,motionPolicy=if(enabled||it.phoneAttitudeEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF)}
+    }
+    fun setNmeaPhoneAttitudePublishing(enabled:Boolean)=viewModelScope.launch{
+        updateNmeaOutputStreams{it.copy(phoneMotionEnabled=enabled||it.phoneRateOfTurnEnabled,phoneAttitudeEnabled=enabled,attitudePolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,motionPolicy=if(enabled||it.phoneRateOfTurnEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF)}
+    }
+    fun setNmeaPhonePressurePublishing(enabled:Boolean)=viewModelScope.launch{
+        updateNmeaOutputStreams{it.copy(phonePressureEnabled=enabled,includePressure=enabled,pressurePolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF)}
+    }
+    fun setNmeaDerivedWindPublishing(enabled:Boolean)=viewModelScope.launch{
+        updateNmeaOutputStreams{it.copy(includeDerivedWind=enabled,derivedWindPolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF)}
+    }
+    fun setNmeaOutputPreset(preset:NmeaOutputPreset)=viewModelScope.launch{
+        updateNmeaOutputStreams{it.withPreset(preset)}
+    }
+    private suspend fun updateNmeaOutputStreams(transform:(NmeaDeviceOutputSettings)->NmeaDeviceOutputSettings){
+        val current=_ui.value.outputSettings
+        val updated=transform(current)
         outputSettingsRepository.saveConfiguration(updated)
         _ui.update{it.copy(outputSettings=updated.copy(publicationEnabled=current.publicationEnabled),connectionAttempt=ConnectionAttempt())}
         // A running publisher observes the same repository Flow, but an
@@ -974,7 +1023,6 @@ class MainViewModel @Inject constructor(
             autoStartOutput=false,
         )
         fun fail(message:String){_ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,message))}}
-        if(!PhoneVesselOutputReadinessPolicy.evaluate(state.vesselMountCalibration,state.phoneVesselMountState).ready){fail("Align the phone to the vessel bow in Settings → Phone vessel sensors before sharing NMEA data.");return@launch}
         if(!isOutputDestinationReady(value,state)){fail(outputDestinationError(value));return@launch}
         if(value!=state.outputSettings)outputSettingsRepository.saveConfiguration(value.copy(publicationEnabled=false))
         outputSettingsRepository.requestStart()
@@ -989,17 +1037,18 @@ class MainViewModel @Inject constructor(
     }
     private fun isOutputDestinationReady(value:NmeaDeviceOutputSettings,state:MainUiState):Boolean{
         val effective=NmeaOutputEndpointPolicy.automatic(value,state.settings.profile)
-        return effective.transportConfigured&&when(effective.transportMode){
-            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->state.settings.profile.protocol==Protocol.TCP&&state.settings.profile.host.isNotBlank()&&state.settings.profile.port in 1..65535&&state.connection in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
+        return effective.anyStreamSelected&&effective.transportConfigured&&when(effective.transportMode){
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->false
             NmeaOutputTransportMode.TCP_SERVER->false
-            NmeaOutputTransportMode.DEDICATED_TCP,NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
+            NmeaOutputTransportMode.DEDICATED_TCP->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535&&!NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(effective,state.settings.profile)
+            NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
         }
     }
     private fun outputDestinationError(value:NmeaDeviceOutputSettings):String{
         val effective=NmeaOutputEndpointPolicy.automatic(value,_ui.value.settings.profile)
-        return if(!effective.transportConfigured)"Choose an NMEA output destination before enabling a stream." else when(effective.transportMode){
-            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Connect the matching TCP NMEA input endpoint before starting output. The App will reuse that connection automatically."
-            NmeaOutputTransportMode.DEDICATED_TCP->"Enter a valid TCP output host and port first."
+        return if(!effective.anyStreamSelected)"Select at least one Phone/App output stream before starting." else if(!effective.transportConfigured)"Choose an NMEA output destination before enabling a stream." else when(effective.transportMode){
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Same-socket output is disabled because an optional blocked write could stop the safety-owned NMEA input. Choose a separate TX port or UDP destination."
+            NmeaOutputTransportMode.DEDICATED_TCP->if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(effective,_ui.value.settings.profile))"Use a separate TX port. Same-socket output is disabled so an optional output stall can never close the safety-owned input." else "Enter a valid TCP output host and port first."
             NmeaOutputTransportMode.TCP_SERVER->"Use the separate Phone NMEA service page to host a TCP listener."
             NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->"Enter a valid UDP output host and port first."
         }
@@ -1030,6 +1079,14 @@ class MainViewModel @Inject constructor(
     }
     fun onPermissionsChanged(){systemLocation.refreshPermission()}
     fun setAnchorSetupGpsPreview(enabled:Boolean)=systemLocation.setPreviewEnabled(enabled)
+    fun saveAnchorSetupDraft(value:AnchorSetupDraft){
+        savedStateHandle[ANCHOR_SETUP_DRAFT_KEY]=draftGson.toJson(value)
+        _ui.update{it.copy(anchorSetupDraft=value)}
+    }
+    fun clearAnchorSetupDraft(){
+        savedStateHandle.remove<String>(ANCHOR_SETUP_DRAFT_KEY)
+        _ui.update{it.copy(anchorSetupDraft=null)}
+    }
 
     fun clearDiagnostics()=nav.clearDiagnostics()
     fun arm(lat:Double,lon:Double,input:AnchorWatchInput){
@@ -1038,6 +1095,7 @@ class MainViewModel @Inject constructor(
             .putExtra("antennaOffset",if(input.positionSource==GpsDataSource.NMEA)_ui.value.settings.nmeaGpsAntennaToBowMeters else 0.0)
             .putExtra("warning",maxOf(input.alarmRadiusMeters*.8,input.alarmRadiusMeters-10).coerceAtMost(input.alarmRadiusMeters-.1)).putExtra("alarm",input.alarmRadiusMeters).putExtra("placement",input.placement.name).putExtra("rangeMode",input.rangeMode.name).putExtra("safetyPreset",input.safetyPreset.name).putExtra("positionSource",input.positionSource.name).putExtra("centerSource",input.centerSource.name).putExtra("usePhoneHeading",true)
             .putExtra("depthSource",input.depthSource.name)
+            .putExtra("originMode",input.originMode.name)
             .putExtra("depthGuard",input.conditions.depthGuardEnabled).putExtra("shallowDepth",input.conditions.shallowDepthAlarmMeters?:Double.NaN).putExtra("deepDepth",input.conditions.deepDepthAlarmMeters?:Double.NaN).putExtra("windGuard",input.conditions.windGuardEnabled).putExtra("windWarning",input.conditions.windWarningKnots?:Double.NaN).putExtra("windAlarm",input.conditions.windAlarmKnots?:Double.NaN).putExtra("windShift",input.conditions.windShiftEnabled).putExtra("windShiftDegrees",input.conditions.windShiftThresholdDegrees?:Double.NaN).putExtra("apparentFallback",input.conditions.windAllowApparentFallback)
         ContextCompat.startForegroundService(app,intent)
     }
