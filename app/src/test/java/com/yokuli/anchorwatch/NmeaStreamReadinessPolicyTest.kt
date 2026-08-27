@@ -93,7 +93,7 @@ class NmeaStreamReadinessPolicyTest {
         assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
     }
 
-    @Test fun missingHeadingAlignmentBlocksOnlyAFormalStartNotAnExistingSession(){
+    @Test fun missingHeadingAlignmentNeverBlocksTheTransportSession(){
         val blocked=PhoneVesselOutputReadinessPolicy.evaluate(
             VesselMountCalibration(),
             PhoneVesselMountState.MOUNT_SUSPECT,

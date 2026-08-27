@@ -631,17 +631,6 @@ class YokuliRuntimeCoordinator @Inject constructor(
    notifySeparate("Phone/App boat output blocked","Use Phone NMEA service for a listening TCP server. This feature only writes Phone/App-owned data into the boat network.",true);return
   }
   val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(vesselMountCalibration.calibration.first(),vesselAttitude.mountState.first())
-  if(!readiness.ready&&!phonePositionOutput.enabled){
-   val stopped=requested.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile,readiness);outputSettings.requestStop()
-   notifySeparate("NMEA output blocked","Align the phone to the vessel bow in Settings → Phone vessel sensors before formal sharing.",true);return
-  }
-  if(!readiness.ready&&phonePositionOutput.enabled){
-   // This session already passed the formal Start gate. Keep the transport and
-   // independent streams alive if its stored alignment changes underneath it.
-   phonePositionOutput.configure(requested,appSettings.profile,readiness)
-   notifySeparate("Phone vessel output degraded","Phone vessel heading is waiting for a confirmed alignment. Phone GPS and pressure continue without reconnecting the NMEA server.",true)
-   refreshNotification();return
-  }
   val effective=requested
   if(effective.transportMode!=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION){
    val destinationValid=effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
@@ -653,6 +642,12 @@ class YokuliRuntimeCoordinator @Inject constructor(
    val liveInput=navigation.hasOpenTransport()&&navigation.connectionState.value in setOf(NmeaConnectionState.CONNECTED,NmeaConnectionState.CONNECTED_NO_DATA,NmeaConnectionState.CONNECTED_NO_FIX,NmeaConnectionState.STALE)
    if(appSettings.profile.protocol!=Protocol.TCP||!liveInput){val stopped=effective.copy(publicationEnabled=false);phonePositionOutput.configure(stopped,appSettings.profile,readiness);outputSettings.requestStop();notifySeparate("Phone sensor output blocked","Same-as-input output can only reuse an already-open TCP RX socket. Output will never open that input connection by itself.",true);return}
    phonePositionOutput.configure(effective,appSettings.profile,readiness)
+  }
+  if(!readiness.ready){
+   // Heading/attitude readiness is stream-local. An unavailable vessel frame
+   // must never tear down or prevent a transport carrying independent Phone
+   // Position or Pressure. The encoder suppresses only the affected streams.
+   notifySeparate("Phone vessel output partially ready","The output transport is running. Vessel heading, rate of turn or attitude will wait for their own current alignment; Phone GPS and pressure continue independently.",false)
   }
   refreshNotification()
  }
