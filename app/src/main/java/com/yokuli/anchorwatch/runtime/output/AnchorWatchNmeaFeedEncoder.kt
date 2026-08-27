@@ -127,7 +127,7 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
         activeInputProfileId=inputProfileId
         try{
         val encoded=when(stream){
-            AnchorWatchNmeaStream.POSITION->localPosition(phoneFix,nowElapsed)
+            AnchorWatchNmeaStream.POSITION->if(!settings.phonePositionEnabled)EncodedStream(suppressionReason="USER_DISABLED")else localPosition(phoneFix,nowElapsed)
             AnchorWatchNmeaStream.HEADING->localHeading(snapshot,settings.phoneHeadingFormat,nowElapsed)
             AnchorWatchNmeaStream.MOTION->localMotion(snapshot,nowElapsed)
             AnchorWatchNmeaStream.PRESSURE->if(!settings.includePressure)EncodedStream(suppressionReason="USER_DISABLED")else localPressure(snapshot,nowElapsed)

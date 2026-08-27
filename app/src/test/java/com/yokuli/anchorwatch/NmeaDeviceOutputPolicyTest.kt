@@ -66,7 +66,7 @@ class NmeaDeviceOutputPolicyTest{
         assertFalse(restored.publicationEnabled);assertFalse(restored.autoStartOutput)
     }
 
-    @Test fun legacySameSocketBackupPoliciesMigrateToAlwaysLocalInjection(){
+    @Test fun explicitPhonePositionOptInSurvivesCanonicalLocalInjection(){
         val migrated=NmeaDeviceOutputSettings(
             purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
             phonePositionEnabled=true,phoneHeadingEnabled=true,phoneMotionEnabled=true,phonePressureEnabled=true,
@@ -80,6 +80,21 @@ class NmeaDeviceOutputPolicyTest{
         assertTrue(migrated.phoneMotionEnabled);assertTrue(migrated.phonePressureEnabled)
         assertFalse(migrated.proprietaryStatusEnabled);assertFalse(migrated.autoStartOutput)
         assertTrue(listOf(migrated.positionPolicy,migrated.headingPolicy,migrated.motionPolicy,migrated.pressurePolicy,migrated.derivedWindPolicy).all{it==PublicationPolicy.ALWAYS})
+    }
+
+    @Test fun phonePositionIsOffByDefaultAndCannotBeForcedOnByPublisherCanonicalization(){
+        val migrated=NmeaDeviceOutputSettings(
+            phonePositionEnabled=false,
+            positionPolicy=PublicationPolicy.BACKUP,
+            transportConfigured=true,
+            publicationEnabled=true,
+        ).canonicalPublisherConfiguration()
+        assertFalse(migrated.phonePositionEnabled)
+        assertEquals(PublicationPolicy.OFF,migrated.positionPolicy)
+        val live=NmeaPublisherConfig.from(migrated)
+        assertFalse(live.phonePositionEnabled)
+        assertFalse(live.asOutputSettings().phonePositionEnabled)
+        assertEquals(PublicationPolicy.OFF,live.asOutputSettings().positionPolicy)
     }
 
     @Test fun livePublisherConfigCannotReadLegacyPerStreamOrBackupFlags(){

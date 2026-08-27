@@ -27,6 +27,7 @@ data class NmeaPublisherConfig(
     val host:String="",
     val port:Int=10110,
     val headingFormat:PhoneHeadingOutputFormat=PhoneHeadingOutputFormat.HDT_TRUE,
+    val phonePositionEnabled:Boolean=false,
     val includePressure:Boolean=true,
     val includeDerivedWind:Boolean=true,
     val transportConfigured:Boolean=false,
@@ -35,14 +36,24 @@ data class NmeaPublisherConfig(
     val running:Boolean get()=transportConfigured&&publicationEnabled
     fun asOutputSettings()=NmeaDeviceOutputSettings(
         transportMode=transportMode,outputHost=host,outputPort=port,
-        phoneHeadingFormat=headingFormat,includePressure=includePressure,
+        phoneHeadingFormat=headingFormat,phonePositionEnabled=phonePositionEnabled,includePressure=includePressure,
         includeDerivedWind=includeDerivedWind,transportConfigured=transportConfigured,
         publicationEnabled=publicationEnabled,
     ).publisherConfiguration()
     companion object{
         fun from(value:NmeaDeviceOutputSettings):NmeaPublisherConfig{
             val productFeed=value.publisherConfiguration()
-            return NmeaPublisherConfig(productFeed.transportMode,productFeed.outputHost.trim(),productFeed.outputPort,productFeed.phoneHeadingFormat,productFeed.includePressure,productFeed.includeDerivedWind,productFeed.transportConfigured,productFeed.publicationEnabled)
+            return NmeaPublisherConfig(
+                transportMode=productFeed.transportMode,
+                host=productFeed.outputHost.trim(),
+                port=productFeed.outputPort,
+                headingFormat=productFeed.phoneHeadingFormat,
+                phonePositionEnabled=productFeed.phonePositionEnabled,
+                includePressure=productFeed.includePressure,
+                includeDerivedWind=productFeed.includeDerivedWind,
+                transportConfigured=productFeed.transportConfigured,
+                publicationEnabled=productFeed.publicationEnabled,
+            )
         }
     }
 }
@@ -172,22 +183,29 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         outputConnection.refreshTransportState()
         val inputTransportGeneration=outputConnection.currentInputTransportGeneration()
         val snapshot=vesselDataHub.snapshot.value;val phoneFix=vesselPositionRepository.acceptedPhoneFix.value
+        val effectiveSettings=configured.asOutputSettings()
         val prepared=heartbeat.due(now).mapNotNull{stream->
             val name=stream.name
+            val policy=effectiveSettings.policyFor(stream)
+            if(policy==PublicationPolicy.OFF){
+                outputConnection.recordDecision(name,policy,PublicationDecision(false,PublisherOwnershipState.SUPPRESSED),false,NmeaStreamReadiness.STANDBY)
+                outputConnection.recordSuppressed(name,"USER_DISABLED")
+                return@mapNotNull null
+            }
             val runtimeSuppression=PhoneOwnedRuntimeSafety.suppression(configured.transportMode,stream,mountState)
             if(runtimeSuppression!=null){
-                outputConnection.recordDecision(name,PublicationPolicy.ALWAYS,PublicationDecision(false,PublisherOwnershipState.SUPPRESSED),false,NmeaStreamReadiness.WAITING_CALIBRATION)
+                outputConnection.recordDecision(name,policy,PublicationDecision(false,PublisherOwnershipState.SUPPRESSED),false,NmeaStreamReadiness.WAITING_CALIBRATION)
                 outputConnection.recordSuppressed(name,runtimeSuppression)
                 return@mapNotNull null
             }
-            val batch=encoder.encode(stream,snapshot,configured.asOutputSettings(),now,phoneFix,inputTransportGeneration,inputProfile.stableId)
+            val batch=encoder.encode(stream,snapshot,effectiveSettings,now,phoneFix,inputTransportGeneration,inputProfile.stableId)
             val ready=batch.sentences.isNotEmpty();val ownership=when{ready&&batch.sourceConflict->PublisherOwnershipState.SOURCE_CONFLICT;ready->PublisherOwnershipState.PHONE_ACTIVE;else->PublisherOwnershipState.SUPPRESSED}
             val publicationDecision=PublicationDecision(ready,ownership)
             // Locally-owned Phone/App values never yield merely because the
             // receiving boat network also has a value for the same field. The
             // receiving instrument owns source selection; this publisher owns
             // only validity, provenance and a stable heartbeat.
-            outputConnection.recordDecision(name,PublicationPolicy.ALWAYS,publicationDecision,ready,NmeaStreamReadinessPolicy.sensor(ready))
+            outputConnection.recordDecision(name,policy,publicationDecision,ready,NmeaStreamReadinessPolicy.sensor(ready))
             if(ready)prepare(generation,name,batch.sentences,now,batch.sourceStableKey,inputTransportGeneration)else{outputConnection.recordSuppressed(name,batch.suppressionReason?:"NO_COMPLETE_VALUE");null}
         }
         prepared.forEach{batch->pending.offer(batch)?.let{outputConnection.recordDropped(it.stream,"A newer 1 Hz value replaced this blocked stream batch.")}}
@@ -237,18 +255,26 @@ object PhoneOwnedRuntimeSafety{
 fun NmeaDeviceOutputSettings.publisherConfiguration():NmeaDeviceOutputSettings{
     return copy(
     purpose=NmeaOutputPurpose.BOAT_BUS_INJECTION,
-    phonePositionEnabled=true,
+    phonePositionEnabled=phonePositionEnabled,
     phoneHeadingEnabled=true,
     phoneMotionEnabled=true,
     phonePressureEnabled=includePressure,
     proprietaryStatusEnabled=false,
-    positionPolicy=PublicationPolicy.ALWAYS,
+    positionPolicy=if(phonePositionEnabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     headingPolicy=PublicationPolicy.ALWAYS,
     motionPolicy=PublicationPolicy.ALWAYS,
     pressurePolicy=if(includePressure)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     derivedWindPolicy=if(includeDerivedWind)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
     autoStartOutput=false,
 )
+}
+
+private fun NmeaDeviceOutputSettings.policyFor(stream:AnchorWatchNmeaStream)=when(stream){
+    AnchorWatchNmeaStream.POSITION->effectivePositionPolicy
+    AnchorWatchNmeaStream.HEADING->effectiveHeadingPolicy
+    AnchorWatchNmeaStream.MOTION->effectiveMotionPolicy
+    AnchorWatchNmeaStream.PRESSURE->effectivePressurePolicy
+    AnchorWatchNmeaStream.DERIVED_WIND->derivedWindPolicy
 }
 
 /** Compatibility name for tests/callers compiled against the unification pass. */

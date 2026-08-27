@@ -407,6 +407,8 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("data_tab_output").performClick()
             compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_product_boat_network",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_product_boat_network").performClick()
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_publish_phone_position",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("nmea_publish_phone_position").performScrollTo().assertIsDisplayed()
             compose.waitUntil(5_000){compose.onAllNodesWithTag("nmea_output_route",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("nmea_output_route").performScrollTo().assertIsDisplayed()
             compose.onNodeWithTag("nmea_output_tx_host").assertExists()

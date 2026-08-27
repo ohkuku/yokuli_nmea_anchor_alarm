@@ -106,6 +106,10 @@ class LocalNmeaServerRuntime @Inject constructor(
         val feedSettings=NmeaDeviceOutputSettings(
             purpose=NmeaOutputPurpose.CANONICAL_CLIENT_FEED,
             transportMode=NmeaOutputTransportMode.TCP_SERVER,
+            phonePositionEnabled=true,
+            phoneHeadingEnabled=true,
+            phoneMotionEnabled=true,
+            phonePressureEnabled=active.includePressure,
             phoneHeadingFormat=PhoneHeadingOutputFormat.HDT_TRUE,
             includePressure=active.includePressure,
             includeDerivedWind=active.includeDerivedWind,

@@ -117,6 +117,7 @@ import com.yokuli.anchorwatch.data.vessel.VesselSettingsRepository
 import com.yokuli.anchorwatch.data.vessel.NmeaDeviceOutputSettings
 import com.yokuli.anchorwatch.data.vessel.NmeaOutputTransportMode
 import com.yokuli.anchorwatch.domain.vessel.NmeaOutputPurpose
+import com.yokuli.anchorwatch.domain.vessel.PublicationPolicy
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.data.trip.TripReplayLoader
@@ -943,6 +944,19 @@ class MainViewModel @Inject constructor(
         }
         outputSettingsRepository.saveConfiguration(proposed.copy(transportConfigured=true,publicationEnabled=false))
         _ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
+    }
+    fun setNmeaPhonePositionPublishing(enabled:Boolean)=viewModelScope.launch{
+        val current=_ui.value.outputSettings
+        val updated=current.copy(
+            phonePositionEnabled=enabled,
+            positionPolicy=if(enabled)PublicationPolicy.ALWAYS else PublicationPolicy.OFF,
+        )
+        outputSettingsRepository.saveConfiguration(updated)
+        _ui.update{it.copy(outputSettings=updated.copy(publicationEnabled=current.publicationEnabled),connectionAttempt=ConnectionAttempt())}
+        // A running publisher observes the same repository Flow, but an
+        // explicit refresh also serializes this user action through the
+        // foreground command actor before any subsequent Start/Stop action.
+        if(current.publicationEnabled)ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.REFRESH_PHONE_SENSOR_OUTPUT))
     }
     fun startNmeaOutput()=viewModelScope.launch{
         val state=_ui.value

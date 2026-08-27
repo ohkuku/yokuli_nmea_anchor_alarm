@@ -14,7 +14,7 @@ import org.junit.Test
 class AnchorWatchNmeaPublisherTest{
     private val mux=NmeaOutputMux()
     private val encoder=AnchorWatchNmeaFeedEncoder(mux)
-    private val dedicatedDestination=NmeaDeviceOutputSettings(transportMode=NmeaOutputTransportMode.DEDICATED_TCP)
+    private val dedicatedDestination=NmeaDeviceOutputSettings(phonePositionEnabled=true,transportMode=NmeaOutputTransportMode.DEDICATED_TCP)
     private fun heading(value:Double,source:VesselDataSource=VesselDataSource.PHONE_MAGNETOMETER,received:Long=0)=VesselObservation(value,source,receivedElapsedRealtime=received,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.HELD,sourceClass=if(source==VesselDataSource.BOAT_NMEA)VesselSourceClass.BOAT_NMEA else VesselSourceClass.PHONE_VESSEL_HEADING)
 
     @Test fun everyStreamUsesOneHertzAndConstantHeadingNeverBecomesBlank(){
@@ -213,10 +213,20 @@ class AnchorWatchNmeaPublisherTest{
         assertTrue(output.none{it.contains("3654.00000,S")||it.contains("210.00,T")||it.contains("3.20,N")})
     }
 
+    @Test fun validPhoneFixIsNotEncodedUntilPhonePositionPublicationIsExplicitlyEnabled(){
+        val phone=NavigationFix(-36.8485,174.7633,1_720_000_000_000,1_000,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
+        val disabled=encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),NmeaDeviceOutputSettings(),1_100,phone)
+        assertTrue(disabled.sentences.isEmpty())
+        assertEquals("USER_DISABLED",disabled.suppressionReason)
+        val enabled=encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),NmeaDeviceOutputSettings(phonePositionEnabled=true),1_100,phone)
+        assertEquals(listOf("RMC","GGA","VTG","ZDA"),enabled.sentences.mapNotNull(mux::sentenceType))
+    }
+
     @Test fun mockOrNetworkPositionCanNeverEnterPhoneOutput(){
         val base=NavigationFix(-36.8485,174.7633,1_720_000_000_000,1_000,horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,sourceSentence="SYSTEM",valid=true)
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),NmeaDeviceOutputSettings(),1_100,base.copy(isMockLocation=true)).sentences.isEmpty())
-        assertTrue(encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),NmeaDeviceOutputSettings(),1_100,base.copy(positionProvider=PositionProvider.ANDROID_NETWORK)).sentences.isEmpty())
+        val enabled=NmeaDeviceOutputSettings(phonePositionEnabled=true)
+        assertTrue(encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),enabled,1_100,base.copy(isMockLocation=true)).sentences.isEmpty())
+        assertTrue(encoder.encode(AnchorWatchNmeaStream.POSITION,VesselDataSnapshot(),enabled,1_100,base.copy(positionProvider=PositionProvider.ANDROID_NETWORK)).sentences.isEmpty())
     }
 
     @Test fun sameInputRmcUsesOneAtomicPhoneFixAndNeverBoatSogCog(){
@@ -226,7 +236,7 @@ class AnchorWatchNmeaPublisherTest{
             sogKnots=VesselObservation(19.8,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.FRESH,sourceClass=VesselSourceClass.BOAT_NMEA),
             cogTrueDegrees=VesselObservation(271.0,VesselDataSource.BOAT_NMEA,receivedElapsedRealtime=1_000,freshness=VesselDataFreshness.FRESH,sourceClass=VesselSourceClass.BOAT_NMEA),
         )
-        val output=encoder.encode(AnchorWatchNmeaStream.POSITION,boat,NmeaDeviceOutputSettings(),1_100,phone,inputTransportGeneration=7,inputProfileId="boat-primary").sentences
+        val output=encoder.encode(AnchorWatchNmeaStream.POSITION,boat,NmeaDeviceOutputSettings(phonePositionEnabled=true),1_100,phone,inputTransportGeneration=7,inputProfileId="boat-primary").sentences
         val rmc=output.single{mux.sentenceType(it)=="RMC"};val vtg=output.single{mux.sentenceType(it)=="VTG"}
         assertTrue(rmc.contains("3650.91000,S")&&rmc.contains("17445.79800,E"))
         assertTrue(rmc.contains(",2.40,123.40,"));assertFalse(rmc.contains(",19.80,271.00,"))
