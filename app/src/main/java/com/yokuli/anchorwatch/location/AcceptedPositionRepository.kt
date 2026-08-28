@@ -43,6 +43,8 @@ data class AcceptedPositionEvent(
     val source: GpsDataSource,
     val accepted: IntegrityAcceptedFix,
     val headingEvidence:AnchorHeadingEvidence=AnchorHeadingEvidence(reason="NOT_REPORTED"),
+    /** Present only for NMEA. Consumers must reject an event after reconnect. */
+    val connectionGeneration:Long?=null,
 )
 
 /**
@@ -115,7 +117,7 @@ class AcceptedPositionRepository @Inject constructor(
     fun seed(source: GpsDataSource, fix: NavigationFix, sessionId: Long? = null) {
         if (sessionId != null) lockSource(sessionId, source) else changeSourceIfNeeded(source)
         filter.seed(fix)
-        lastSubmissionKey = listOf(source, fix.receivedElapsedRealtime, fix.sourceSentence, null)
+        lastSubmissionKey = listOf(source, fix.receivedElapsedRealtime, fix.latitude, fix.longitude, fix.sourceSentence, null)
         _state.value = _state.value.copy(
             rawFix = fix,
             acceptedFix = fix,
@@ -129,10 +131,18 @@ class AcceptedPositionRepository @Inject constructor(
     }
 
     @Synchronized
-    fun submit(source: GpsDataSource, rawFix: NavigationFix, connectionGeneration: Long? = null) {
-        if (_state.value.selectedSource != source) return
-        val key = listOf(source, rawFix.receivedElapsedRealtime, rawFix.sourceSentence, connectionGeneration)
-        if (lastSubmissionKey == key) return
+    fun submit(
+        source: GpsDataSource,
+        rawFix: NavigationFix,
+        connectionGeneration: Long? = null,
+        emitAcceptedEvents:Boolean = true,
+    ):List<AcceptedPositionEvent> {
+        if (_state.value.selectedSource != source) return emptyList()
+        // Multiple sentences can be parsed in the same monotonic millisecond.
+        // Coordinates are part of the identity so a genuinely newer position
+        // is never mistaken for the queued/direct delivery of the same fix.
+        val key = listOf(source, rawFix.receivedElapsedRealtime, rawFix.latitude, rawFix.longitude, rawFix.sourceSentence, connectionGeneration)
+        if (lastSubmissionKey == key) return emptyList()
         lastSubmissionKey = key
         phoneHeading.setPosition(rawFix.latitude, rawFix.longitude, rawFix.altitudeMeters, rawFix.timestampUtcMillis)
         val phone = phoneHeading.sample.value
@@ -157,9 +167,9 @@ class AcceptedPositionRepository @Inject constructor(
         val result = filter.evaluate(fix, phoneMotion.state.value.takeIf { source == GpsDataSource.SYSTEM })
         val integrityMicros = ((System.nanoTime() - integrityStarted) / 1_000L).coerceAtLeast(0L)
         val integrityMaxMicros = maxOf(_state.value.integrityMaxDurationMicros, integrityMicros)
-        when (result) {
+        return when (result) {
             is PositionIntegrityResult.Accepted -> {
-                result.fixes.forEach { accepted ->
+                result.fixes.map { accepted ->
                     _state.value = _state.value.copy(
                         rawFix = rawFix,
                         acceptedFix = accepted.fix,
@@ -173,7 +183,9 @@ class AcceptedPositionRepository @Inject constructor(
                         integrityMaxDurationMicros = integrityMaxMicros,
                         headingEvidence = evidence,
                     )
-                    _accepted.tryEmit(AcceptedPositionEvent(source, accepted,evidence))
+                    AcceptedPositionEvent(source,accepted,evidence,connectionGeneration.takeIf{source==GpsDataSource.NMEA}).also{event->
+                        if(emitAcceptedEvents)_accepted.tryEmit(event)
+                    }
                 }
             }
             is PositionIntegrityResult.Quarantined -> {
@@ -186,6 +198,7 @@ class AcceptedPositionRepository @Inject constructor(
                     integrityMaxDurationMicros = integrityMaxMicros,
                     headingEvidence = evidence,
                 )
+                emptyList()
             }
             is PositionIntegrityResult.Rejected -> {
                 _state.value = _state.value.copy(
@@ -197,6 +210,7 @@ class AcceptedPositionRepository @Inject constructor(
                     integrityMaxDurationMicros = integrityMaxMicros,
                     headingEvidence = evidence,
                 )
+                emptyList()
             }
         }
     }

@@ -16,6 +16,8 @@ import org.junit.Test
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class NmeaConnectionManagerTest {
@@ -104,7 +106,7 @@ class NmeaConnectionManagerTest {
         }
     }
 
-    @Test fun sameTcpSocketCanReceiveAndWrite(){runBlocking{
+    @Test fun sameSocketOutputReusesExistingRxTransport(){runBlocking{
         val server=ServerSocket(0);val received=CompletableDeferred<String>();val serverJob=launch(Dispatchers.IO){runCatching{server.accept().use{socket->received.complete(socket.getInputStream().bufferedReader().readLine())}}}
         val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)
         try{
@@ -115,11 +117,51 @@ class NmeaConnectionManagerTest {
         }finally{manager.disconnect();managerScope.cancel();runCatching{server.close()};serverJob.cancelAndJoin()}
     }}
 
-    @Test fun optionalOutputHasNoApiThatCanAbortTheSafetyOwnedInput(){
+    @Test fun sameSocketTxStallKeepsIncomingNmeaFlowingAndDoesNotIncrementRxGeneration() = runBlocking {
+        val server=ServerSocket(0)
+        val acceptedSocket=CompletableDeferred<Socket>()
+        val acceptedCount=AtomicInteger()
+        val serverJob=launch(Dispatchers.IO){runCatching{server.accept().also{acceptedCount.incrementAndGet();acceptedSocket.complete(it)}}}
+        val writeEntered=CountDownLatch(1);val releaseWrite=CountDownLatch(1)
+        val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        val manager=NmeaConnectionManager(
+            managerScope,
+            sharedWriter={socket,payload->
+                writeEntered.countDown()
+                check(releaseWrite.await(10,TimeUnit.SECONDS))
+                socket.getOutputStream().apply{write(payload);flush()}
+            },
+        )
+        var peer:Socket?=null
+        try{
+            assertTrue(manager.connect(ConnectionProfile(host="127.0.0.1",port=server.localPort)))
+            peer=withTimeout(3_000){acceptedSocket.await()}
+            withTimeout(3_000){manager.state.first{it==NmeaConnectionState.CONNECTED_NO_DATA}}
+            val generation=manager.diagnostics.value.connectionGeneration
+            val receivedLine=async(start=CoroutineStart.UNDISPATCHED){manager.lines.first()}
+            val write=async(Dispatchers.IO){manager.writeExpected(listOf("\$IIHDT,123.40,T*2B\r\n"),generation)}
+            assertTrue(writeEntered.await(1,TimeUnit.SECONDS))
+
+            peer.getOutputStream().apply{write("\$GPRMC,120000,A,3650.9100,S,17445.8000,E,0,0,260826,,,A*00\r\n".toByteArray());flush()}
+            assertTrue(withTimeout(5_000){receivedLine.await()}.startsWith("\$GPRMC"))
+            assertEquals(generation,manager.diagnostics.value.connectionGeneration)
+            assertTrue(manager.state.value !in setOf(NmeaConnectionState.DISCONNECTED,NmeaConnectionState.ERROR,NmeaConnectionState.RECONNECTING))
+            assertEquals("A shared writer never opens a second TCP connection",1,acceptedCount.get())
+
+            releaseWrite.countDown()
+            assertTrue(withTimeout(5_000){write.await()}.success)
+            assertEquals(generation,manager.diagnostics.value.connectionGeneration)
+            assertEquals(1,acceptedCount.get())
+        }finally{
+            releaseWrite.countDown();manager.disconnect();managerScope.cancel();runCatching{peer?.close()};runCatching{server.close()};serverJob.cancelAndJoin()
+        }
+    }
+
+    @Test fun forceDisconnectIsExplicitOnly(){
         assertTrue(NmeaConnectionManager::class.java.methods.none{it.name=="abortWriteStall"})
     }
 
-    @Test fun queuedBatchFromOldTransportGenerationIsNeverWrittenAfterReconnect() = runBlocking {
+    @Test fun sameSocketQueuedBatchCannotCrossRxGeneration() = runBlocking {
         val server=ServerSocket(0);val clients=CopyOnWriteArrayList<Socket>();val accepted=AtomicInteger()
         val serverJob=launch(Dispatchers.IO){runCatching{while(isActive)server.accept().also{clients+=it;accepted.incrementAndGet()}}}
         val managerScope=CoroutineScope(SupervisorJob()+Dispatchers.IO);val manager=NmeaConnectionManager(managerScope)

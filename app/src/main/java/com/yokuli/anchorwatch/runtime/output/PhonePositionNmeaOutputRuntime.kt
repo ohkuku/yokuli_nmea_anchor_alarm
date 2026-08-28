@@ -173,7 +173,7 @@ class AnchorWatchNmeaPublisher @Inject constructor(
         // one-emission-old cache and then require another tap.
         val readiness=knownReadiness?:PhoneVesselOutputReadinessPolicy.evaluate(calibration,mountState)
         val readinessBlocksNewSession=FormalOutputSessionReadinessPolicy.blocksStart(requested.running,enabled,readiness)
-        val safe=if(readinessBlocksNewSession||requested.transportMode==NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION||requested.running&&NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input))requested.copy(publicationEnabled=false) else requested
+        val safe=if(readinessBlocksNewSession||requested.running&&NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(requestedSettings,input))requested.copy(publicationEnabled=false) else requested
         if(safe==config&&input==inputProfile&&enabled==safe.running)return
         pending.clear().forEach{outputConnection.recordDropped(it.stream)}
         val generation=if(safe.running)sessionGate.start()else sessionGate.stop()

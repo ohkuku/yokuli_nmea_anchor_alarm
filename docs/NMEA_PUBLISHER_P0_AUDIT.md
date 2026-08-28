@@ -47,7 +47,7 @@ There is no production `NmeaSharingRuntime`, no raw Boat repeater, and no collec
 3. The coordinator serially evaluates readiness and calls `AnchorWatchNmeaPublisher.configure()`.
 4. Configure starts a new monotonic `publicationGeneration`, new `sessionId`, clears old queue/leases, configures exactly one destination and acquires runtime resources.
 
-Stop follows the reverse path. The generation is invalidated, pending batches are discarded, destination sockets are closed to interrupt IO, the lifecycle write lock waits for old writers, Live TX is cleared, and only then status becomes `OFF`.
+Stop follows the reverse path. The generation is invalidated, pending batches are discarded, independently-owned Dedicated/UDP sockets are closed to interrupt IO, the lifecycle write lock waits for old writers, Live TX is cleared, and only then status becomes `OFF`. For same-input TCP, Stop deliberately does not close the socket and may remain `STOPPING` until the in-flight write returns naturally.
 
 The generation check is not treated as the hard-stop proof. Every call to `NmeaDeviceOutputConnection.write()` holds `NmeaOutputStopBarrier` for the complete network operation; Stop obtains the exclusive side before returning. `PhoneNmeaOutputStopBarrierTest` blocks a real loopback OutputStream, starts Stop, and proves Stop cannot return until the old write has joined and its local socket byte count is frozen. TCP-server Stop closes all listener/client sockets and joins every client writer without converting a timeout into a false OFF acknowledgement.
 
@@ -94,7 +94,7 @@ Explicit stopped-only endpoint test â†’ known complete diagnostic sentence(s) â†
 
 The scheduler advances at the normal attempt cadence, not on immediate retry. Successful socket time is recorded separately. This is deliberate for a fragile gateway: a failed write waits for the next 1 Hz fresh batch, never a tight failure loop.
 
-The live transport watchdog labels an in-flight write `CONGESTED` at 500 ms. At three seconds it closes only the exact current same-input Socket generation once; the existing bounded RX reconnect state machine owns recovery and no independent Boat client is created. The TX UI exposes current backpressure, last/maximum write duration and the abort count.
+The live transport watchdog labels an in-flight write `CONGESTED` at 500 ms. At three seconds it marks same-input TX `STALLED` and suppresses later output admission until an explicit Stop/Start. It never closes or reconnects RX, never increments the RX generation, and never creates an independent Boat client. The TX UI exposes current backpressure and last/maximum write duration.
 
 ## Packet-path diagnostics
 

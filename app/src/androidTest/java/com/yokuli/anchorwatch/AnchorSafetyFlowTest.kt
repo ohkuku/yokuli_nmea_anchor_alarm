@@ -56,6 +56,11 @@ import com.yokuli.anchorwatch.domain.model.AlarmType
 import com.yokuli.anchorwatch.domain.model.HeadingQuality
 import com.yokuli.anchorwatch.domain.model.HeadingSource
 import com.yokuli.anchorwatch.domain.model.AnchorPlacementMode
+import com.yokuli.anchorwatch.domain.model.AnchorMonitoringPhase
+import com.yokuli.anchorwatch.domain.model.AnchorOriginMode
+import com.yokuli.anchorwatch.domain.model.AnchorRangeMode
+import com.yokuli.anchorwatch.domain.model.AnchorSafetyPreset
+import com.yokuli.anchorwatch.domain.anchor.AnchorDepthSource
 import com.yokuli.anchorwatch.domain.model.GpsDataSource
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.model.NavigationFix
@@ -182,8 +187,35 @@ class AnchorSafetyFlowTest {
         requireNotNull(active)
         assertTrue(active.active)
         assertFalse(active.paused)
+        assertEquals(AnchorMonitoringPhase.ARMED.name,active.monitoringPhase)
+        assertNotNull(active.monitoringActivatedAt)
         assertEquals(GpsDataSource.SYSTEM.name,active.positionSource)
         assertEquals(NmeaConnectionState.DISCONNECTED,navigation.connectionState.value)
+    }
+
+    @Test fun freshNmeaGpsArmCreatesActiveSessionImmediately() = runBlocking<Unit>{
+        TestNmeaServer().use{server->
+            val profile=liveProfile(server,true)
+            preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))
+            connectAndAwaitFix(profile)
+            val liveGeneration=navigation.connectionGeneration()
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java)
+                .setAction(AnchorForegroundService.ARM)
+                .putExtra("lat",0.0).putExtra("lon",0.0)
+                .putExtra("rode",0.0).putExtra("depth",Double.NaN).putExtra("bowHeight",0.0)
+                .putExtra("boatLength",Double.NaN).putExtra("antennaOffset",0.0)
+                .putExtra("warning",40.0).putExtra("alarm",50.0)
+                .putExtra("placement",AnchorPlacementMode.CENTER_DROP.name).putExtra("rangeMode",AnchorRangeMode.BASIC.name)
+                .putExtra("safetyPreset",AnchorSafetyPreset.BALANCED.name).putExtra("positionSource",GpsDataSource.NMEA.name)
+                .putExtra("centerSource",AnchorCenterSource.CURRENT_POSITION.name)
+                .putExtra("originMode",AnchorOriginMode.CURRENT_ACCEPTED_POSITION.name).putExtra("depthSource",AnchorDepthSource.MANUAL.name))
+            val active=withTimeout(10_000){while(dao.active()?.monitoringPhase!=AnchorMonitoringPhase.ARMED.name)delay(50);dao.active()!!}
+            assertEquals(GpsDataSource.NMEA.name,active.positionSource)
+            assertEquals(-36.8485,active.anchorLatitude,0.000001)
+            assertEquals(174.7633,active.anchorLongitude,0.000001)
+            assertEquals(liveGeneration,navigation.connectionGeneration())
+            assertEquals(1,server.accepted.get())
+        }
     }
 
     @Test fun manualCoordinateWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor() = runBlocking<Unit>{
@@ -210,6 +242,60 @@ class AnchorSafetyFlowTest {
             val armed=withTimeout(15_000){while(dao.active()?.monitoringPhase!="ARMED")delay(50);dao.active()!!}
             assertEquals(anchorLatitude,armed.anchorLatitude,0.0);assertEquals(anchorLongitude,armed.anchorLongitude,0.0)
             assertNotNull(armed.monitoringActivatedAt)
+            delay(1_000)
+            assertEquals(1,dao.events(armed.id).first().count{it.type=="GPS_MONITORING_ACTIVATED"})
+        }
+    }
+
+    @Test fun waitingSessionPrimesAlreadyAvailableRawFix() = runBlocking<Unit>{
+        TestNmeaServer().use{server->
+            val profile=liveProfile(server,true)
+            preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))
+            connectAndAwaitFix(profile)
+            // No future provider emission is available to rescue the command.
+            // ARM must synchronously prime the raw fix already in StateFlow.
+            server.setEmitting(false)
+            val anchorLatitude=-36.852345;val anchorLongitude=174.772345
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java)
+                .setAction(AnchorForegroundService.ARM)
+                .putExtra("lat",anchorLatitude).putExtra("lon",anchorLongitude)
+                .putExtra("rode",0.0).putExtra("depth",Double.NaN).putExtra("bowHeight",0.0)
+                .putExtra("boatLength",Double.NaN).putExtra("warning",40.0).putExtra("alarm",50.0)
+                .putExtra("placement",AnchorPlacementMode.CENTER_DROP.name).putExtra("rangeMode",AnchorRangeMode.BASIC.name)
+                .putExtra("safetyPreset",AnchorSafetyPreset.BALANCED.name).putExtra("positionSource",GpsDataSource.NMEA.name)
+                .putExtra("centerSource",AnchorCenterSource.MANUAL_COORDINATES.name)
+                .putExtra("originMode",AnchorOriginMode.MANUAL_COORDINATE.name).putExtra("depthSource",AnchorDepthSource.MANUAL.name))
+            val active=withTimeout(5_000){while(dao.active()?.monitoringPhase!=AnchorMonitoringPhase.ARMED.name)delay(25);dao.active()!!}
+            assertEquals(anchorLatitude,active.anchorLatitude,0.0);assertEquals(anchorLongitude,active.anchorLongitude,0.0)
+            assertEquals(1,dao.events(active.id).first().count{it.type=="GPS_MONITORING_ACTIVATED"})
+        }
+    }
+
+    @Test fun mapPickWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor() = runBlocking<Unit>{
+        TestNmeaServer().use{server->
+            server.setEmitting(false)
+            val profile=liveProfile(server,true)
+            preferences.save(AppSettings(profile=profile,gpsDataSource=GpsDataSource.NMEA,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))
+            val anchorLatitude=-36.853456;val anchorLongitude=174.773456
+            ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java)
+                .setAction(AnchorForegroundService.ARM)
+                .putExtra("lat",anchorLatitude).putExtra("lon",anchorLongitude)
+                .putExtra("rode",40.0).putExtra("depth",8.0).putExtra("bowHeight",1.5)
+                .putExtra("boatLength",10.0).putExtra("warning",56.0).putExtra("alarm",70.0)
+                .putExtra("placement",AnchorPlacementMode.BACKDOWN.name).putExtra("rangeMode",AnchorRangeMode.ADVANCED.name)
+                .putExtra("safetyPreset",AnchorSafetyPreset.BALANCED.name).putExtra("positionSource",GpsDataSource.NMEA.name)
+                .putExtra("centerSource",AnchorCenterSource.MAP_PICK.name)
+                .putExtra("originMode",AnchorOriginMode.MAP_PICK.name).putExtra("depthSource",AnchorDepthSource.MANUAL.name))
+            val waiting=withTimeout(10_000){while(dao.active()?.monitoringPhase!=AnchorMonitoringPhase.WAITING_FOR_GPS.name)delay(25);dao.active()!!}
+            assertEquals(anchorLatitude,waiting.anchorLatitude,0.0);assertEquals(anchorLongitude,waiting.anchorLongitude,0.0)
+            assertEquals(0,waiting.centerSampleCount);assertTrue(dao.points(waiting.id).first().isEmpty())
+            assertTrue(dao.events(waiting.id).first().none{it.type.startsWith("ANCHOR_CENTER_")&&it.type!="ANCHOR_CENTER_ANALYSIS_RESET"})
+
+            server.setEmitting(true)
+            val learning=withTimeout(15_000){while(dao.active()?.monitoringPhase!=AnchorMonitoringPhase.LEARNING.name)delay(25);dao.active()!!}
+            assertEquals(anchorLatitude,learning.anchorLatitude,0.0);assertEquals(anchorLongitude,learning.anchorLongitude,0.0)
+            delay(1_000)
+            assertEquals(1,dao.events(learning.id).first().count{it.type=="GPS_MONITORING_ACTIVATED"})
         }
     }
 

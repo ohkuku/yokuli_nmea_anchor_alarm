@@ -49,13 +49,13 @@ Implemented residual fixes from the audit:
 | Pressure | 1000 ms | 1 Hz |
 | Anchor Watch `APP_DERIVED` wind | 1000 ms | 1 Hz |
 
-These Phone/App-owned streams share the 1 Hz product cadence. Boat Depth/STW and direct Boat Position/Heading/Motion/Pressure/Wind are deliberately absent from the publisher. Values due on the same tick are encoded as one contiguous payload and use one socket write/flush. A failed write waits for the next fresh period; no immediate retry loop or stale replay is allowed. A write lasting at least 500 ms gets a full one-second recovery window after it returns, preventing queued periods from becoming a catch-up burst. At three seconds a same-input stall closes only the exact current transport generation once; the existing bounded RX reconnect state machine owns recovery. Socket-success counters advance only after actual write/flush succeeds.
+These Phone/App-owned streams share the 1 Hz product cadence. Boat Depth/STW and direct Boat Position/Heading/Motion/Pressure/Wind are deliberately absent from the publisher. Values due on the same tick are encoded as one contiguous payload and use one socket write/flush. A failed write waits for the next fresh period; no immediate retry loop or stale replay is allowed. A write lasting at least 500 ms gets a full one-second recovery window after it returns, preventing queued periods from becoming a catch-up burst. At three seconds a same-input stall suppresses later TX until an explicit Output Stop/Start; it never closes, replaces or reconnects the safety-owned RX transport. Socket-success counters advance only after actual write/flush succeeds.
 
 NMEA Input and Phone Position Output may run together. Selecting NMEA as the App/Anchor position no longer changes Hub arbitration or disables Phone TX. Position output reads only `VesselPositionRepository.acceptedPhoneFix`; both `SystemLocationRepository` and the encoder reject mock feedback, and the encoder additionally rejects network/coarse providers.
 
 ## D. Same-socket reuse
 
-The App-to-boat path in same-socket mode calls `NmeaConnectionManager.writeExpected(...)` on the existing TCP socket. The expected transport generation is checked before the socket is leased and again immediately before bytes are written. Stop/reconnect changes the transport generation and closes the old transport. No independent TX client is created for this mode.
+The App-to-boat path in same-socket mode calls `NmeaConnectionManager.writeExpected(...)` on the existing TCP socket. The expected transport generation is checked before the socket is leased and again immediately before bytes are written. An **input reconnect** changes the transport generation and drops every queued old-generation batch. An **output Stop** invalidates the publication generation immediately, waits for an in-flight write to return naturally, and leaves the RX socket and generation untouched. No independent TX client is created for this mode.
 
 ## E. Automated evidence
 

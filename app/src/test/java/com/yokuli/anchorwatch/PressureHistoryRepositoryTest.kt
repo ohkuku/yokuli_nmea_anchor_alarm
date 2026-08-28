@@ -37,7 +37,10 @@ class PressureHistoryRepositoryTest{
         // Both writes are intentionally asynchronous. Waiting only for row
         // count can observe the first upsert before the replacement in the
         // same minute has completed, which made this gate scheduler-dependent.
-        withTimeout(2_000){while(dao.count()!=1L||dao.rows.values.singleOrNull()?.pressureHpa!=1_012.4)delay(10)}
+        // The full 600+ test gate can temporarily saturate Dispatchers.IO on a
+        // small CI runner. Preserve the exact latest-value assertion while
+        // allowing the asynchronous database writer a bounded scheduling window.
+        withTimeout(5_000){while(dao.count()!=1L||dao.rows.values.singleOrNull()?.pressureHpa!=1_012.4)delay(10)}
         assertEquals(1L,dao.count());assertEquals(1_012.4,dao.rows.values.single().pressureHpa,.001)
     }
 }

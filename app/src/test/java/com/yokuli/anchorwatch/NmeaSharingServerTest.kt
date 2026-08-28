@@ -103,7 +103,12 @@ class NmeaSharingServerTest {
         val port=ServerSocket(0).use{it.localPort};val server=NmeaSharingServer(NetworkAddressProvider());val reading=AtomicBoolean(true)
         try{
             server.start(port);waitUntil{server.status.value.state==SharingServerState.RUNNING}
-            val slow=Socket("127.0.0.1",port).apply{receiveBufferSize=1_024};val fast=Socket("127.0.0.1",port)
+            val slow=Socket("127.0.0.1",port).apply{receiveBufferSize=1_024}
+            // Observe the first accept before opening the second socket. This
+            // keeps the test deterministic under a saturated full-suite IO
+            // dispatcher while still exercising two simultaneous clients.
+            waitUntil{server.status.value.clientCount==1}
+            val fast=Socket("127.0.0.1",port)
             val reader=thread(start=true,isDaemon=true){val input=fast.getInputStream();val buffer=ByteArray(8_192);while(reading.get()){val count=runCatching{input.read(buffer)}.getOrDefault(-1);if(count<0)break}}
             waitUntil{server.status.value.clientCount==2}
             val payload="\$GPTXT,"+"X".repeat(2_000)+"*00\r\n";for(index in 0 until 3_000){server.publish(payload);Thread.sleep(1);if(server.status.value.droppedSlowClients>0)break}

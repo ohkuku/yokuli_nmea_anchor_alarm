@@ -592,7 +592,7 @@
 - Fix commit: **Current `codex/develop` delivery commit**
 - Verification result: **Initial arming no longer waits for or requires a live fix. It validates the confirmed anchor geometry, inserts and activates the session, starts the selected source resources and submits an initial fix only when that fix passes the existing current-generation/freshness/quality policy. Otherwise it records `SESSION_STARTED_GPS_DEGRADED`, posts an immediate high-priority warning and lets the existing GPS-loss/quality alarm plus automatic recovery continue. Active NMEA/System submissions now apply that strict health gate before distance, track or estimator input. Setup and Watch show degraded health without disabling Set anchor; Preflight presents GPS/NMEA/network faults as proceedable warnings. Data → Sources remains authoritative and no transient NMEA fault silently switches the session to Phone GPS.**
 - Real hardware verified: **No — verify one Start tap with the current vessel feed, then interrupt/recover NMEA and confirm the same session remains active while unsafe fixes never move the plotted boat/track.**
-- Status: **FIXED IN CODE — PRODUCTION/JVM-TEST/ANDROID-TEST SOURCES COMPILE; TESTS NOT RUN; REAL-VESSEL QA PENDING**
+- Status: **SUPERSEDED BY P0-044 — Current/Backdown now require an accepted selected-source position; Manual/Map persist WAITING and activate on the first accepted fix**
 
 ## Finding P1-042 — Boat output forced Phone GNSS onto the network with no opt-out
 
@@ -619,3 +619,29 @@
 - Verification result: **The runtime now holds both HIGH_PERF (effective screen-off) and LOW_LATENCY (effective screen-on) Wi-Fi locks plus the existing partial CPU wake lock while the local listener is active. Its explicit run lease is stored with Android's boot count, restored after same-boot process reclamation, cleared by Stop, and rejected after reboot. Runtime restoration no longer revokes the lease because heading readiness has not emitted yet; unavailable streams suppress independently. Foreground notification refreshes now update the active location service type before background GNSS acquisition. Production, JVM-test and Android-test Kotlin sources compile. Tests were not executed by user instruction.**
 - Real hardware verified: **No — connect a second dashboard, lock for at least 15 minutes, verify continuous 1 Hz receipt, then disconnect/reconnect the client while still locked. Repeat with battery optimization restricted and unrestricted.**
 - Status: **FIXED IN CODE — PRODUCTION/JVM-TEST/ANDROID-TEST SOURCES COMPILE; TESTS NOT RUN; SCREEN-OFF HARDWARE QA REQUIRED**
+
+## Finding P0-044 — A fresh provider fix could lose the synchronous ARM race
+
+- Severity: **P0 / Current and Backdown anchor session could be rejected despite a fresh selected-source fix**
+- User story: with a current accepted Phone GNSS or current-generation NMEA fix already present, one Set Anchor action must immediately create an ARMED/LEARNING session. Manual/Map may wait for GPS, then activate exactly once without moving the saved anchor coordinate.
+- Evidence: `AnchorWatchRuntime.arm()` evaluated `AcceptedPositionState` before the asynchronous provider → coordinator → integrity collector necessarily submitted the provider's current `StateFlow` value. `lockSource()` then reset the accepted epoch, making activation depend on another provider emission.
+- Reproduction steps: publish one fresh System or NMEA fix; let the provider hold that value without emitting another; send Current-position ARM, or persist a Manual/Map WAITING session; observe `POSITION_WAITING` or a session that never activates.
+- Root cause: ARM and post-persistence source locking depended on asynchronous delivery even though the raw selected-provider value was already synchronously readable.
+- Failing test: `freshSystemGpsArmCreatesAnActiveSessionWithoutNmea`, `freshNmeaGpsArmCreatesActiveSessionImmediately`, `waitingSessionPrimesAlreadyAvailableRawFix`, `mapPickWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, plus `P0RemediationPolicyTest` priming/generation cases.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **ARM now synchronously submits only the selected provider's current raw fix through the existing `AcceptedPositionRepository` / `PositionIntegrityFilter`, then evaluates accepted state. After the Room session and source lock are persisted, it primes the reset integrity epoch again inside the serialized runtime command. NMEA candidates are bound to the current connection start/generation; old-generation asynchronous accepted events are rejected by the runtime. Manual/Map coordinates remain immutable, and waiting sessions cannot run track/alarm/estimator code before activation. Targeted JVM priming tests pass; full gates are recorded in the delivery report.**
+- Real hardware verified: **No — run the real-vessel matrix for fresh/stale NMEA, fresh Phone GNSS and Manual/Map recovery.**
+- Status: **FIXED IN CODE — AUTOMATED GATES/REAL-VESSEL QA TRACKED IN DELIVERY REPORT**
+
+## Finding P0-045 — Safe full-duplex same-input NMEA output was disabled
+
+- Severity: **P0 / required KC-2W single-client topology unavailable**
+- User story: the App must be able to publish selected Phone/App-owned NMEA sentences on the already-open KC-2W full-duplex TCP connection without opening a second client, while optional TX can never close, replace or reconnect safety RX.
+- Evidence: `NmeaOutputEndpointPolicy`, `NmeaDeviceOutputConnection`, `AnchorWatchNmeaPublisher`, `MainViewModel` and Settings all hard-disabled `SAME_AS_INPUT_CONNECTION`, despite `NmeaConnectionManager.writeExpected()` already supporting current-generation writes on the owned socket.
+- Reproduction steps: connect Boat NMEA input over TCP; choose Phone/App boat output; the old branch offered only a separate TCP/UDP destination and rejected same-input mode.
+- Root cause: removal of the earlier destructive stall-abort behavior was incorrectly completed by disabling the topology rather than separating TX admission/lifecycle from RX ownership.
+- Failing test: `NmeaDeviceOutputPolicyTest.explicitSameSocketModeNeverRepresentsASecondTransport`, `NmeaConnectionManagerTest.sameSocketOutputReusesExistingRxTransport`, `sameSocketTxStallKeepsIncomingNmeaFlowingAndDoesNotIncrementRxGeneration`, `sameSocketQueuedBatchCannotCrossRxGeneration`, and `PhoneNmeaOutputStopBarrierTest`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Same-input mode now requires an already-open TCP input and reuses its exact transport generation. It never creates a dedicated client. The output publication generation is invalidated before Stop waits for an in-flight write; Stop never closes the shared socket. Congestion suppresses later same-socket TX instead of aborting/reconnecting RX. Socket writer serialization no longer holds the Socket intrinsic monitor across blocking output, so incoming NMEA remains readable. Route selection is explicit: reuse current TCP, separate TCP, or Advanced UDP; no route auto-starts. Targeted loopback/generation tests pass; full gates are recorded in the delivery report.**
+- Real hardware verified: **No — KC-2W + Raymarine/IS42 same-connection RX/TX/Stop remains `UNVERIFIED_HARDWARE`.**
+- Status: **FIXED IN CODE — LOOPBACK TESTED; KC-2W HARDWARE ACCEPTANCE REQUIRED**

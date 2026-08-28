@@ -967,12 +967,12 @@ class MainViewModel @Inject constructor(
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"Use Phone NMEA service to host a TCP server. Phone/App boat output only writes locally-owned data into the boat network."))}
             return@launch
         }
-        if(mode!=NmeaOutputTransportMode.TCP_SERVER&&(host.isBlank()||port !in 1..65535)){
+        if(mode !in setOf(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,NmeaOutputTransportMode.TCP_SERVER)&&(host.isBlank()||port !in 1..65535)){
             _ui.update{it.copy(connectionAttempt=ConnectionAttempt(ConnectionAttemptState.FAILED,"This NMEA output destination needs a valid host and port from 1 to 65535."))}
             return@launch
         }
         val proposed=when(mode){
-            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaOutputEndpointPolicy.tcpDestination(current,input,input.host,input.port)
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->current.copy(transportMode=mode,outputHost="",outputPort=input.port.takeIf{it in 1..65535}?:10110)
             NmeaOutputTransportMode.DEDICATED_TCP->NmeaOutputEndpointPolicy.tcpDestination(current,input,host,port)
             NmeaOutputTransportMode.TCP_SERVER->current
             NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->current.copy(transportMode=mode,outputHost=host.trim(),outputPort=port)
@@ -1038,7 +1038,7 @@ class MainViewModel @Inject constructor(
     private fun isOutputDestinationReady(value:NmeaDeviceOutputSettings,state:MainUiState):Boolean{
         val effective=NmeaOutputEndpointPolicy.automatic(value,state.settings.profile)
         return effective.anyStreamSelected&&effective.transportConfigured&&when(effective.transportMode){
-            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->false
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->NmeaOutputEndpointPolicy.isValid(effective,state.settings.profile)&&nav.hasOpenTransport()
             NmeaOutputTransportMode.TCP_SERVER->false
             NmeaOutputTransportMode.DEDICATED_TCP->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535&&!NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(effective,state.settings.profile)
             NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->effective.outputHost.isNotBlank()&&effective.outputPort in 1..65535
@@ -1047,8 +1047,8 @@ class MainViewModel @Inject constructor(
     private fun outputDestinationError(value:NmeaDeviceOutputSettings):String{
         val effective=NmeaOutputEndpointPolicy.automatic(value,_ui.value.settings.profile)
         return if(!effective.anyStreamSelected)"Select at least one Phone/App output stream before starting." else if(!effective.transportConfigured)"Choose an NMEA output destination before enabling a stream." else when(effective.transportMode){
-            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Same-socket output is disabled because an optional blocked write could stop the safety-owned NMEA input. Choose a separate TX port or UDP destination."
-            NmeaOutputTransportMode.DEDICATED_TCP->if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(effective,_ui.value.settings.profile))"Use a separate TX port. Same-socket output is disabled so an optional output stall can never close the safety-owned input." else "Enter a valid TCP output host and port first."
+            NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION->"Connect Boat NMEA input over TCP first. This route reuses that exact full-duplex connection and never opens a second boat socket."
+            NmeaOutputTransportMode.DEDICATED_TCP->if(NmeaOutputEndpointPolicy.opensSecondTransportOnInputEndpoint(effective,_ui.value.settings.profile))"This duplicates the input endpoint. Choose Reuse current Boat TCP connection, or enter a genuinely separate TX port." else "Enter a valid TCP output host and port first."
             NmeaOutputTransportMode.TCP_SERVER->"Use the separate Phone NMEA service page to host a TCP listener."
             NmeaOutputTransportMode.UDP_UNICAST,NmeaOutputTransportMode.UDP_BROADCAST->"Enter a valid UDP output host and port first."
         }

@@ -60,9 +60,11 @@ object NmeaWireBatch{
 class NmeaConnectionManager(
  private val scope:CoroutineScope,
  private val retryPolicy:NmeaConnectionRetryPolicy=NmeaConnectionRetryPolicy(),
+ private val sharedWriter:(Socket,ByteArray)->Unit={socket,payload->socket.getOutputStream().apply{write(payload);flush()}},
  private val onGenerationStarted:()->Unit={},
 ) {
  private val guard=Any()
+ private val writeGuard=Any()
  private var job:Job?=null
  /** Cancels/replaces a connection coroutine. */
  private var generation=0L
@@ -110,13 +112,15 @@ class NmeaConnectionManager(
   val (socket,actual)=lease
   if(socket.isClosed||!socket.isConnected)return NmeaTransportWriteResult(false,expectedGeneration,actual,sentences.size,failure=NmeaTransportWriteFailure.TRANSPORT_UNAVAILABLE,error="The shared input TCP transport is closed.")
   return try{
-   synchronized(socket){
+   // Serialize writers without taking Socket's intrinsic monitor. Some JVM /
+   // Android Socket accessors also use that monitor; holding it across a slow
+   // OutputStream write can otherwise delay the independent RX loop.
+   synchronized(writeGuard){
     val stillCurrent=synchronized(guard){transport===socket&&transportGeneration==actual&&(expectedGeneration==null||expectedGeneration==actual)}
     if(!stillCurrent)return NmeaTransportWriteResult(false,expectedGeneration,synchronized(guard){transportGeneration},sentences.size,failure=NmeaTransportWriteFailure.STALE_TRANSPORT_GENERATION,error="The input TCP transport changed before this queued batch could be written.")
-    val output=socket.getOutputStream()
     // One scheduler tick is one wire payload. Multiple per-sentence writes and
     // flushes amplify backpressure on small marine Wi-Fi/serial gateways.
-    output.write(NmeaWireBatch.encode(sentences));output.flush()
+    sharedWriter(socket,NmeaWireBatch.encode(sentences))
    }
    NmeaTransportWriteResult(true,expectedGeneration,actual,sentences.size,sentences.size)
   }catch(error:Exception){

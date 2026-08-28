@@ -11,6 +11,7 @@ import com.yokuli.anchorwatch.domain.safety.AnchorSetupReadinessEvaluator
 import com.yokuli.anchorwatch.domain.safety.AnchorSetupReadinessInput
 import com.yokuli.anchorwatch.domain.vessel.*
 import com.yokuli.anchorwatch.location.AcceptedAnchorPositionPolicy
+import com.yokuli.anchorwatch.location.AnchorRawPositionPrimingPolicy
 import com.yokuli.anchorwatch.location.AcceptedPositionState
 import com.yokuli.anchorwatch.location.NewAnchorPositionSourcePolicy
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
@@ -39,6 +40,20 @@ class P0RemediationPolicyTest {
     @Test fun quarantinedPositionCannotSeedAnchorCentre(){assertFalse(readiness(acceptedNmea().copy(disposition="QUARANTINED",trust=FixTrust.QUARANTINED)).ready)}
     @Test fun currentPositionUsesAcceptedRepositoryFixOnly(){assertTrue(readiness(acceptedNmea()).ready)}
     @Test fun oldConnectionGenerationCannotSeedAnchorCentre(){assertEquals("NMEA_CONNECTION_GENERATION_MISMATCH",readiness(acceptedNmea(generation=6)).reason)}
+
+    @Test fun armCurrentPositionPrimesRawFixThroughIntegrityGate(){
+        val raw=nmeaFix(9_000)
+        val candidate=AnchorRawPositionPrimingPolicy.select(GpsDataSource.NMEA,null,raw,8_000,7)
+        assertNotNull(candidate);assertEquals(raw,candidate?.fix);assertEquals(7L,candidate?.connectionGeneration)
+    }
+    @Test fun oldNmeaGenerationCannotPrimeAnchorOrigin(){
+        assertNull(AnchorRawPositionPrimingPolicy.select(GpsDataSource.NMEA,null,nmeaFix(7_999),8_000,7))
+    }
+    @Test fun armNeverUsesRawFixThatIntegrityRejects(){
+        val network=nmeaFix().copy(positionProvider=PositionProvider.ANDROID_NETWORK)
+        assertNull(AnchorRawPositionPrimingPolicy.select(GpsDataSource.SYSTEM,network,null,null,0))
+        assertNull(AnchorRawPositionPrimingPolicy.select(GpsDataSource.NMEA,null,network,8_000,7))
+    }
 
     @Test fun androidNetworkPositionCannotSeedCurrentPositionAnchor(){
         val fix=nmeaFix().copy(positionProvider=PositionProvider.ANDROID_NETWORK,horizontalAccuracyMeters=4.0)

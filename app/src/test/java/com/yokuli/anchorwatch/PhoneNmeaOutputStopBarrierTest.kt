@@ -16,7 +16,7 @@ import org.junit.Test
 
 /** Proves byte-level Stop semantics rather than merely checking TX counters. */
 class PhoneNmeaOutputStopBarrierTest{
-    @Test fun stopCannotReturnBeforeAnInFlightSocketWriteHasJoined(){
+    @Test fun stopSameSocketOutputPreventsAllFutureWritesAfterInFlightJoin(){
         val payload="\$IIHDT,123.40,T*2B\r\n".toByteArray(Charsets.US_ASCII)
         val barrier=NmeaOutputStopBarrier()
         val writeEntered=CountDownLatch(1)

@@ -13,6 +13,41 @@ data class AcceptedAnchorPositionReadiness(
     val evidence:String,
 )
 
+data class AnchorRawPositionCandidate(
+    val source: GpsDataSource,
+    val fix: NavigationFix,
+    /** The live TCP generation captured with an NMEA candidate. */
+    val connectionGeneration: Long? = null,
+)
+
+/**
+ * Selects only the current provider's raw sample for synchronous ARM/WAITING
+ * priming. This does not make the sample trusted: callers must still submit it
+ * through [AcceptedPositionRepository] and evaluate [AcceptedAnchorPositionPolicy].
+ */
+object AnchorRawPositionPrimingPolicy {
+    fun select(
+        source: GpsDataSource,
+        systemFix: NavigationFix?,
+        nmeaFix: NavigationFix?,
+        nmeaConnectionStartedElapsedRealtime: Long?,
+        nmeaConnectionGeneration: Long,
+    ): AnchorRawPositionCandidate? = when (source) {
+        GpsDataSource.SYSTEM -> systemFix
+            ?.takeIf { it.positionProvider == PositionProvider.ANDROID_GNSS }
+            ?.let { AnchorRawPositionCandidate(source, it) }
+        GpsDataSource.NMEA -> nmeaFix
+            ?.takeIf { fix ->
+                fix.positionProvider == PositionProvider.NMEA &&
+                    nmeaConnectionStartedElapsedRealtime != null &&
+                    fix.receivedElapsedRealtime >= nmeaConnectionStartedElapsedRealtime
+            }
+            ?.let { AnchorRawPositionCandidate(source, it, nmeaConnectionGeneration) }
+        // Demo starts only after the session has been persisted.
+        GpsDataSource.DEMO -> null
+    }
+}
+
 /**
  * One safety boundary shared by Setup and Runtime. A provider fix is not an
  * anchor origin merely because it is visible on the map: it must have passed

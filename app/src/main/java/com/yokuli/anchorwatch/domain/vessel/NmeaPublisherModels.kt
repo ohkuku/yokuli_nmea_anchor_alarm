@@ -40,9 +40,10 @@ data class NmeaRetryPolicy(val delaysMillis:List<Long> = listOf(1_000,2_000,5_00
 data class NmeaOutputDestination(
     val id:String="boat-gateway",
     val name:String="Boat Gateway",
-    /** A separate destination is required until same-socket writes can be
-     * cancelled without ever closing or delaying the safety-owned reader. */
-    val transport:NmeaDestinationTransport=NmeaDestinationTransport.DEDICATED_TCP,
+    /** The authoritative Boat route may reuse the explicitly connected
+     * full-duplex input socket. [enabled] remains false until an explicit
+     * output session starts. */
+    val transport:NmeaDestinationTransport=NmeaDestinationTransport.SAME_AS_INPUT_TCP_SOCKET,
     val host:String="",
     val port:Int=10110,
     val enabled:Boolean=false,

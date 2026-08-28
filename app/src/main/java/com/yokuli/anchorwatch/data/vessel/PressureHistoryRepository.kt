@@ -10,6 +10,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +31,11 @@ class PressureHistoryRepository @Inject constructor(
     private val wallClock:WallClock,
 ){
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+    /** Room upserts for one minute must keep observation order. Launching one
+     * coroutine per sample allowed an older pressure value to complete after a
+     * newer one and overwrite it. A single unbounded actor keeps record()
+     * non-blocking while preserving the caller's order. */
+    private val databaseWrites=Channel<PressureHistoryEntity>(Channel.UNLIMITED)
     private val estimators=linkedMapOf<String,PressureTrendEstimator>()
     private val pending=mutableListOf<PressureHistoryEntity>()
     private var loaded=false
@@ -37,6 +43,7 @@ class PressureHistoryRepository @Inject constructor(
     val historyLoaded=_historyLoaded.asStateFlow()
 
     init{
+        scope.launch{for(value in databaseWrites)dao.upsert(value)}
         scope.launch{
             val now=wallClock.currentTimeMillis()
             val rows=dao.since(now-PressureHistoryPolicy.TREND_RETENTION_MILLIS-PressureHistoryPolicy.BUCKET_MILLIS)
@@ -52,7 +59,7 @@ class PressureHistoryRepository @Inject constructor(
         val key=sourceStableKey.trim();if(key.isEmpty()||!PressureHistoryPolicy.validPressure(pressureHpa))return
         val value=PressureHistoryEntity(key,PressureHistoryPolicy.bucket(observedAtUtcMillis),observedAtUtcMillis,pressureHpa,sourceDisplayName.ifBlank{key})
         synchronized(this){if(loaded)addToEstimator(value)else{pending+=value;if(pending.size>1_000)pending.removeAt(0)}}
-        scope.launch{dao.upsert(value)}
+        databaseWrites.trySend(value)
     }
 
     @Synchronized fun trend(sourceStableKey:String,windowMillis:Long,nowUtcMillis:Long=wallClock.currentTimeMillis()):PressureTrend?{

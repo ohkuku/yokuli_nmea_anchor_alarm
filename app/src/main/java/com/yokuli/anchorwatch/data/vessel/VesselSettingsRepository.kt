@@ -60,7 +60,7 @@ data class NmeaDeviceOutputSettings(
     val phoneAttitudeEnabled:Boolean=phoneMotionEnabled,
     val phonePressureEnabled:Boolean=false,
     val proprietaryStatusEnabled:Boolean=false,
-    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.DEDICATED_TCP,
+    val transportMode:NmeaOutputTransportMode=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,
     val outputHost:String="",
     val outputPort:Int=10110,
     val phoneHeadingFormat:PhoneHeadingOutputFormat=PhoneHeadingOutputFormat.HDT_TRUE,
@@ -222,6 +222,9 @@ class OutputSettingsRepository @Inject constructor(@ApplicationContext private v
 }
 
 object NmeaOutputTransportDefaults{
-    val AUTHORITATIVE_PHONE_TO_BOAT=NmeaOutputTransportMode.DEDICATED_TCP
+    /** The authoritative Phone -> Boat route reuses an explicitly connected
+     * full-duplex TCP input. transportConfigured=false still requires the user
+     * to choose and save a route; nothing starts implicitly. */
+    val AUTHORITATIVE_PHONE_TO_BOAT=NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION
     fun restore(stored:String?)=stored?.let{runCatching{NmeaOutputTransportMode.valueOf(it)}.getOrNull()}?:AUTHORITATIVE_PHONE_TO_BOAT
 }

@@ -1,7 +1,10 @@
 # NMEA Publisher P0 verification report
 
-Date: 2026-08-25  
-Branch: `codex/nmea-publisher-hard-stop`
+Date: 2026-08-28
+
+Branch: `codex/develop`
+
+Frozen baseline: `fb9d1875e10f06da4fe113c84190bb78f97340e0`
 
 > 2026-08-26 compatibility update: every normal stream now uses a 1 Hz
 > heartbeat and values due on the same tick are coalesced into one wire
@@ -16,7 +19,7 @@ Branch: `codex/nmea-publisher-hard-stop`
 - Starting Phone/App output does not alter `VesselDataHub` source arbitration. The App or a paused Anchor session may use NMEA position while TX independently uses only a real non-mock Android GNSS fix; the global NMEA GPS proxy therefore cannot loop back as Phone position.
 - Everything due in a cadence tick is coalesced into one contiguous Socket payload/write/flush. A blocked writer retains only the newest per-stream value.
 - A slow write cannot cause catch-up traffic: crossing 500 ms grants a one-second post-completion recovery period while pending values continue replacing in place.
-- The live output UI shows normal/congested/stalled state plus last/maximum write latency. A three-second same-socket stall aborts only that transport generation once; the existing bounded RX reconnect policy owns recovery.
+- The live output UI shows normal/congested/stalled state plus last/maximum write latency. A three-second same-socket stall suppresses later TX until explicit Stop/Start; it never closes/reconnects RX or changes the RX generation.
 - Numeric measurement time and same-source heartbeat time are evaluated separately.
 - Position cannot be kept alive by an empty coordinate heartbeat.
 - Held Heading remains publishable while the same physical source continues heartbeating.
@@ -43,10 +46,13 @@ Branch: `codex/nmea-publisher-hard-stop`
 | Targeted Source/Lease/Publisher/Socket JVM tests | PASS | `VesselSourceArbitratorTest`, `VesselSourceRegistryTest`, `AnchorWatchNmeaPublisherTest`, `NmeaDeviceOutputPolicyTest`, `NmeaSharingServerTest` |
 | Post-audit transport/framing/echo/field/GPS-policy tests | Historical suite passed; new pre-socket barrier tests not run | Old-transport rejection, randomized TCP fragmentation, occurrence-bounded echo quarantine, silent field expiry, PHONE_BARO semantics, frame validation, localized Arm result and GNSS startup resource hand-off |
 | Final focused close-out | PASS | 89/89 across Stop barrier, output/server policy, reconnect generation, field retention, parser/framing, source invalidation and System-GPS startup policy |
-| Full Debug unit tests | PASS | Final post-audit run: 549 total, 0 failed/errors, 1 opt-in wall-clock soak skipped by default. |
+| Full Debug unit tests | PASS | Current follow-up run: 620 total, 0 failed/errors, 1 opt-in soak skipped by default. |
 | Android lint Debug | PASS | `lintDebug`; HTML report generated at `app/build/reports/lint-results-debug.html` |
 | Debug APK assemble | PASS | `assembleDebug`; `app/build/outputs/apk/debug/app-debug.apk` |
-| Android test APK compile/package | PASS | `assembleDebugAndroidTest`; includes `freshSystemGpsArmCreatesAnActiveSessionWithoutNmea`, but that new device story was compiled rather than executed in this pass |
+| Android device-test source compile | PASS | `compileDebugAndroidTestKotlin`; fresh System/NMEA ARM, deterministic WAITING activation and all existing safety stories compile. Execution is delegated to the three CI device shards. |
+| Product identity/free-feature policy | PASS | `.github/scripts/product_policy_guard.sh` |
+| API 36 launch smoke | PENDING REMOTE CI | Must pass on the pushed commit; no local emulator was started. |
+| Device integration shards 1–3 | PENDING REMOTE CI | Must pass on the pushed commit; no local emulator was started. |
 | Connected Android tests | PASS (aggregate) | Full run passed 91 and exposed five regressions; only those five were corrected and rerun 5/5, for aggregate 96/96. After the final Output diagnostics change, its directly related Compose test reran 1/1. A second monolithic run was intentionally avoided. |
 | Deterministic 10-minute 1 Hz Heading soak | NOT RUN AFTER CADENCE CHANGE | Updated expectation: 600–601 complete HDT writes, maximum scheduled gap ≤ 1,200 ms |
 | Real-time 10-minute 1 Hz Fake TCP soak | NOT RUN AFTER CADENCE CHANGE | Updated expectation: exactly 600 complete non-blank HDT lines and every observed receiver gap ≤ 1,200 ms |
@@ -56,4 +62,10 @@ Branch: `codex/nmea-publisher-hard-stop`
 
 ## Release status
 
-The earlier full JVM/lint/assemble evidence predates the 2026-08-26 cadence/coalescing change. Tests for the new 1 Hz contract are written but deliberately not run in that pass. Connected-device results listed above are historical aggregate evidence. The work remains an uncommitted candidate on `codex/nmea-publisher-hard-stop`; it has not been merged, pushed or released. Real hardware remains explicitly `UNVERIFIED_HARDWARE`, so perform one controlled fragile-gateway run with packet capture before treating this as a production safety release.
+The current `codex/develop` candidate restores generation-bound same-input
+full-duplex output without restoring the old destructive stall abort. Local
+unit, lint, Debug APK, Android-test compilation and product-policy gates pass.
+Remote API 36/device-shard results must be recorded after push. Real hardware
+remains explicitly `UNVERIFIED_HARDWARE`: perform one controlled KC-2W run with
+Raymarine/IS42 and packet capture before treating this as a production safety
+release.
