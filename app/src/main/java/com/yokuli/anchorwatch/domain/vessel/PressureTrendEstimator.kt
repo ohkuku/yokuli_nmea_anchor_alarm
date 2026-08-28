@@ -13,7 +13,15 @@ class PressureTrendEstimator(
     @Synchronized fun add(elapsed:Long,hpa:Double){
         if(!hpa.isFinite()||hpa !in 800.0..1_200.0)return
         val last=points.lastOrNull()
-        if(last!=null&&elapsed-last.elapsed<bucketMillis){points.removeLast();points.addLast(Point(elapsed,hpa))}else points.addLast(Point(elapsed,hpa))
+        // A high-rate pressure sensor normally emits every few hundred
+        // milliseconds. Comparing only the interval from the previous sample
+        // therefore replaced the sole point forever. Bucket by absolute time
+        // so crossing a UTC-minute boundary always creates new trend evidence.
+        if(last!=null&&elapsed<last.elapsed)return
+        if(last!=null&&Math.floorDiv(elapsed,bucketMillis)==Math.floorDiv(last.elapsed,bucketMillis)){
+            points.removeLast()
+        }
+        points.addLast(Point(elapsed,hpa))
         val cutoff=elapsed-retentionMillis
         while(points.firstOrNull()?.elapsed?.let{it<cutoff}==true)points.removeFirst()
     }

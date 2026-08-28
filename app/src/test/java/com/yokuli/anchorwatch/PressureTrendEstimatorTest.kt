@@ -18,4 +18,13 @@ class PressureTrendEstimatorTest {
         val trend=requireNotNull(value.trend(60*60_000L,60*60_000L))
         assertEquals(-3.0,trend.changeHpa,.05)
     }
+
+    @Test fun continuousPhoneSensorSamplesAccumulateAcrossUtcMinuteBuckets(){
+        val value=PressureTrendEstimator()
+        for(second in 0..3_600){
+            value.add(second*1_000L,1_010.0-3.0*second/3_600.0)
+        }
+        val trend=requireNotNull(value.trend(60*60_000L,60*60_000L))
+        assertEquals(-3.0,trend.changeHpa,.10)
+    }
 }

@@ -801,3 +801,16 @@
 - Verification result: **Watch seeds an atomic Room count/max-ID baseline for the current estimation epoch, then increments it from new row IDs while retaining only 4,800 points for map rendering; it does not rescan the whole track once per second. The service notification uses a monotonic epoch counter that is not reduced by estimator compaction. ARM, manual analysis reset and Lift reset that counter, and process restore loads/counts only points at or after `estimationEpochStartedAt`; older track history remains stored and visible in history.**
 - Real hardware verified: **No — leave a Back down demo/real session beyond 4,800 points, compare page and notification, then restart once after an analysis reset.**
 - Status: **FIXED IN CODE — 650 JVM TESTS/ANDROID-TEST COMPILE/DEBUG BUILD PASSED; LONG-WATCH DEVICE QA PENDING**
+
+## Finding P1-058 — Continuous Phone pressure never accumulated an in-memory trend
+
+- Severity: **P1 / Weather dashboard trend remained permanently unavailable**
+- User story: a phone with a pressure sensor left recording for sufficient time must show locally calculated 1 h, 3 h and 6 h pressure changes without requiring an App restart.
+- Evidence: Room correctly upserted one row per UTC minute, but `PressureTrendEstimator.add()` replaced its last point whenever the new sample arrived less than 60 seconds after the preceding sample. Android pressure sensors report continuously, so the in-memory estimator retained only one point for hours. A restart could appear to fix it because persisted minute rows were then loaded together.
+- Reproduction steps: keep the Weather dashboard/Trip or Anchor monitoring active with Phone barometer selected and allow pressure events every second for more than one hour. Current pressure remains visible while every trend tile stays unavailable.
+- Root cause: the estimator confused inter-sample spacing with minute-bucket identity.
+- Failing test: `PressureTrendEstimatorTest.continuousPhoneSensorSamplesAccumulateAcrossUtcMinuteBuckets`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **The estimator now replaces only a sample in the same absolute UTC-minute bucket and creates a new point after each bucket boundary. Out-of-order wall-clock samples are ignored. Per-source Room persistence, coverage gates and source isolation remain unchanged.**
+- Real hardware verified: **No — keep the real phone pressure sensor active for at least one hour and confirm the 1 h tile appears without restarting.**
+- Status: **FIXED IN CODE — 651 JVM TESTS/ANDROID-TEST COMPILE/DEBUG BUILD PASSED; REAL-PHONE ONE-HOUR QA PENDING**
