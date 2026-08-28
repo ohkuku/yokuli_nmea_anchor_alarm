@@ -67,9 +67,9 @@ class NotificationCoordinator @Inject constructor(@ApplicationContext private va
 
     fun publishForeground(notification:Notification)=manager.notify(ONGOING_ID,notification)
 
-    fun publishEvent(title:String,text:String,high:Boolean){
+    fun publishEvent(title:String,text:String,high:Boolean,notificationId:Int=EVENT_ID){
         manager.notify(
-            EVENT_ID,
+            notificationId,
             NotificationCompat.Builder(context,if(high)EVENT_CHANNEL else STATUS_CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle(title)
@@ -81,7 +81,7 @@ class NotificationCoordinator @Inject constructor(@ApplicationContext private va
         )
     }
 
-    fun cancelEvent()=manager.cancel(EVENT_ID)
+    fun cancelEvent(notificationId:Int=EVENT_ID)=manager.cancel(notificationId)
 
     companion object{
         const val STATUS_CHANNEL="anchor_status"
@@ -89,5 +89,7 @@ class NotificationCoordinator @Inject constructor(@ApplicationContext private va
         const val ALARM_CHANNEL="anchor_alarm_selectable_v2"
         const val ONGOING_ID=42
         const val EVENT_ID=43
+        const val DEPTH_DATA_EVENT_ID=44
+        const val WIND_DATA_EVENT_ID=45
     }
 }

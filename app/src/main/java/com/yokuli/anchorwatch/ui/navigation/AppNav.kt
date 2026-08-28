@@ -108,6 +108,12 @@ internal fun AppDestinationLayer(
 @Composable
 private fun RuntimeFeedbackBanner(state:MainUiState,vm:MainViewModel,modifier:Modifier=Modifier){
     val feedback=state.runtimeDiagnostics.lastUserFeedback?:return
+    val episodeStillActive=when(feedback.context){
+        com.yokuli.anchorwatch.runtime.RuntimeFeedbackContext.DEPTH_DATA_UNAVAILABLE->state.conditions.depth.status==com.yokuli.anchorwatch.domain.condition.DepthGuardStatus.DATA_UNAVAILABLE
+        com.yokuli.anchorwatch.runtime.RuntimeFeedbackContext.WIND_DATA_UNAVAILABLE->state.conditions.windSpeed.status==com.yokuli.anchorwatch.domain.condition.WindSpeedGuardStatus.DATA_UNAVAILABLE||state.conditions.windShift.status==com.yokuli.anchorwatch.domain.condition.WindShiftGuardStatus.DATA_UNAVAILABLE
+        else->true
+    }
+    if(!episodeStillActive)return
     if(!feedback.highPriority||feedback.id<=state.dismissedRuntimeFeedbackId)return
     ElevatedCard(modifier.padding(12.dp).fillMaxWidth().testTag("runtime_command_feedback")){
         Row(Modifier.padding(start=14.dp,top=10.dp,bottom=10.dp,end=6.dp),verticalAlignment=Alignment.Top){

@@ -814,3 +814,29 @@
 - Verification result: **The estimator now replaces only a sample in the same absolute UTC-minute bucket and creates a new point after each bucket boundary. Out-of-order wall-clock samples are ignored. Per-source Room persistence, coverage gates and source isolation remain unchanged.**
 - Real hardware verified: **No — keep the real phone pressure sensor active for at least one hour and confirm the 1 h tile appears without restarting.**
 - Status: **FIXED IN CODE — 651 JVM TESTS/ANDROID-TEST COMPILE/DEBUG BUILD PASSED; REAL-PHONE ONE-HOUR QA PENDING**
+
+## Finding P1-059 — A recovered or disabled Wind Guard resurrected its old in-App banner
+
+- Severity: **P1 / stale safety state repeatedly obscured the App**
+- User story: a temporary NMEA wind outage must notify once while the affected Wind Guard is active. After fresh wind returns, the Guard is disabled, or the sailor closes that event banner, reopening the App must not recreate the same obsolete warning. A later independent outage must still create a new alert.
+- Evidence: live wind had recovered and disabling Wind Guard changed the persisted session configuration, yet the high-priority `Wind data unavailable` banner returned each time `MainActivity` was recreated.
+- Reproduction steps: enable Wind Guard during an active Anchor Watch, interrupt NMEA wind for more than ten seconds, restore wind, close the top banner, leave and reopen the App; alternatively disable every wind guard after the loss and reopen the App.
+- Root cause: `notifySeparate()` stored an untyped process-lifetime `lastUserFeedback`. The close button only advanced a field inside the current `MainUiState`, so a recreated ViewModel observed the old repository event again. The condition collector emitted from the whole status triple and had no recovery/disable clearing transition, while `ConditionRuntime.updateConfig()` retained the old `DATA_UNAVAILABLE` snapshot until a later tick.
+- Failing test: `ConditionFeedbackLifecycleTest.windLossCreatesOneEpisodeAndUnrelatedChangesDoNotRecreateIt`, `restoredWindOrDisablingTheGuardClearsTheLossEpisode`, `eitherWindGuardOwnsTheSharedDataLossEpisode`, and `warningIsAnnouncedOnlyOnEntryAndNeverOverAnUnavailableWindSource`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Depth and wind loss feedback now has a typed episode context and a condition-specific Android notification id. The coordinator creates exactly one event on entry, clears only the matching banner/notification when the source recovers or the guard is disabled, and never recreates it for unrelated condition changes. Closing a banner consumes that exact event in the process-wide repository; a new outage receives a new id. Condition configuration edits immediately publish OFF/WAITING state rather than retaining a stale alarm snapshot, and the UI also refuses to render a condition-loss event whose live condition is no longer unavailable. The complete 655-test JVM suite passed (0 failures/errors), complete androidTest sources compiled, and the Debug APK assembled.**
+- Real hardware verified: **No — briefly interrupt real NMEA wind, restore it, close/reopen the App, then repeat once after disabling Wind Guard.**
+- Status: **FIXED IN CODE — 655 JVM TESTS/ANDROID-TEST COMPILE/DEBUG BUILD PASSED; REAL-NMEA OUTAGE QA PENDING**
+
+## Finding P1-060 — CI had two unstable device assertions and an unbounded Gradle step
+
+- Severity: **P1 / develop quality gate could fail or remain in progress indefinitely**
+- User story: GitHub Actions must finish with downloadable evidence, and its device tests must validate the settled user viewport rather than a transient Pager frame or an implementation-specific child-semantics clipping result.
+- Evidence: run 69 passed Unit/Lint/Debug and API 36 but failed shard 1 in `sailMfdKeepsCoreInstrumentsInTheFirstViewportAndCockpitReallyLocks` and shard 2 in `completedTripWithoutCoordinatesShowsAnExplicitRouteReason`. Run 70 then remained in `lintDebug` without reaching artifacts even though the workflow only had a 45-minute job timeout.
+- Reproduction steps: swipe the precomposed Sail HorizontalPager and treat existence of its adjacent page as the animation-complete barrier; separately assert pixel visibility on both the already-visible tagged empty-route Card and its independently exposed Text semantics node. For the workflow hang, allow a Gradle invocation to stall inside a build step.
+- Root cause: HorizontalPager precomposes the adjacent page before it becomes the settled viewport. The test began tile assertions from page existence rather than awaiting all six visible tiles. The route test duplicated pixel visibility at a child-semantics level that varies across emulator API composition. Unit, Lint and Assemble steps had no individual `timeout-minutes`, so a stuck Gradle child was not bounded at the failing operation.
+- Failing test: the two GitHub check-run annotations above; the workflow hang is run 70 `Android lint`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **The Sail test still requires all six instruments to be fully displayed, but now awaits the settled viewport before asserting. The empty-route test still requires a displayed tagged route surface and the exact explanatory copy, without pretending its child semantics node is a second viewport. Unit, Lint and Debug Assemble now have explicit 20/15/15-minute step timeouts; existing always-run failure-bundle upload remains intact. Android-test sources compile locally. Final remote shard verification is required after push.**
+- Real hardware verified: **Not applicable — this finding concerns GitHub-hosted emulator/test orchestration.**
+- Status: **FIXED IN CODE — LOCAL TEST SOURCE COMPILE PASSED; REMOTE MATRIX PENDING**

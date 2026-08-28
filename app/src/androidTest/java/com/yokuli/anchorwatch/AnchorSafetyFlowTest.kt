@@ -507,7 +507,12 @@ class AnchorSafetyFlowTest {
             compose.onNodeWithTag("mfd_page_OVERVIEW").performTouchInput{swipeLeft()}
             compose.waitUntil(5_000){compose.onAllNodesWithTag("mfd_page_SAILING").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("mfd_page_SAILING").assertIsDisplayed()
-            listOf("Speed through water (STW)","Speed over ground (SOG)","Heel angle (HEEL)","Velocity made good (VMG)","Apparent wind speed (AWS)","True wind speed (TWS)").forEach{title->
+            val coreTitles=listOf("Speed through water (STW)","Speed over ground (SOG)","Heel angle (HEEL)","Velocity made good (VMG)","Apparent wind speed (AWS)","True wind speed (TWS)")
+            // HorizontalPager composes adjacent pages before its animation is
+            // settled. Existence of mfd_page_SAILING is therefore not itself
+            // a visibility barrier; await the actual first viewport.
+            compose.waitUntil(5_000){coreTitles.all{title->runCatching{compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed();true}.getOrDefault(false)}}
+            coreTitles.forEach{title->
                 try{compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed()}
                 catch(error:AssertionError){throw AssertionError("Core instrument '$title' was not fully visible.\n${compose.onRoot(useUnmergedTree=true).printToString(maxDepth=10)}",error)}
             }

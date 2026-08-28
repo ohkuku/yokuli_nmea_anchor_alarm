@@ -87,7 +87,22 @@ class ConditionRuntime @Inject constructor(
             )
         }else{
             setResources(next,updated.positionSource=="DEMO")
-            _state.value=_state.value.copy(config=next)
+            // Every edit deliberately starts a fresh evidence epoch. Reflect
+            // that immediately in UI/runtime state instead of leaving an old
+            // DATA_UNAVAILABLE snapshot visible until the next one-second tick.
+            _state.value=ConditionRuntimeSnapshot(
+                activeSessionId=updated.id,
+                paused=false,
+                config=next,
+                depth=DepthGuardSnapshot(if(next.depthGuardEnabled)DepthGuardStatus.WAITING_FOR_DATA else DepthGuardStatus.OFF),
+                windSpeed=WindSpeedGuardSnapshot(if(next.windGuardEnabled)WindSpeedGuardStatus.WAITING_FOR_DATA else WindSpeedGuardStatus.OFF),
+                windShift=WindShiftGuardSnapshot(
+                    if(next.windShiftEnabled)WindShiftGuardStatus.WAITING_FOR_DIRECTION else WindShiftGuardStatus.OFF,
+                    updated.windBaselineDirectionDegrees,
+                    updated.windBaselineEstablishedAt,
+                    updated.windBaselineSource?.let{runCatching{TrueWindDirectionSource.valueOf(it)}.getOrNull()},
+                ),
+            )
         }
     }
 

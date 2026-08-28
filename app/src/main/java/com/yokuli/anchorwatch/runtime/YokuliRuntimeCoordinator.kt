@@ -184,10 +184,20 @@ class YokuliRuntimeCoordinator @Inject constructor(
     )}
   }
   scope.launch{alarmUi.snapshot.map{it.state to it.type}.distinctUntilChanged().collect{(state,type)->if(type!=AlarmType.ALARM_TEST)incidentLogger.record("alarm","${state.name}_${type?.name?:"NONE"}",if(state==AlarmState.ALARM)IncidentSeverity.CRITICAL else IncidentSeverity.INFO,anchorRuntime.activeSession()?.id)}}
-  scope.launch{conditionRuntime.state.map{Triple(it.depth.status,it.windSpeed.status,it.windShift.status)}.distinctUntilChanged().drop(1).collect{(depth,wind,shift)->
-   when{depth==DepthGuardStatus.DATA_UNAVAILABLE->notifySeparate("Depth data unavailable","The depth guard remains enabled but fresh NMEA depth has been missing for 10 seconds.",true);wind==WindSpeedGuardStatus.DATA_UNAVAILABLE||shift==WindShiftGuardStatus.DATA_UNAVAILABLE->notifySeparate("Wind data unavailable","A wind guard remains enabled but its required fresh NMEA data is unavailable.",true);wind==WindSpeedGuardStatus.WARNING->notifySeparate("High wind warning","Filtered wind has remained above the warning threshold.",false)}
-   incidentLogger.record("conditions","DEPTH_${depth.name};WIND_${wind.name};SHIFT_${shift.name}",if(depth.name.contains("ALARM")||wind==WindSpeedGuardStatus.ALARM||shift==WindShiftGuardStatus.ALARM)IncidentSeverity.CRITICAL else if(depth==DepthGuardStatus.DATA_UNAVAILABLE||wind==WindSpeedGuardStatus.DATA_UNAVAILABLE||shift==WindShiftGuardStatus.DATA_UNAVAILABLE)IncidentSeverity.WARNING else IncidentSeverity.INFO,anchorRuntime.activeSession()?.id)
-  }}
+  scope.launch{
+   var previous=conditionRuntime.state.value
+   conditionRuntime.state.drop(1).collect{current->
+    val transition=ConditionFeedbackLifecycle.between(previous,current)
+    if(transition.depthRecovered){diagnostics.clearUserFeedback(RuntimeFeedbackContext.DEPTH_DATA_UNAVAILABLE);notificationCoordinator.cancelEvent(NotificationCoordinator.DEPTH_DATA_EVENT_ID)}
+    if(transition.windRecovered){diagnostics.clearUserFeedback(RuntimeFeedbackContext.WIND_DATA_UNAVAILABLE);notificationCoordinator.cancelEvent(NotificationCoordinator.WIND_DATA_EVENT_ID)}
+    if(transition.depthBecameUnavailable)notifySeparate("Depth data unavailable","The depth guard remains enabled but fresh NMEA depth has been missing for 10 seconds.",true,RuntimeFeedbackContext.DEPTH_DATA_UNAVAILABLE)
+    if(transition.windBecameUnavailable)notifySeparate("Wind data unavailable","A wind guard remains enabled but its required fresh NMEA data is unavailable.",true,RuntimeFeedbackContext.WIND_DATA_UNAVAILABLE)
+    if(transition.windWarningStarted)notifySeparate("High wind warning","Filtered wind has remained above the warning threshold.",false)
+    val depth=current.depth.status;val wind=current.windSpeed.status;val shift=current.windShift.status
+    incidentLogger.record("conditions","DEPTH_${depth.name};WIND_${wind.name};SHIFT_${shift.name}",if(depth.name.contains("ALARM")||wind==WindSpeedGuardStatus.ALARM||shift==WindShiftGuardStatus.ALARM)IncidentSeverity.CRITICAL else if(depth==DepthGuardStatus.DATA_UNAVAILABLE||wind==WindSpeedGuardStatus.DATA_UNAVAILABLE||shift==WindShiftGuardStatus.DATA_UNAVAILABLE)IncidentSeverity.WARNING else IncidentSeverity.INFO,anchorRuntime.activeSession()?.id)
+    previous=current
+   }
+  }
   scope.launch{dao.sessions().map{sessions->sessions.firstOrNull{it.active}?.let{listOf(it.id,it.centerStatus,it.candidateDecision,it.centerSampleCount,it.candidateAngularSectorCount,it.candidateSwingReversalCount,it.provisionalRadiusMeters,it.candidateTrackDiameterMeters,it.candidateFittedRadiusMeters,it.candidateMaximumRodeMeters,it.candidateGpsMarginMeters,it.candidateRadialObservable,it.candidateObservabilityReason)}}.distinctUntilChanged().collect{candidate->candidate?.let{incidentLogger.record("anchor","CENTRE_STATE",sessionId=it[0] as Long,details=mapOf("status" to it[1],"decision" to it[2],"samples" to it[3],"sectors" to it[4],"reversals" to it[5],"uncertaintyMeters" to it[6],"trackDiameterMeters" to it[7],"fittedRadiusMeters" to it[8],"maximumRodeMeters" to it[9],"gpsMarginMeters" to it[10],"radialObservable" to it[11],"observabilityReason" to it[12]))}}}
   scope.launch{dao.sessions().map{sessions->sessions.firstOrNull{it.active&&!it.paused}?.id}.distinctUntilChanged().collect(anchorTelemetry::configure)}
   scope.launch{sonarRecorder.status.map{Triple(it.activeSurvey?.id,it.lastDisposition?.name,it.message)}.distinctUntilChanged().collect{(survey,disposition,message)->incidentLogger.record("sonar","STATE",if(message.contains("waiting",true))IncidentSeverity.WARNING else IncidentSeverity.INFO,details=mapOf("surveyActive" to (survey!=null),"disposition" to disposition,"message" to message))}}
@@ -601,7 +611,12 @@ class YokuliRuntimeCoordinator @Inject constructor(
  private fun notifySeparate(title:String,text:String,high:Boolean,context:RuntimeFeedbackContext=RuntimeFeedbackContext.GENERAL){
   val visibleTitle=serviceMessage(title);val visibleText=serviceMessage(text)
   diagnostics.recordUserFeedback(visibleTitle,visibleText,high,context)
-  notificationCoordinator.publishEvent(visibleTitle,visibleText,high)
+  val notificationId=when(context){
+   RuntimeFeedbackContext.DEPTH_DATA_UNAVAILABLE->NotificationCoordinator.DEPTH_DATA_EVENT_ID
+   RuntimeFeedbackContext.WIND_DATA_UNAVAILABLE->NotificationCoordinator.WIND_DATA_EVENT_ID
+   else->NotificationCoordinator.EVENT_ID
+  }
+  notificationCoordinator.publishEvent(visibleTitle,visibleText,high,notificationId)
  }
 
  private fun setAlarmSource(source:ConditionAlarmSource,active:Boolean):com.yokuli.anchorwatch.runtime.notification.AlarmPlayback{audioArbiter.setActive(source,active);return reconcileAudio()}

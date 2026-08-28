@@ -744,7 +744,14 @@ class MainViewModel @Inject constructor(
         ContextCompat.startForegroundService(app,Intent(app,AnchorForegroundService::class.java).setAction(AnchorForegroundService.CONTINUE_TRIP_WITH_PHONE_AND_DISCONNECT))
     }
     fun clearConnectionAttempt()=_ui.update{it.copy(connectionAttempt=ConnectionAttempt())}
-    fun dismissRuntimeFeedback()=_ui.update{state->state.copy(dismissedRuntimeFeedbackId=state.runtimeDiagnostics.lastUserFeedback?.id?:state.dismissedRuntimeFeedbackId)}
+    fun dismissRuntimeFeedback(){
+        val id=_ui.value.runtimeDiagnostics.lastUserFeedback?.id?:return
+        // Dismiss the event at its process-wide owner as well as immediately
+        // hiding it in this UI frame. Recreating MainActivity must not bring
+        // the same already-acknowledged banner back.
+        runtimeDiagnostics.dismissUserFeedback(id)
+        _ui.update{state->state.copy(dismissedRuntimeFeedbackId=maxOf(state.dismissedRuntimeFeedbackId,id))}
+    }
     fun updateSettings(settings:AppSettings){
         val current=_ui.value
         var safe=if(current.activeSonarSurvey!=null&&settings.sounderOffsetMeters!=current.settings.sounderOffsetMeters){

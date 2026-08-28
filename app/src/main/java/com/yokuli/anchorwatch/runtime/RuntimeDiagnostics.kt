@@ -3,6 +3,10 @@ package com.yokuli.anchorwatch.runtime
 import com.yokuli.anchorwatch.data.NavigationRepository
 import com.yokuli.anchorwatch.data.sharing.NmeaSharingServer
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
+import com.yokuli.anchorwatch.domain.condition.ConditionRuntimeSnapshot
+import com.yokuli.anchorwatch.domain.condition.DepthGuardStatus
+import com.yokuli.anchorwatch.domain.condition.WindShiftGuardStatus
+import com.yokuli.anchorwatch.domain.condition.WindSpeedGuardStatus
 import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
 import com.yokuli.anchorwatch.data.tide.TideRuntimeDiagnostics
@@ -28,7 +32,41 @@ data class RuntimeUserFeedback(
     val context:RuntimeFeedbackContext=RuntimeFeedbackContext.GENERAL,
 )
 
-enum class RuntimeFeedbackContext { GENERAL, ARM_WATCH }
+enum class RuntimeFeedbackContext {
+    GENERAL,
+    ARM_WATCH,
+    DEPTH_DATA_UNAVAILABLE,
+    WIND_DATA_UNAVAILABLE,
+}
+
+data class ConditionFeedbackTransition(
+    val depthBecameUnavailable:Boolean=false,
+    val depthRecovered:Boolean=false,
+    val windBecameUnavailable:Boolean=false,
+    val windRecovered:Boolean=false,
+    val windWarningStarted:Boolean=false,
+)
+
+/**
+ * Converts the continuously changing condition snapshot into one event per
+ * loss episode. Unrelated depth/wind changes must not recreate a dismissed
+ * banner while the same sensor outage is still active.
+ */
+object ConditionFeedbackLifecycle{
+    fun between(previous:ConditionRuntimeSnapshot,current:ConditionRuntimeSnapshot):ConditionFeedbackTransition{
+        val depthWasUnavailable=previous.depth.status==DepthGuardStatus.DATA_UNAVAILABLE
+        val depthUnavailable=current.depth.status==DepthGuardStatus.DATA_UNAVAILABLE
+        val windWasUnavailable=previous.windSpeed.status==WindSpeedGuardStatus.DATA_UNAVAILABLE||previous.windShift.status==WindShiftGuardStatus.DATA_UNAVAILABLE
+        val windUnavailable=current.windSpeed.status==WindSpeedGuardStatus.DATA_UNAVAILABLE||current.windShift.status==WindShiftGuardStatus.DATA_UNAVAILABLE
+        return ConditionFeedbackTransition(
+            depthBecameUnavailable=depthUnavailable&&!depthWasUnavailable,
+            depthRecovered=!depthUnavailable&&depthWasUnavailable,
+            windBecameUnavailable=windUnavailable&&!windWasUnavailable,
+            windRecovered=!windUnavailable&&windWasUnavailable,
+            windWarningStarted=!windUnavailable&&current.windSpeed.status==WindSpeedGuardStatus.WARNING&&previous.windSpeed.status!=WindSpeedGuardStatus.WARNING,
+        )
+    }
+}
 
 /**
  * Privacy-safe evidence for the most recent Anchor Watch position decision.
@@ -168,5 +206,19 @@ class RuntimeDiagnosticsRepository @Inject constructor(
             context=context,
         )
         _state.update{it.copy(lastUserFeedback=feedback)}
+    }
+
+    /** Closing a banner consumes that exact event process-wide. A recreated
+     * Activity must not resurrect it; a later event receives a new id. */
+    fun dismissUserFeedback(id:Long){
+        _state.update{state->if(state.lastUserFeedback?.id==id)state.copy(lastUserFeedback=null)else state}
+    }
+
+    /** Clears only the safety episode that actually recovered/was disabled.
+     * Never erase a newer, unrelated command failure. */
+    fun clearUserFeedback(context:RuntimeFeedbackContext):Boolean{
+        val candidate=_state.value.lastUserFeedback?.takeIf{it.context==context}?:return false
+        _state.update{state->if(state.lastUserFeedback?.id==candidate.id)state.copy(lastUserFeedback=null)else state}
+        return _state.value.lastUserFeedback?.id!=candidate.id
     }
 }

@@ -33,6 +33,7 @@ jobs:
       - name: Unit tests
         id: unit_tests
         continue-on-error: true
+        timeout-minutes: 20
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
@@ -41,6 +42,7 @@ jobs:
       - name: Android lint
         id: lint
         continue-on-error: true
+        timeout-minutes: 15
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
@@ -49,6 +51,7 @@ jobs:
       - name: Assemble Debug APK
         id: assemble
         continue-on-error: true
+        timeout-minutes: 15
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           LINZ_API_KEY: ${{ secrets.LINZ_API_KEY }}
