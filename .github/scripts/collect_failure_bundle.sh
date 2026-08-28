@@ -23,8 +23,27 @@ mkdir -p "$bundle_root"
 
 git status --short > "$bundle_root/git-status.txt" 2>&1 || true
 java -version > "$bundle_root/java-version.txt" 2>&1 || true
-adb devices -l > "$bundle_root/adb-devices.txt" 2>&1 || true
-adb logcat -d -v threadtime > "$bundle_root/device-logcat.txt" 2>&1 || true
+
+# android-emulator-runner tears the emulator down before following workflow
+# steps execute. On some runners adb still advertises that device as offline,
+# and `adb logcat -d` then waits forever. A failure collector must never hide
+# the original test failure or prevent the downloadable bundle from uploading.
+run_bounded() {
+  duration="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$duration" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$duration" "$@"
+  else
+    "$@"
+  fi
+}
+
+run_bounded 10s adb devices -l > "$bundle_root/adb-devices.txt" 2>&1 ||
+  echo "adb devices timed out or was unavailable after emulator teardown" >> "$bundle_root/adb-devices.txt"
+run_bounded 20s adb logcat -d -v threadtime > "$bundle_root/device-logcat.txt" 2>&1 ||
+  echo "adb logcat timed out or was unavailable after emulator teardown" >> "$bundle_root/device-logcat.txt"
 
 copy_path() {
   source_path="$1"
