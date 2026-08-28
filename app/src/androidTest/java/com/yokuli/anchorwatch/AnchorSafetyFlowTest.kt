@@ -98,6 +98,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -168,6 +169,29 @@ class AnchorSafetyFlowTest {
     /** CI provisions a fresh emulator GNSS fix before device stories run. This
      * exercises the real Service → startup lease → LocationRepository → Room
      * session path; it must not depend on an NMEA connection. */
+    @Test fun newArmIntegrityEpochReplacesAnIdleStaleAcceptedCache() = runBlocking<Unit>{
+        val old=SystemClock.elapsedRealtime()-30_000L
+        acceptedPosition.unlockSource(null)
+        assertTrue(acceptedPosition.selectSource(GpsDataSource.SYSTEM))
+        acceptedPosition.submit(GpsDataSource.SYSTEM,NavigationFix(
+            latitude=-36.8484,longitude=174.7632,receivedElapsedRealtime=old,
+            horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,
+            sourceSentence="TEST_OLD_GNSS",valid=true,
+        ))
+        assertEquals(old,acceptedPosition.state.value.acceptedFix?.receivedElapsedRealtime)
+
+        assertTrue(acceptedPosition.beginArmAttempt(GpsDataSource.SYSTEM))
+        assertNull("A new session attempt must not inherit an idle stale accepted fix",acceptedPosition.state.value.acceptedFix)
+        val fresh=SystemClock.elapsedRealtime()
+        acceptedPosition.submit(GpsDataSource.SYSTEM,NavigationFix(
+            latitude=-36.8485,longitude=174.7633,receivedElapsedRealtime=fresh,
+            horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,
+            sourceSentence="TEST_CURRENT_GNSS",valid=true,
+        ))
+        assertEquals(fresh,acceptedPosition.state.value.acceptedFix?.receivedElapsedRealtime)
+        assertEquals("ACCEPTED",acceptedPosition.state.value.disposition)
+    }
+
     @Test fun freshSystemGpsArmCreatesAnActiveSessionWithoutNmea() = runBlocking<Unit>{
         navigation.disconnectAll()
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))

@@ -36,6 +36,12 @@ class P0RemediationPolicyTest {
     )
 
     @Test fun staleNmeaFixCannotSeedCurrentPositionAnchor(){assertEquals("ACCEPTED_POSITION_STALE",readiness(acceptedNmea(nmeaFix(1_000))).reason)}
+    @Test fun fixNewerThanACommandEntryClockIsNotMisreportedAsStale(){
+        val fix=nmeaFix(10_001)
+        val staleEntrySnapshot=readiness(acceptedNmea(fix),now=10_000)
+        assertEquals("ACCEPTED_POSITION_CLOCK_ORDER_INVALID",staleEntrySnapshot.reason)
+        assertTrue("ARM must compare after its synchronous prime",readiness(acceptedNmea(fix),now=10_002).ready)
+    }
     @Test fun rejectedPositionCannotSeedAnchorCentre(){assertFalse(readiness(acceptedNmea().copy(disposition="REJECTED",trust=FixTrust.REJECTED)).ready)}
     @Test fun quarantinedPositionCannotSeedAnchorCentre(){assertFalse(readiness(acceptedNmea().copy(disposition="QUARANTINED",trust=FixTrust.QUARANTINED)).ready)}
     @Test fun currentPositionUsesAcceptedRepositoryFixOnly(){assertTrue(readiness(acceptedNmea()).ready)}

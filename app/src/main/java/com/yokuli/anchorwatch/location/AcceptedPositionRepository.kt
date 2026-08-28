@@ -86,6 +86,24 @@ class AcceptedPositionRepository @Inject constructor(
         return true
     }
 
+    /** Starts a new-session integrity epoch before ARM evaluates its origin.
+     *
+     * The idle repository intentionally keeps the last accepted fix for map/UI
+     * continuity. That cache must not become the authority for a new safety
+     * session: it may be older than the raw provider StateFlow even though the
+     * provider is currently updating. ARM therefore resets the filter/dedupe
+     * epoch and immediately re-submits the selected raw System/NMEA fix through
+     * the normal integrity rules. A live session lock can never be displaced.
+     */
+    @Synchronized
+    fun beginArmAttempt(source: GpsDataSource): Boolean {
+        if (_state.value.lockedSessionId != null) return false
+        filter.reset()
+        lastSubmissionKey = null
+        _state.value = AcceptedPositionState(selectedSource = source)
+        return true
+    }
+
     @Synchronized
     fun lockSource(sessionId: Long, source: GpsDataSource) {
         val current = _state.value

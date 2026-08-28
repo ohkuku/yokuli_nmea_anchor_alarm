@@ -710,3 +710,16 @@
 - Verification result: **ADB device listing is bounded to 10 seconds and logcat to 20 seconds (with GNU/macOS timeout fallback). Run 60 completed every failed shard and uploaded the failure artifacts instead of hanging.**
 - Real hardware verified: **Not applicable — CI failure-path behavior was verified on GitHub-hosted Android emulators.**
 - Status: **FIXED AND VERIFIED IN CI**
+
+## Finding P0-051 — Fresh System and NMEA fixes were rejected by an idle stale accepted-position cache
+
+- Severity: **P0 / both supported GPS sources could be unable to start Anchor Watch**
+- User story: when the selected System GNSS or current-generation NMEA source is visibly delivering a fresh valid position, one Set Anchor action must run that current sample through integrity checks and create the session. The App must not make the decision from an older idle `acceptedFix` cache.
+- Evidence: the real device reported `ACCEPTED_POSITION_STALE` immediately for both NMEA and Phone GPS while raw GPS freshness remained around one second. `AnchorWatchRuntime.arm()` captured its monotonic comparison time before synchronous provider priming, then ignored the fact that a newer fix could arrive during startup. It also reused the idle repository integrity epoch, whose accepted fix may legitimately lag the provider StateFlow.
+- Reproduction steps: leave an accepted fix idle beyond `gpsLossSeconds`, keep the same raw provider publishing, then start Current-position Anchor Watch while a new fix is delivered between command entry and the synchronous prime. The old code could compare the new evidence with an older clock snapshot or continue evaluating the stale accepted cache and reject immediately.
+- Root cause: new-session ARM did not own a fresh accepted-position integrity epoch, and the freshness comparison violated the required snapshot order `read evidence → read comparison clock`.
+- Failing test: `P0RemediationPolicyTest.fixNewerThanACommandEntryClockIsNotMisreportedAsStale`; new device regression `newArmIntegrityEpochReplacesAnIdleStaleAcceptedCache`; existing `freshSystemGpsArmCreatesAnActiveSessionWithoutNmea` and `freshNmeaGpsArmCreatesActiveSessionImmediately` remain the end-to-end stories.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **ARM now starts a new unlocked integrity/dedupe epoch, synchronously submits the current selected raw fix through the unchanged integrity filter, snapshots accepted evidence and NMEA generation, and only then reads the monotonic comparison clock. A negative clock-order age has its own diagnostic and can no longer masquerade as stale. NMEA depth/wind freshness gates use the same evidence-before-clock rule. Targeted P0 JVM tests passed, Android-test sources compiled, and the Debug APK assembled successfully.**
+- Real hardware verified: **No — install the new APK and repeat Current-position ARM once with NMEA, then once with Phone GPS.**
+- Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD PASSED; REAL-DEVICE RECHECK REQUIRED**

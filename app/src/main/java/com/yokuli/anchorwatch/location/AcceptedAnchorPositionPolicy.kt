@@ -72,7 +72,12 @@ object AcceptedAnchorPositionPolicy {
         val fix=state.acceptedFix?:return no("NO_ACCEPTED_POSITION","No position has passed integrity checks yet.")
         if(!fix.valid||!fix.latitude.isFinite()||!fix.longitude.isFinite()||fix.latitude !in -90.0..90.0||fix.longitude !in -180.0..180.0)return no("INVALID_ACCEPTED_POSITION")
         val age=nowElapsedRealtime-fix.receivedElapsedRealtime
-        if(age !in 0L until maximumAgeMillis.coerceAtLeast(1L))return no("ACCEPTED_POSITION_STALE","Accepted position age: ${age.coerceAtLeast(0L)} ms.")
+        // receivedElapsedRealtime is process-local monotonic evidence. A
+        // negative age means the caller sampled its comparison clock before
+        // it sampled this StateFlow; it is not stale. Keep the failure distinct
+        // so any future caller-order regression cannot masquerade as old GPS.
+        if(age<0L)return no("ACCEPTED_POSITION_CLOCK_ORDER_INVALID","Accepted fix was sampled ${-age} ms after the comparison clock.")
+        if(age>=maximumAgeMillis.coerceAtLeast(1L))return no("ACCEPTED_POSITION_STALE","Accepted position age: $age ms.")
         return when(requestedSource){
             GpsDataSource.NMEA->{
                 if(state.acceptedConnectionGeneration!=nmeaConnectionGeneration)return no("NMEA_CONNECTION_GENERATION_MISMATCH","Accepted generation ${state.acceptedConnectionGeneration?:"none"}; live generation $nmeaConnectionGeneration.")
