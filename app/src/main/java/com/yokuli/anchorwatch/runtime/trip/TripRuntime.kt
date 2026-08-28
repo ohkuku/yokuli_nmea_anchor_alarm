@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.yokuli.anchorwatch.data.database.*
 import com.yokuli.anchorwatch.data.preferences.SettingsRepository
 import com.yokuli.anchorwatch.data.trip.TripSampleWriter
+import com.yokuli.anchorwatch.data.trip.TripTrackRepository
 import com.yokuli.anchorwatch.data.nmea.NmeaFieldRepository
 import com.yokuli.anchorwatch.data.trip.DashboardTileBinding
 import com.yokuli.anchorwatch.data.trip.TripDashboardRepository
@@ -45,6 +46,7 @@ class TripRuntime @Inject constructor(
     private val nmeaFields:NmeaFieldRepository,
     private val dashboards:TripDashboardRepository,
     private val publisher:PhonePositionNmeaOutputRuntime,
+    private val tripTrack:TripTrackRepository,
 ){
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     private val mutex=Mutex()
@@ -67,6 +69,7 @@ class TripRuntime @Inject constructor(
     private var nmeaExpected=false
     private var depthExpected=false
     private var windExpected=false
+    private var nextRecordingSequence=0L
     private val eventTransitions=TripEventTransitionTracker()
     @Volatile private var selectedCustomBindings:Map<String,DashboardTileBinding> = emptyMap()
 
@@ -85,6 +88,8 @@ class TripRuntime @Inject constructor(
         }
         hub.setTripPositionPreference(runCatching{VesselSourcePreference.valueOf(existing.positionPreference)}.getOrDefault(VesselSourcePreference.AUTO))
         val restored=existing.copy(restoredAfterProcessDeath=true,eventCount=existing.eventCount+1)
+        nextRecordingSequence=dao.maxRecordingSequence(existing.id)
+        tripTrack.begin(existing.id)
         // Rebuild the per-field expectation memory from durable samples. A
         // process restart must not turn a later missing field into "never
         // observed", otherwise real depth/wind/NMEA gaps would be hidden.
@@ -149,6 +154,8 @@ class TripRuntime @Inject constructor(
         val id=try{dao.insertSessionAndEvent(value,TripEventEntity(tripId=0,timestamp=now,type="TRIP_STARTED",severity="INFO",detailJson="{\"phoneMotionRequested\":$phoneMotionRequested,\"phoneMotionEnabled\":$motionEnabled,\"mountCalibrationVersion\":${calibration.version.takeIf{motionEnabled}?:"null"}}"))}
         catch(error:Exception){hub.setTripPositionPreference(null);releaseOwnedResources();throw error}
         active=value.copy(id=id,eventCount=1)
+        nextRecordingSequence=0L
+        tripTrack.begin(id)
         nmeaExpected=value.nmeaWasActiveAtStart
         manualNmeaDisconnected=false
         depthExpected=false
@@ -329,7 +336,7 @@ class TripRuntime @Inject constructor(
             }
         }
     }
-    private suspend fun recordLocked(){val session=active?.takeIf{!it.paused}?:return;val nowWall=System.currentTimeMillis();val now=SystemClock.elapsedRealtime();val snapshot=hub.snapshot.value;val sample=sample(session,snapshot,nowWall,now);val overflow=writer.enqueue(sample);var newEvents=0
+    private suspend fun recordLocked(){val session=active?.takeIf{!it.paused}?:return;val nowWall=System.currentTimeMillis();val now=SystemClock.elapsedRealtime();val snapshot=hub.snapshot.value;val sample=sample(session,snapshot,nowWall,now,++nextRecordingSequence);tripTrack.appendLive(sample);val overflow=writer.enqueue(sample);var newEvents=0
         val bindings=selectedCustomBindings
         // Dashboard visibility is intentionally independent from persistence:
         // only fields explicitly marked "Record in Trips" reach Room.
@@ -365,7 +372,7 @@ class TripRuntime @Inject constructor(
         val sinceFlush=now-lastFlushElapsed
         if(sinceFlush>=TripSampleWriter.FLUSH_MILLIS||(writer.size()>=TripSampleWriter.FLUSH_SIZE&&sinceFlush>=TripSampleWriter.MIN_FLUSH_RETRY_MILLIS))flushLocked()
     }
-    private suspend fun flushLocked():com.yokuli.anchorwatch.data.trip.TripWriterResult{val current=active;val result=writer.flush();if(current!=null&&result.written+result.dropped>0){active=current.copy(droppedSampleCount=current.droppedSampleCount+result.dropped);dao.updateSession(requireNotNull(active))};lastFlushElapsed=SystemClock.elapsedRealtime();return result}
+    private suspend fun flushLocked():com.yokuli.anchorwatch.data.trip.TripWriterResult{val current=active;val result=writer.flush();if(!result.writeFailed&&result.persistedValues.isNotEmpty())tripTrack.markPersisted(result.persistedValues);if(current!=null&&result.written+result.dropped>0){active=current.copy(droppedSampleCount=current.droppedSampleCount+result.dropped);dao.updateSession(requireNotNull(active))};lastFlushElapsed=SystemClock.elapsedRealtime();return result}
     private suspend fun incrementEvent(){active?.let{current->active=current.copy(eventCount=current.eventCount+1);dao.updateSession(requireNotNull(active))}}
     private fun resetRecordingEdges(){
         lastPosition=null
@@ -382,11 +389,11 @@ class TripRuntime @Inject constructor(
         NmeaConnectionState.CONNECTED_NO_FIX,
         NmeaConnectionState.STALE,
     )
-    private fun sample(session:TripSessionEntity,s:VesselDataSnapshot,wall:Long,elapsed:Long):TripSampleEntity{
+    private fun sample(session:TripSessionEntity,s:VesselDataSnapshot,wall:Long,elapsed:Long,recordingSequence:Long):TripSampleEntity{
         val attitude=s.attitude.takeIf{session.phoneMotionEnabled&&phoneMotionRecordingAllowed}?:VesselObservation()
         val motion=s.motion.takeIf{session.phoneMotionEnabled&&phoneMotionRecordingAllowed}?:VesselObservation()
         return TripSampleEntity(
-            id=0,tripId=session.id,timestamp=wall,
+            id=0,tripId=session.id,timestamp=wall,recordingSequence=recordingSequence,
             latitude=s.position.value?.latitude,longitude=s.position.value?.longitude,positionSource=s.position.source.name,positionQuality=s.position.quality.name,positionAgeMillis=age(s.position,elapsed),
             // Change-only instruments retain HELD values, but a STALE value is
             // not serialized as timeless current evidence when the schema has

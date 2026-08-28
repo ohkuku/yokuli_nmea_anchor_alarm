@@ -2,6 +2,7 @@ package com.yokuli.anchorwatch
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -45,6 +47,7 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness
 import com.yokuli.anchorwatch.domain.vessel.VesselDataSource
@@ -68,6 +71,10 @@ import com.yokuli.anchorwatch.location.vessel.DeviceBowAxis
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import com.yokuli.anchorwatch.map.MarineMapContext
+import com.yokuli.anchorwatch.map.MarineMapPolicy
+
+private data class TripWorkspacePage(val preset:TripInstrumentPreset?,val dashboard:TripDashboard?=null)
 
 @Composable
 internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
@@ -92,10 +99,10 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
     val imuLive=state.vesselData.attitude.freshness==VesselDataFreshness.FRESH
     val selectedDashboard=state.tripDashboards.firstOrNull{it.id==selectedCustomDashboardId}
     val builtIn=state.tripDashboards.filter{it.preset!=TripInstrumentPreset.CUSTOM}.associateBy{it.preset}
-    val instrumentPages=listOf(TripInstrumentPreset.SAILING,TripInstrumentPreset.NAV,TripInstrumentPreset.MOTION,TripInstrumentPreset.WEATHER).map{it to builtIn[it]}+state.tripDashboards.filter{it.preset==TripInstrumentPreset.CUSTOM}.map{TripInstrumentPreset.CUSTOM to it}
+    val instrumentPages=listOf(TripWorkspacePage(null))+listOf(TripInstrumentPreset.SAILING,TripInstrumentPreset.NAV,TripInstrumentPreset.MOTION,TripInstrumentPreset.WEATHER).map{TripWorkspacePage(it,builtIn[it])}+state.tripDashboards.filter{it.preset==TripInstrumentPreset.CUSTOM}.map{TripWorkspacePage(TripInstrumentPreset.CUSTOM,it)}
     val instrumentPager=rememberPagerState(initialPage=0,pageCount={instrumentPages.size});val instrumentScope=rememberCoroutineScope()
-    LaunchedEffect(instrumentPager.currentPage,instrumentPages){instrumentPages.getOrNull(instrumentPager.currentPage)?.let{(pagePreset,dashboard)->preset=pagePreset;selectedCustomDashboardId=dashboard?.id}}
-    LaunchedEffect(selectedCustomDashboardId,state.tripDashboards){selectedCustomDashboardId?.let{id->val index=instrumentPages.indexOfFirst{it.second?.id==id};if(index>=0&&index!=instrumentPager.currentPage)instrumentPager.scrollToPage(index)}}
+    LaunchedEffect(instrumentPager.currentPage,instrumentPages){instrumentPages.getOrNull(instrumentPager.currentPage)?.let{page->page.preset?.let{preset=it};selectedCustomDashboardId=page.dashboard?.id}}
+    LaunchedEffect(selectedCustomDashboardId,state.tripDashboards){selectedCustomDashboardId?.let{id->val index=instrumentPages.indexOfFirst{it.dashboard?.id==id};if(index>=0&&index!=instrumentPager.currentPage)instrumentPager.scrollToPage(index)}}
     LaunchedEffect(selectedCustomDashboardId,state.tripDashboards){if(selectedCustomDashboardId!=null&&selectedDashboard==null){selectedCustomDashboardId=null;preset=TripInstrumentPreset.SAILING}}
     DisposableEffect(Unit){vm.setTripLiveDisplayActive(true);onDispose{vm.setTripLiveDisplayActive(false)}}
     val inheritedTypography=MaterialTheme.typography;val inheritedShapes=MaterialTheme.shapes;val dayColors=MaterialTheme.colorScheme
@@ -136,12 +143,13 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
             if(cockpitMode){
                 Row(Modifier.fillMaxWidth().height(32.dp),horizontalArrangement=Arrangement.Center,verticalAlignment=Alignment.CenterVertically){instrumentPages.forEachIndexed{index,_->Text(if(index==instrumentPager.currentPage)"●" else "○",Modifier.padding(horizontal=4.dp),color=if(index==instrumentPager.currentPage)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}
             }else{
-                Row(Modifier.fillMaxWidth().height(44.dp),verticalAlignment=Alignment.CenterVertically){Box{TextButton({pagePicker=true},enabled=!touchLocked){Text(instrumentPages.getOrNull(instrumentPager.currentPage)?.let{(pagePreset,dashboard)->dashboard?.title?:presetName(pagePreset)}?:"—",fontWeight=FontWeight.SemiBold)};DropdownMenu(pagePicker,{pagePicker=false}){instrumentPages.forEachIndexed{index,(pagePreset,dashboard)->DropdownMenuItem({Text(dashboard?.title?:presetName(pagePreset))},{pagePicker=false;instrumentScope.launch{instrumentPager.animateScrollToPage(index)}})}}};Spacer(Modifier.weight(1f));Text("${instrumentPager.currentPage+1} / ${instrumentPages.size}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.width(10.dp));instrumentPages.forEachIndexed{index,_->Text(if(index==instrumentPager.currentPage)"●" else "○",Modifier.padding(horizontal=2.dp),color=if(index==instrumentPager.currentPage)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}
+                Row(Modifier.fillMaxWidth().height(44.dp),verticalAlignment=Alignment.CenterVertically){Box{TextButton({pagePicker=true},enabled=!touchLocked){Text(instrumentPages.getOrNull(instrumentPager.currentPage)?.let{page->page.dashboard?.title?:page.preset?.let{presetName(it)}?:tr("Overview","总览") }?:"—",fontWeight=FontWeight.SemiBold)};DropdownMenu(pagePicker,{pagePicker=false}){instrumentPages.forEachIndexed{index,page->DropdownMenuItem({Text(page.dashboard?.title?:page.preset?.let{presetName(it)}?:tr("Overview","总览"))},{pagePicker=false;instrumentScope.launch{instrumentPager.animateScrollToPage(index)}})}}};Spacer(Modifier.weight(1f));Text("${instrumentPager.currentPage+1} / ${instrumentPages.size}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.width(10.dp));instrumentPages.forEachIndexed{index,_->Text(if(index==instrumentPager.currentPage)"●" else "○",Modifier.padding(horizontal=2.dp),color=if(index==instrumentPager.currentPage)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}
             }
-            if(!cockpitMode&&trip!=null&&(preset==TripInstrumentPreset.MOTION||trip.phoneMotionEnabled&&!imuLive)){
+            val visiblePage=instrumentPages.getOrNull(instrumentPager.currentPage)
+            if(!cockpitMode&&trip!=null&&(visiblePage?.preset==TripInstrumentPreset.MOTION||trip.phoneMotionEnabled&&!imuLive)){
                 TripAttitudeStatusBar(state,openFrame={attitudeFrameDialog=true},pause=vm::pauseTripAttitude)
             }
-            HorizontalPager(instrumentPager,Modifier.fillMaxWidth().weight(1f),userScrollEnabled=!touchLocked){index->val (pagePreset,dashboard)=instrumentPages[index];TripInstrumentViewport(state,pagePreset,dashboard){if(!touchLocked)customizeLayout=true}}
+            HorizontalPager(instrumentPager,Modifier.fillMaxWidth().weight(1f),userScrollEnabled=!touchLocked){index->val page=instrumentPages[index];if(page.preset==null)TripOverviewPage(state,vm)else TripInstrumentViewport(state,page.preset,page.dashboard){if(!touchLocked)customizeLayout=true}}
             TripCompactControls(
                 state=state,
                 cockpit=cockpitMode,
@@ -156,7 +164,7 @@ internal fun TripWatchPage(state:MainUiState,vm:MainViewModel){
     if(startDialog)TripStartDialog(state,{startDialog=false;vm.setPhoneVesselMounted(false)},{axis->vm.confirmTripAttitudeFrame(axis)}){name,phoneMotion,positionPreference->startDialog=false;if(!phoneMotion)vm.setPhoneVesselMounted(false);vm.startTrip(name,phoneMotion,positionPreference)}
     if(attitudeFrameDialog)TripAttitudeFrameDialog(state,{attitudeFrameDialog=false}){axis->vm.confirmTripAttitudeFrame(axis)}
     if(customizeLayout){
-        val dashboard=instrumentPages.getOrNull(instrumentPager.currentPage)?.second
+        val dashboard=instrumentPages.getOrNull(instrumentPager.currentPage)?.dashboard
         val currentTiles=dashboard?.tiles?.filter{it.tileId!=null}?:state.vesselSettings.layout(preset).map{DashboardTileBinding(tileId=it)}
         val currentFields=dashboard?.tiles?.filter{!it.nmeaFieldId.isNullOrBlank()}?:state.vesselSettings.customNmeaFieldIds.map{DashboardTileBinding(nmeaFieldId=it,recordInTrips=true)}
         TripLayoutDialog(preset,currentTiles,state.nmeaFields,currentFields,{customizeLayout=false}){value,fields->
@@ -421,32 +429,88 @@ private fun customNmeaTile(field:NmeaFieldObservation,binding:DashboardTileBindi
 private fun presetNamePlain(value:TripInstrumentPreset)=value.name.lowercase().replaceFirstChar{it.titlecase()}
 
 @Composable private fun SailingCompass(state:MainUiState,compact:Boolean=false){
-    val data=state.vesselData;val awa=data.apparentWind.angleDegrees.value;val twa=data.trueWind.angleDegrees.value
-    val primary=MaterialTheme.colorScheme.primary;val secondary=MaterialTheme.colorScheme.tertiary;val grid=MaterialTheme.colorScheme.outline.copy(alpha=.55f)
-    ElevatedCard(Modifier.fillMaxSize().testTag("sail_compass")){
-        Column(Modifier.fillMaxSize().padding(horizontal=10.dp,vertical=if(compact)3.dp else 6.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=if(compact)Arrangement.SpaceEvenly else Arrangement.spacedBy(3.dp)){
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("HDG ${data.headingTrueDegrees.value?.let{"%03.0f°".format(it)}?:"—"}",fontWeight=FontWeight.SemiBold);Text("COG ${data.cogTrueDegrees.value?.let{"%03.0f°".format(it)}?:"—"}",fontWeight=FontWeight.SemiBold)}
-            Text("TWD ${data.trueWind.directionDegrees.value?.let{"%03.0f°T".format(it)}?:"—"}",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
-            Box(Modifier.fillMaxWidth().height(if(compact)54.dp else 112.dp),contentAlignment=Alignment.Center){
-                Canvas(Modifier.size(if(compact)52.dp else 108.dp)){
-                    val center=Offset(size.width/2,size.height/2);val radius=size.minDimension*.46f
-                    drawCircle(grid,radius,center,style=androidx.compose.ui.graphics.drawscope.Stroke(2f))
-                    repeat(12){index->val angle=Math.toRadians(index*30.0);val outer=Offset(center.x+kotlin.math.sin(angle).toFloat()*radius,center.y-kotlin.math.cos(angle).toFloat()*radius);val inner=Offset(center.x+kotlin.math.sin(angle).toFloat()*(radius-10f),center.y-kotlin.math.cos(angle).toFloat()*(radius-10f));drawLine(grid,inner,outer,2f)}
-                    fun arrow(angleDegrees:Double,color:Color,width:Float){val angle=Math.toRadians(angleDegrees);val tip=Offset(center.x+kotlin.math.sin(angle).toFloat()*(radius-15f),center.y-kotlin.math.cos(angle).toFloat()*(radius-15f));drawLine(color,center,tip,width);drawCircle(color,width,tip)}
-                    twa?.let{arrow(it,secondary,5f)};awa?.let{arrow(it,primary,7f)}
-                    drawLine(Color.White,Offset(center.x,center.y+20f),Offset(center.x,center.y-radius*.50f),5f)
-                }
-                Text("▲",Modifier.align(Alignment.TopCenter),color=MaterialTheme.colorScheme.onSurface)
+    AbsoluteDirectionInstrument(state,compact)
+}
+
+private fun windSideAngle(value:Double)="%.0f° %s".format(kotlin.math.abs(value),if(value<0)"P" else "S")
+
+internal enum class AdaptiveMarineLayoutMode{COMPACT_SQUARE,COMPACT_PORTRAIT,REGULAR_PORTRAIT,WIDE}
+internal object AdaptiveMarineLayoutPolicy{
+    fun classify(widthDp:Float,heightDp:Float)=when{
+        widthDp<=400f&&heightDp<=400f&&widthDp/heightDp in .85f..1.15f->AdaptiveMarineLayoutMode.COMPACT_SQUARE
+        widthDp>heightDp->AdaptiveMarineLayoutMode.WIDE
+        widthDp<=380f||heightDp<=700f->AdaptiveMarineLayoutMode.COMPACT_PORTRAIT
+        else->AdaptiveMarineLayoutMode.REGULAR_PORTRAIT
+    }
+}
+
+@Composable private fun TripOverviewPage(state:MainUiState,vm:MainViewModel){
+    val trip=state.activeTrip
+    val mapData by produceState<com.yokuli.anchorwatch.data.trip.TripMapData?>(null,trip?.id,trip?.waypointCount){value=trip?.let{vm.tripMapData(it.id,com.yokuli.anchorwatch.data.trip.TripTrackRenderPolicy.OVERVIEW_BUDGET)}}
+    BoxWithConstraints(Modifier.fillMaxSize().padding(vertical=6.dp).testTag("mfd_page_OVERVIEW")){
+        val mode=AdaptiveMarineLayoutPolicy.classify(maxWidth.value,maxHeight.value)
+        val track=state.tripTrack.takeIf{it.tripId==trip?.id}?.rendered(com.yokuli.anchorwatch.data.trip.TripTrackRenderPolicy.OVERVIEW_BUDGET)?:mapData?.segments.orEmpty()
+        when(mode){
+            AdaptiveMarineLayoutMode.WIDE->Row(Modifier.fillMaxSize(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                TripOverviewPreviewMap(state,track,mapData?.waypoints.orEmpty(),trip!=null,vm::openLiveTripMap,Modifier.weight(.47f).fillMaxHeight())
+                AbsoluteDirectionInstrument(state,modifier=Modifier.weight(.30f).fillMaxHeight())
+                OverviewMetrics(state,false,Modifier.weight(.23f).fillMaxHeight())
             }
-            if(!compact){
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){Text("AWA ${awa?.let(::windSideAngle)?:"—"} · ${data.apparentWind.speedKnots.value?.let{"%.1f kn".format(it)}?:"—"}",color=primary);Text("TWA ${twa?.let(::windSideAngle)?:"—"} · ${data.trueWind.speedKnots.value?.let{"%.1f kn".format(it)}?:"—"}",color=secondary)}
-                Text("BSP ${data.speedThroughWaterKnots.value?.let{"%.1f kn".format(it)}?:"—"} · SOG ${data.sogKnots.value?.let{"%.1f kn".format(it)}?:"—"}",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
+            AdaptiveMarineLayoutMode.COMPACT_SQUARE->Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                TripOverviewPreviewMap(state,track,mapData?.waypoints.orEmpty(),trip!=null,vm::openLiveTripMap,Modifier.weight(.28f).fillMaxWidth())
+                Row(Modifier.weight(.72f),horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                    AbsoluteDirectionInstrument(state,compact=true,modifier=Modifier.weight(.56f).fillMaxHeight())
+                    OverviewMetrics(state,true,Modifier.weight(.44f).fillMaxHeight())
+                }
+            }
+            else->Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                TripOverviewPreviewMap(state,track,mapData?.waypoints.orEmpty(),trip!=null,vm::openLiveTripMap,Modifier.weight(.43f).fillMaxWidth())
+                Row(Modifier.weight(.57f),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    AbsoluteDirectionInstrument(state,modifier=Modifier.weight(.55f).fillMaxHeight())
+                    OverviewMetrics(state,false,Modifier.weight(.45f).fillMaxHeight())
+                }
             }
         }
     }
 }
 
-private fun windSideAngle(value:Double)="%.0f° %s".format(kotlin.math.abs(value),if(value<0)"P" else "S")
+@Composable private fun TripOverviewPreviewMap(state:MainUiState,segments:List<com.yokuli.anchorwatch.data.trip.TripTrackSegment>,waypoints:List<com.yokuli.anchorwatch.data.database.TripWaypointEntity>,enabled:Boolean,open:()->Unit,modifier:Modifier){
+    val current=state.vesselData.position.value?.let{LatLng(it.latitude,it.longitude)}
+    val points=segments.flatMap{segment->segment.points}.mapNotNull{point->if(point.hasPosition)LatLng(point.latitude!!,point.longitude!!)else null}
+    ElevatedCard(modifier.testTag("sail_overview_map_preview")){
+        Box(Modifier.fillMaxSize()){
+            if(BuildConfig.MAPS_CONFIGURED&&(current!=null||points.isNotEmpty())){
+                val initial=current?:points.last();val camera=rememberCameraPositionState{position=CameraPosition.fromLatLngZoom(initial,14f)};var loaded by remember{mutableStateOf(false)}
+                val frameKey=points.lastOrNull() to current
+                LaunchedEffect(loaded,frameKey){if(!loaded)return@LaunchedEffect;kotlinx.coroutines.delay(900L);val frame=(points+listOfNotNull(current));if(frame.size==1)camera.animate(CameraUpdateFactory.newLatLngZoom(frame.first(),15f))else runCatching{val bounds=com.google.android.gms.maps.model.LatLngBounds.builder().also{builder->frame.forEach(builder::include)}.build();camera.animate(CameraUpdateFactory.newLatLngBounds(bounds,34))}}
+                GoogleMap(Modifier.fillMaxSize(),cameraPositionState=camera,onMapLoaded={loaded=true},uiSettings=MarineMapPolicy.uiSettings(MarineMapContext.SAIL_PREVIEW)){
+                    segments.forEachIndexed{index,segment->val route=segment.points.mapNotNull{point->if(point.hasPosition)LatLng(point.latitude!!,point.longitude!!)else null};if(route.size>1)Polyline(route,color=MaterialTheme.colorScheme.primary,width=5f,zIndex=2f,tag="overview-$index")}
+                    points.firstOrNull()?.let{Marker(remember(it){MarkerState(it)},title=tr("Trip start","航程起点"))}
+                    waypoints.takeLast(12).forEach{waypoint->val target=LatLng(waypoint.latitude,waypoint.longitude);Marker(remember(waypoint.id){MarkerState(target)},title=waypoint.name)}
+                    current?.let{Marker(remember(it){MarkerState(it)},title=tr("Vessel","船位"))}
+                }
+            }else{
+                Column(Modifier.fillMaxSize().padding(12.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Default.OpenInFull,null);Text(if(current==null)tr("Waiting for the Trip-selected position","正在等待航程选定的位置")else tr("Map unavailable in this build","当前构建无法显示地图"),style=MaterialTheme.typography.bodySmall)}
+            }
+            Box(Modifier.fillMaxSize().clickable(enabled=enabled,onClick=open).testTag("open_live_trip_map"))
+            Surface(Modifier.align(Alignment.BottomEnd).padding(7.dp),shape=MaterialTheme.shapes.small,color=MaterialTheme.colorScheme.surface.copy(alpha=.90f)){Text(if(enabled)tr("Tap to open full map ↗","点击打开完整地图 ↗")else tr("Start a Trip to open map","开始航程后打开地图"),Modifier.padding(horizontal=8.dp,vertical=4.dp),style=MaterialTheme.typography.labelSmall)}
+        }
+    }
+}
+
+@Composable private fun OverviewMetrics(state:MainUiState,compact:Boolean,modifier:Modifier){
+    val data=state.vesselData
+    Column(modifier,verticalArrangement=Arrangement.spacedBy(if(compact)3.dp else 6.dp)){
+        OverviewMetric("SOG",data.sogKnots.value?.let{"%.1f kn".format(it)}?:"—",data.sogKnots.freshness,Modifier.weight(1f))
+        OverviewMetric("STW",data.speedThroughWaterKnots.value?.let{"%.1f kn".format(it)}?:"—",data.speedThroughWaterKnots.freshness,Modifier.weight(1f))
+        OverviewMetric(if(data.trueWind.speedKnots.value!=null)"TWS" else "AWS",(data.trueWind.speedKnots.value?:data.apparentWind.speedKnots.value)?.let{"%.1f kn".format(it)}?:"—",if(data.trueWind.speedKnots.value!=null)data.trueWind.speedKnots.freshness else data.apparentWind.speedKnots.freshness,Modifier.weight(1f))
+        OverviewMetric("DEPTH",data.depthMeters.value?.let{"%.1f m".format(it)}?:"—",data.depthMeters.freshness,Modifier.weight(1f))
+    }
+}
+
+@Composable private fun OverviewMetric(label:String,value:String,freshness:VesselDataFreshness,modifier:Modifier){
+    Surface(modifier.fillMaxWidth(),shape=MaterialTheme.shapes.medium,tonalElevation=2.dp){Column(Modifier.fillMaxSize().padding(horizontal=8.dp,vertical=3.dp),verticalArrangement=Arrangement.Center){Text(label,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,maxLines=1);if(freshness!=VesselDataFreshness.FRESH)Text(if(freshness==VesselDataFreshness.STALE)tr("stale","已过期")else tr("unavailable","不可用"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)}}
+}
 
 @Composable private fun sourceName(value:VesselDataSource)=when(value){VesselDataSource.BOAT_NMEA->tr("Boat","船载 NMEA");VesselDataSource.PHONE_GNSS->tr("Phone GPS","手机 GPS");VesselDataSource.PHONE_IMU,VesselDataSource.PHONE_MAGNETOMETER->tr("Phone sensor","手机传感器");VesselDataSource.PHONE_BAROMETER->tr("Phone barometer","手机气压计");VesselDataSource.DERIVED->tr("Derived","推算");VesselDataSource.DEMO->tr("Demo","演示");VesselDataSource.NONE->tr("No source","无数据源")}
 @Composable private fun freshnessName(value:VesselDataFreshness)=when(value){VesselDataFreshness.FRESH->tr("live","实时");VesselDataFreshness.HELD->tr("held","保持值");VesselDataFreshness.STALE->tr("stale","已过期");VesselDataFreshness.UNAVAILABLE->tr("unavailable","不可用")}

@@ -6,7 +6,7 @@ import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
-data class TripWriterResult(val written:Int=0,val dropped:Long=0,val writeFailed:Boolean=false)
+data class TripWriterResult(val written:Int=0,val dropped:Long=0,val writeFailed:Boolean=false,val persistedValues:List<TripSampleEntity> = emptyList())
 
 internal data class PendingTripBatch(val values:List<TripSampleEntity>,val dropped:Long)
 
@@ -53,7 +53,7 @@ class TripSampleWriter @Inject constructor(private val dao:TripDao){
         if(batch.values.isEmpty())return TripWriterResult(dropped=batch.dropped)
         return try{
             dao.insertSamples(batch.values)
-            TripWriterResult(batch.values.size,batch.dropped)
+            TripWriterResult(batch.values.size,batch.dropped,persistedValues=batch.values)
         }catch(failure:Exception){
             buffer.restore(batch)
             if(failure is CancellationException)throw failure

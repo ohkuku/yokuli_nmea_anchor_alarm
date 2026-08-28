@@ -95,7 +95,7 @@ android {
         buildConfigField("boolean", "BUILD_GIT_DIRTY", buildGitDirty.toString())
         buildConfigField("String", "BUILD_TIMESTAMP_UTC", buildTimestampUtc.asBuildConfigString())
         buildConfigField("boolean", "BUILD_IN_CI", buildInCi.toString())
-        buildConfigField("int", "DATABASE_SCHEMA_VERSION", "21")
+        buildConfigField("int", "DATABASE_SCHEMA_VERSION", "22")
     }
     signingConfigs {
         if (releaseSigningAvailable) {

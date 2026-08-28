@@ -33,6 +33,7 @@ internal fun AnchoragePlaceDetailDialog(
     dismiss: () -> Unit,
     approach: (Long) -> Unit,
     openMap: (Double, Double) -> Unit,
+    openMarineMap:(Long?)->Unit,
     shareSpot: (Long) -> Unit,
     addPhoto: () -> Unit,
     deletePhoto: (AnchoragePhotoEntity) -> Unit,
@@ -52,6 +53,7 @@ internal fun AnchoragePlaceDetailDialog(
                 title={Column{Text(bundle.place.displayName,maxLines=1);val region=bundle.regionPath.joinToString(" · "){it.displayName};if(region.isNotBlank())Text(region,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)}},
                 navigationIcon={IconButton(dismiss,Modifier.testTag("close_saved_anchorage_detail")){Icon(Icons.Default.Close,tr("Close","关闭"))}},
                 actions={
+                    IconButton({openMarineMap(bundle.spots.firstOrNull()?.id)},Modifier.testTag("open_anchorage_marine_map")){Icon(Icons.Default.Map,tr("Open marine map","打开航海地图"))}
                     IconButton({setFavorite(!bundle.place.favorite)}){Icon(if(bundle.place.favorite)Icons.Default.Favorite else Icons.Default.FavoriteBorder,tr("Favourite","收藏"))}
                     IconButton(edit,Modifier.testTag("edit_saved_anchorage")){Icon(Icons.Default.Edit,tr("Edit saved anchorage","编辑收藏锚地"))}
                     IconButton(delete,Modifier.testTag("delete_saved_anchorage")){Icon(Icons.Default.DeleteOutline,tr("Delete saved anchorage","删除收藏锚地"),tint=MaterialTheme.colorScheme.error)}

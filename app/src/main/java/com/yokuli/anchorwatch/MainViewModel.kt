@@ -128,6 +128,11 @@ import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.data.trip.TripReplayLoader
 import com.yokuli.anchorwatch.data.trip.TripReplayData
+import com.yokuli.anchorwatch.data.trip.TripMapData
+import com.yokuli.anchorwatch.data.trip.TripMapDestination
+import com.yokuli.anchorwatch.data.trip.TripMapDestinationType
+import com.yokuli.anchorwatch.data.trip.TripTrackRepository
+import com.yokuli.anchorwatch.data.trip.TripTrackSnapshot
 import com.yokuli.anchorwatch.data.trip.TripDashboardRepository
 import com.yokuli.anchorwatch.data.trip.TripDashboard
 import com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot
@@ -277,6 +282,8 @@ data class MainUiState(
     val phonePositionOutputStatus:PhonePositionOutputStatus=PhonePositionOutputStatus(),
     val tripSessions:List<TripSessionEntity> = emptyList(),
     val activeTrip:TripSessionEntity? = null,
+    val tripTrack:TripTrackSnapshot=TripTrackSnapshot(),
+    val tripMapDestination:TripMapDestination?=null,
     val tripDashboards:List<TripDashboard> = emptyList(),
     val phoneSensorCapabilities:PhoneSensorCapabilities=PhoneSensorCapabilities(),
     val vesselMountCalibration:VesselMountCalibration=VesselMountCalibration(),
@@ -342,6 +349,7 @@ class MainViewModel @Inject constructor(
     private val nmeaManualDisconnectRepository:NmeaManualDisconnectRepository,
     private val tripExportManager:TripExportManager,
     private val tripReplayLoader:TripReplayLoader,
+    private val tripTrackRepository:TripTrackRepository,
     private val tripDashboardRepository:TripDashboardRepository,
     private val tripReportEngine:TripReportEngine,
     private val anchorReportEngine:AnchorReportEngine,
@@ -349,7 +357,8 @@ class MainViewModel @Inject constructor(
 ):AndroidViewModel(app){
     private val draftGson=Gson()
     private val restoredAnchorSetupDraft=savedStateHandle.get<String>(ANCHOR_SETUP_DRAFT_KEY)?.let{json->runCatching{draftGson.fromJson(json,AnchorSetupDraft::class.java)}.getOrNull()}
-    private val _ui=MutableStateFlow(MainUiState(anchorSetupDraft=restoredAnchorSetupDraft));val ui=_ui.asStateFlow()
+    private val restoredTripMapDestination=savedStateHandle.get<String>(TRIP_MAP_TYPE_KEY)?.let{type->savedStateHandle.get<Long>(TRIP_MAP_ID_KEY)?.let{id->TripMapDestination(runCatching{TripMapDestinationType.valueOf(type)}.getOrDefault(TripMapDestinationType.HISTORY),id,savedStateHandle.get<Long>(TRIP_MAP_WAYPOINT_KEY))}}
+    private val _ui=MutableStateFlow(MainUiState(anchorSetupDraft=restoredAnchorSetupDraft,tripMapDestination=restoredTripMapDestination));val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
     private var observedSessionId:Long?=null
     private var sonarSamplesJob:Job?=null
@@ -430,6 +439,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch{outputSettingsRepository.settings.collect{value->_ui.update{it.copy(outputSettings=value)}}}
         viewModelScope.launch{phonePositionNmeaOutputRuntime.status.collect{value->_ui.update{it.copy(phonePositionOutputStatus=value)}}}
         viewModelScope.launch{tripDao.sessions().collect{value->_ui.update{it.copy(tripSessions=value,activeTrip=value.firstOrNull{trip->trip.active})}}}
+        viewModelScope.launch{tripTrackRepository.snapshot.collect{value->_ui.update{it.copy(tripTrack=value)}}}
         viewModelScope.launch{tripDashboardRepository.decoded.collect{value->_ui.update{it.copy(tripDashboards=value.filter{dashboard->dashboard.preset==com.yokuli.anchorwatch.domain.vessel.TripInstrumentPreset.CUSTOM})}}}
         _ui.update{it.copy(phoneSensorCapabilities=vesselAttitudeRepository.capabilities)}
         viewModelScope.launch{vesselMountCalibrationRepository.calibration.collect{value->_ui.update{it.copy(vesselMountCalibration=value)}}}
@@ -503,6 +513,9 @@ class MainViewModel @Inject constructor(
         const val PHONE_HEADING_ALIGNMENT_FRESH_MILLIS=2_000L
         const val NMEA_HEADING_ALIGNMENT_FRESH_MILLIS=3_000L
         const val ANCHOR_SETUP_DRAFT_KEY="anchor_setup_draft_v1"
+        const val TRIP_MAP_TYPE_KEY="trip_map_type"
+        const val TRIP_MAP_ID_KEY="trip_map_id"
+        const val TRIP_MAP_WAYPOINT_KEY="trip_map_waypoint"
     }
 
     private fun refreshWatchSafety(){
@@ -1149,6 +1162,15 @@ class MainViewModel @Inject constructor(
     suspend fun tripReport(sessionId:Long):TripReport?=tripReportEngine.generate(sessionId)
     suspend fun anchorReport(sessionId:Long):AnchorReport?=anchorReportEngine.generate(sessionId)
     suspend fun tripReplay(sessionId:Long):TripReplayData=tripReplayLoader.load(sessionId)
+    suspend fun tripMapData(sessionId:Long,pointBudget:Int):TripMapData=tripTrackRepository.loadMapData(sessionId,pointBudget)
+    fun openLiveTripMap(){_ui.value.activeTrip?.let{openTripMap(TripMapDestinationType.LIVE,it.id)}}
+    fun openTripMap(sessionId:Long,waypointId:Long?=null)=openTripMap(TripMapDestinationType.HISTORY,sessionId,waypointId)
+    private fun openTripMap(type:TripMapDestinationType,sessionId:Long,waypointId:Long?=null){
+        savedStateHandle[TRIP_MAP_TYPE_KEY]=type.name;savedStateHandle[TRIP_MAP_ID_KEY]=sessionId
+        if(waypointId==null)savedStateHandle.remove<Long>(TRIP_MAP_WAYPOINT_KEY)else savedStateHandle[TRIP_MAP_WAYPOINT_KEY]=waypointId
+        _ui.update{it.copy(tripMapDestination=TripMapDestination(type,sessionId,waypointId))}
+    }
+    fun closeTripMap(){savedStateHandle.remove<String>(TRIP_MAP_TYPE_KEY);savedStateHandle.remove<Long>(TRIP_MAP_ID_KEY);savedStateHandle.remove<Long>(TRIP_MAP_WAYPOINT_KEY);_ui.update{it.copy(tripMapDestination=null)}}
     fun exportTripCsv(session:TripSessionEntity)=viewModelScope.launch{runCatching{tripExportManager.csv(session)}.onSuccess{shareExport(it,"text/csv")}.onFailure(::exportFailed)}
     fun exportTripGpx(session:TripSessionEntity)=viewModelScope.launch{runCatching{tripExportManager.gpx(session)}.onSuccess{shareExport(it,"application/gpx+xml")}.onFailure(::exportFailed)}
     fun exportTripKml(session:TripSessionEntity)=viewModelScope.launch{runCatching{tripExportManager.kml(session)}.onSuccess{shareExport(it,"application/vnd.google-earth.kml+xml")}.onFailure(::exportFailed)}

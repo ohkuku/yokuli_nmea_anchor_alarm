@@ -365,3 +365,15 @@ object Migration20To21:Migration(20,21){
   db.execSQL("""UPDATE anchor_sessions SET monitoringPhase=CASE WHEN active=0 OR endedAt IS NOT NULL THEN 'ENDED' WHEN paused=1 THEN 'PAUSED' WHEN placementMode='BACKDOWN' AND centerStatus!='RESOLVED' THEN 'LEARNING' ELSE 'ARMED' END, monitoringActivatedAt=CASE WHEN active=1 AND paused=0 THEN startedAt ELSE NULL END""")
  }
 }
+
+/** Stable per-trip identity for reconciling Room batches with the canonical
+ * in-memory live tail. Wall-clock timestamps are deliberately not used as an
+ * identity because several sensors can legitimately produce duplicate UTC
+ * timestamps. */
+object Migration21To22:Migration(21,22){
+ override fun migrate(db:SupportSQLiteDatabase){
+  db.execSQL("ALTER TABLE trip_samples ADD COLUMN recordingSequence INTEGER NOT NULL DEFAULT 0")
+  db.execSQL("UPDATE trip_samples SET recordingSequence=id WHERE recordingSequence=0")
+  db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_trip_samples_tripId_recordingSequence ON trip_samples(tripId,recordingSequence)")
+ }
+}

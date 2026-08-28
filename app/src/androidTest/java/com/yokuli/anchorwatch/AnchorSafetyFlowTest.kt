@@ -503,6 +503,9 @@ class AnchorSafetyFlowTest {
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithTag("nav_sail").performClick()
+            compose.onNodeWithTag("mfd_page_OVERVIEW").assertIsDisplayed()
+            compose.onNodeWithTag("mfd_page_OVERVIEW").performTouchInput{swipeLeft()}
+            compose.waitUntil(5_000){compose.onAllNodesWithTag("mfd_page_SAILING").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("mfd_page_SAILING").assertIsDisplayed()
             listOf("Speed through water (STW)","Speed over ground (SOG)","Heel angle (HEEL)","Velocity made good (VMG)","Apparent wind speed (AWS)","True wind speed (TWS)").forEach{title->
                 try{compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed()}

@@ -26,6 +26,12 @@ import com.yokuli.anchorwatch.domain.vessel.VesselSourceClass
 import com.yokuli.anchorwatch.domain.vessel.VesselSourceIdentity
 import com.yokuli.anchorwatch.domain.vessel.VesselSourcePreference
 import com.yokuli.anchorwatch.domain.vessel.VesselSourceType
+import com.yokuli.anchorwatch.domain.vessel.VesselDataFreshness
+import com.yokuli.anchorwatch.domain.vessel.VesselDataQuality
+import com.yokuli.anchorwatch.domain.vessel.VesselDataSource
+import com.yokuli.anchorwatch.domain.vessel.VesselObservation
+import com.yokuli.anchorwatch.domain.vessel.VesselReference
+import com.yokuli.anchorwatch.domain.vessel.VesselWindObservation
 import com.yokuli.anchorwatch.ui.theme.YokuliTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -102,5 +108,22 @@ class P0OperabilityComposeTest{
         compose.setContent{YokuliTheme{TripReportRouteMap(TripReplayData(emptyList(),emptyList()))}}
         compose.onNodeWithTag("trip_route_empty").assertIsDisplayed()
         compose.onNodeWithText("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.").assertIsDisplayed()
+    }
+
+    @Test fun absoluteDirectionInstrumentKeepsTrueAndRelativeWindFramesExplicit(){
+        fun value(number:Double,reference:VesselReference)=VesselObservation(value=number,source=VesselDataSource.BOAT_NMEA,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,reference=reference)
+        val data=VesselDataSnapshot(
+            headingTrueDegrees=value(47.0,VesselReference.TrueNorth),
+            cogTrueDegrees=value(52.0,VesselReference.GroundReferenced),
+            sogKnots=value(3.0,VesselReference.GroundReferenced),
+            trueWind=VesselWindObservation(directionDegrees=value(118.0,VesselReference.TrueNorth),angleDegrees=value(-32.0,VesselReference.VesselRelative)),
+            apparentWind=VesselWindObservation(angleDegrees=value(24.0,VesselReference.VesselRelative)),
+        )
+        compose.setContent{YokuliTheme{AbsoluteDirectionInstrument(MainUiState(vesselData=data))}}
+        compose.onNodeWithTag("absolute_direction_rose").assertIsDisplayed()
+        compose.onNodeWithText("HDG 047°T").assertIsDisplayed()
+        compose.onNodeWithText("TWD 118°T · FROM").assertIsDisplayed()
+        compose.onNodeWithText("AWA 24° S").assertIsDisplayed()
+        compose.onNodeWithText("TWA 32° P").assertIsDisplayed()
     }
 }

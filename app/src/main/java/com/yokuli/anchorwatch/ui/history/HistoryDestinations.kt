@@ -8,5 +8,6 @@ import androidx.compose.runtime.Composable
 @Composable internal fun AnchorageLibraryPage(state:MainUiState,vm:MainViewModel)=com.yokuli.anchorwatch.ui.anchor.anchorages.AnchorageLibraryScreen(
     openGoogleMaps={latitude,longitude->vm.openAnchorageCoordinates(latitude,longitude)},
     approachSpot={spotId->vm.approachAnchorageSpot(spotId)},
+    currentPosition=state.vesselData.position.value,
 )
 @Composable internal fun TripHistoryPage(state:MainUiState,vm:MainViewModel)=HistoryPage(state,vm,fixedTab=2)

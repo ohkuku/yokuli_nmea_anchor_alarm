@@ -1,6 +1,7 @@
 package com.yokuli.anchorwatch
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
@@ -278,27 +281,42 @@ private fun durationText(value:Long)="${value/3_600_000}h ${(value/60_000)%60}m"
 private fun coordinatePair(startLat:Double?,startLon:Double?,endLat:Double?,endLon:Double?)=if(startLat!=null&&startLon!=null&&endLat!=null&&endLon!=null)"%.4f, %.4f → %.4f, %.4f".format(startLat,startLon,endLat,endLon)else"—"
 
 @Composable private fun TripHistoryRoutePreview(session:TripSessionEntity,vm:MainViewModel){
-    val replay by produceState<TripReplayData?>(null,session.id){value=vm.tripReplay(session.id)}
+    val mapData by produceState<com.yokuli.anchorwatch.data.trip.TripMapData?>(null,session.id){value=vm.tripMapData(session.id,com.yokuli.anchorwatch.data.trip.TripTrackRenderPolicy.CARD_PREVIEW_BUDGET)}
     Column(Modifier.fillMaxWidth().testTag("trip_history_route_${session.id}"),verticalArrangement=Arrangement.spacedBy(5.dp)){
         Text(tr("Recorded route","已记录航迹"),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
-        TripReportRouteMap(replay)
+        if(mapData==null)Box(Modifier.fillMaxWidth().height(120.dp),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+        else TripRouteThumbnail(mapData!!.segments,Modifier.fillMaxWidth().height(132.dp).clickable{vm.openTripMap(session.id)}.testTag("open_trip_map_${session.id}"))
+        OutlinedButton({vm.openTripMap(session.id)},Modifier.fillMaxWidth()){Text(tr("Open full map","打开完整地图"))}
     }
 }
 
 @Composable internal fun TripReportRouteMap(data:TripReplayData?){
-    val route=data?.points.orEmpty().mapNotNull{point->if(point.latitude!=null&&point.longitude!=null)LatLng(point.latitude,point.longitude)else null}
     if(data==null){Box(Modifier.fillMaxWidth().height(120.dp).testTag("trip_route_loading"),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
-    if(route.isEmpty()){Card(Modifier.fillMaxWidth().testTag("trip_route_empty")){Text(tr("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.","本次航程没有记录到可用坐标；仪表样本与事件仍可在下方查看。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};return}
-    if(!BuildConfig.MAPS_CONFIGURED){Card(Modifier.fillMaxWidth().testTag("trip_route_map_unavailable")){Text(tr("The route has ${route.size} coordinate samples, but the map is unavailable in this build. Replay and GPX/KML export still work.","航迹包含 ${route.size} 个坐标样本，但当前构建无法显示地图；回放与 GPX / KML 导出仍可使用。"),Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};return}
-    val first=route.first();val last=route.last();val camera=rememberCameraPositionState{position=CameraPosition.fromLatLngZoom(first,11f)}
-    var loaded by remember(route){mutableStateOf(false)}
-    val bounds=remember(route){LatLngBounds.builder().also{builder->route.forEach{point->builder.include(point)}}.build()}
-    androidx.compose.runtime.LaunchedEffect(loaded,bounds){if(loaded)runCatching{camera.animate(CameraUpdateFactory.newLatLngBounds(bounds,48))}}
-    GoogleMap(Modifier.fillMaxWidth().height(180.dp).testTag("trip_route_map"),cameraPositionState=camera,onMapLoaded={loaded=true},uiSettings=MapUiSettings(compassEnabled=false,mapToolbarEnabled=false,myLocationButtonEnabled=false,zoomControlsEnabled=false,scrollGesturesEnabled=false,zoomGesturesEnabled=false,rotationGesturesEnabled=false,tiltGesturesEnabled=false)){
-        Polyline(points=route,color=MaterialTheme.colorScheme.primary,width=5f)
-        Marker(state=remember(first){MarkerState(first)},title=tr("Trip start","航程起点"))
-        Marker(state=remember(last){MarkerState(last)},title=tr("Trip end","航程终点"))
+    val segments=buildList{var current=mutableListOf<com.yokuli.anchorwatch.data.trip.TripTrackPoint>();data.points.forEachIndexed{index,point->if(point.latitude==null||point.longitude==null){if(current.isNotEmpty()){add(com.yokuli.anchorwatch.data.trip.TripTrackSegment(current));current=mutableListOf()}}else current+=com.yokuli.anchorwatch.data.trip.TripTrackPoint(0,index.toLong(),point.timestamp,point.latitude,point.longitude)};if(current.isNotEmpty())add(com.yokuli.anchorwatch.data.trip.TripTrackSegment(current))}
+    TripRouteThumbnail(segments,Modifier.fillMaxWidth().height(180.dp).testTag("trip_route_map"))
+}
+
+@Composable internal fun TripRouteThumbnail(segments:List<com.yokuli.anchorwatch.data.trip.TripTrackSegment>,modifier:Modifier=Modifier){
+    val points=segments.flatMap{it.points}.filter{it.hasPosition}
+    if(points.isEmpty()){
+        Card(modifier.testTag("trip_route_empty")){Box(Modifier.fillMaxSize().padding(12.dp),contentAlignment=Alignment.Center){Text(tr("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.","本次航程没有记录到可用坐标；仪表样本与事件仍可在下方查看。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
+        return
     }
+    val lineColor=MaterialTheme.colorScheme.primary;val pointColor=MaterialTheme.colorScheme.tertiary;val background=MaterialTheme.colorScheme.surfaceVariant
+    Card(modifier){Canvas(Modifier.fillMaxSize().padding(10.dp).testTag("trip_route_thumbnail")){
+        drawRect(background)
+        val minLat=points.minOf{it.latitude!!};val maxLat=points.maxOf{it.latitude!!};val minLon=points.minOf{it.longitude!!};val maxLon=points.maxOf{it.longitude!!};val latSpan=(maxLat-minLat).coerceAtLeast(.00001);val lonSpan=(maxLon-minLon).coerceAtLeast(.00001)
+        fun offset(point:com.yokuli.anchorwatch.data.trip.TripTrackPoint)=Offset(((point.longitude!!-minLon)/lonSpan*size.width).toFloat(),((maxLat-point.latitude!!)/latSpan*size.height).toFloat())
+        segments.forEach{segment->
+            if(segment.points.size==1)drawCircle(lineColor,3f,offset(segment.points.first()))
+            else{
+                val path=Path()
+                segment.points.filter{it.hasPosition}.forEachIndexed{index,point->val p=offset(point);if(index==0)path.moveTo(p.x,p.y)else path.lineTo(p.x,p.y)}
+                drawPath(path,lineColor,style=androidx.compose.ui.graphics.drawscope.Stroke(width=5f))
+            }
+        }
+        drawCircle(pointColor,6f,offset(points.first()));drawCircle(lineColor,7f,offset(points.last()))
+    }}
 }
 
 @Composable

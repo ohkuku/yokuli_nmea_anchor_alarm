@@ -749,3 +749,29 @@
 - Verification result: **Runtime mount suppression now applies only to `RATE_OF_TURN` and `ATTITUDE`. Heading publication still requires an aligned direct Phone vessel-heading source, a fresh measurement no older than two seconds, valid Phone-sensor provenance and the current Heading-alignment epoch, but no Trip mount state. The encoder preserves exact suppression reasons and treats a disabled Heading switch as `USER_DISABLED`; `WAITING_CALIBRATION` is reserved for missing or obsolete alignment. Boat TX and the local Phone NMEA service share this encoder. Conflicting output and service copy was corrected. Targeted JVM tests passed, Android-test sources compiled, and the Debug APK assembled.**
 - Real hardware verified: **No — align once outside Trip Watch, start each sharing product separately and confirm stable 1 Hz HDT at the receiver; then rotate the phone, realign and verify the new heading. Confirm ROT/heel/pitch remain absent until a Trip attitude frame is explicitly active.**
 - Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD PASSED; REAL-NMEA RECEIVER QA REQUIRED**
+
+## Finding P1-054 — Sail Live had no canonical live Trip track and history cards created live maps
+
+- Severity: **P1 / live passage awareness and long-trip scalability**
+- User story: the Sail cockpit must show the active Trip route within one second, and the same canonical samples must move from the unflushed writer tail into Room/history without duplicate geometry or unbounded map memory.
+- Evidence: `TripRuntime` only enqueued `TripSampleEntity` for a five-second Room batch. Sail Live exposed only the latest vessel coordinate, while History loaded a replay and instantiated a GoogleMap inside expanded list content. Position gaps were removed with `mapNotNull`, which could draw a false straight line across an outage.
+- Reproduction steps: start a Trip, move before the first Room flush, and open Sail Live; no route is visible. Record a GPS gap and open the old history route; the coordinates before and after the gap are joined. Open many Trip cards and observe each expanded route create a map surface.
+- Root cause: persistence, live presentation and map rendering had no shared sample identity/live-tail contract, and route rendering had no bounded segmented display model.
+- Failing test: `canonicalTripSampleFeedsWriterAndLiveTail` contract is covered by `TripRuntime` plus `TripTrackRepository`; regressions include `liveTailBecomesPersistedWithoutDuplicateGeometry`, `gpsGapCreatesSeparatePolylineSegments`, `largeTimeOrSpatialDiscontinuityIsNeverBridged`, `twentyFourHourTripUsesBoundedRenderPointCount`, `repositoryCompactionPreservesGpsGapWithinItsHardBudget`, and `duplicateWallClockTimesStillHaveStableDistinctIdentity`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Room schema 22 adds durable `tripId + recordingSequence`; each runtime sample is emitted to a bounded StateFlow before enqueue, then reconciled after batch persistence by the same identity. Persisted geometry and the live tail have separate revisions. Previews are capped at 256/512 points, live detail at 2,500 and history detail at 5,000, with a recent high-resolution tail. Null position, time-gap and spatial-jump boundaries create separate segments even after repository compaction. History cards use Canvas thumbnails; only the visible Overview and dedicated detail destinations create live GoogleMap surfaces. The 646-test full JVM suite passed, the added compaction-gap regression passed separately, and androidTest source compilation, lint and Debug assembly passed.**
+- Real hardware verified: **No — run a multi-hour real Trip with a deliberate NMEA/GNSS outage, verify no bridge line, and inspect Overview latency on the square device.**
+- Status: **FIXED IN CODE — AUTOMATED GATES PASSED; LONG-PASSAGE/REAL-DEVICE QA PENDING**
+
+## Finding P1-055 — The Sail compass mixed vessel-relative wind with true bearings
+
+- Severity: **P1 / misleading cockpit direction comparison**
+- User story: HDG, COG and true wind direction must share one north-up true-reference rose; magnetic-only heading must remain numeric, TWD must be visibly wind-from, and AWA/TWA must remain available in their separate vessel-relative frame.
+- Evidence: the former `SailingCompass` printed HDG/COG/TWD but plotted only AWA/TWA around a fixed vessel arrow. The resulting visual looked like an absolute compass while its pointers were vessel-relative. It did not distinguish magnetic-only HDG or low-speed untrusted COG.
+- Reproduction steps: feed HDG 047°T, COG 052°T, TWD 118°T and AWA 024° starboard. The old rose plotted relative wind angles rather than the three printed true bearings.
+- Root cause: one composable combined two coordinate frames without an explicit direction model or independent freshness/reference gates.
+- Failing test: `absoluteRoseUsesTrueReferenceOnly`, `magneticHeadingIsNotOverlaidWithTrueCogTwd`, `cogSuppressedBelowCourseTrustThreshold`, `missingTwdDoesNotHideHdgCog`, `stalePointerDisappearsIndependently`, `northCrossingUsesShortestRotation`, and Compose regression `absoluteDirectionInstrumentKeepsTrueAndRelativeWindFramesExplicit`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **The refactored reusable instrument plots fresh true HDG/COG/TWD on a north-up rose, uses the existing NMEA course-trust gate for boat COG, applies phone speed hysteresis, animates across north by the shortest angle, and draws TWD at the source bearing with flow toward the centre. Magnetic-only HDG is shown as °M but never plotted on the true rose. Compact AWA/TWA labels preserve the relative frame.**
+- Real hardware verified: **No — compare the rose against the vessel instruments while crossing 359°/001°, then stop below the COG trust threshold.**
+- Status: **FIXED IN CODE — POLICY/COMPOSE TESTS WRITTEN; REAL-COCKPIT QA PENDING**

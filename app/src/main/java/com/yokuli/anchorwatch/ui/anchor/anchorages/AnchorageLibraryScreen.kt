@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -41,6 +42,7 @@ import kotlin.math.pow
 fun AnchorageLibraryScreen(
     openGoogleMaps: (Double, Double) -> Unit,
     approachSpot: (Long) -> Unit,
+    currentPosition:com.yokuli.anchorwatch.domain.vessel.VesselPosition?=null,
     vm: AnchorageLibraryViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
@@ -51,6 +53,8 @@ fun AnchorageLibraryScreen(
     var showEditor by remember { mutableStateOf(false) }
     var editingSpotId by remember { mutableStateOf<Long?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var detailMapSpotId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var detailMapOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar=remember{SnackbarHostState()}
     val actionMessage=when(state.action){
         AnchorageLibraryAction.SAVED->tr("Saved anchorage updated.","收藏锚地已更新。")
@@ -134,11 +138,12 @@ fun AnchorageLibraryScreen(
         AnchoragePlaceDetailDialog(
             bundle,state.collections,{vm.selectPlace(null)},
             {spotId->vm.selectPlace(null);approachSpot(spotId)},
-            openGoogleMaps,vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,
+            openGoogleMaps,{spotId->detailMapSpotId=spotId;detailMapOpen=true},vm::shareSpot,{photoPicker.launch("image/*")},vm::deletePhoto,
             vm::photoPath,vm::setFavorite,vm::setPlanning,vm::toggleCollection,vm::cycleProtection,
             {editingSpotId=null;showEditor=true},{spotId->editingSpotId=spotId;showEditor=true},{confirmDelete=true},
         )
     }
+    if(detailMapOpen)state.selectedPlace?.let{bundle->AnchorageMapDetailDialog(bundle,detailMapSpotId,currentPosition,{detailMapOpen=false;detailMapSpotId=null},{spotId->detailMapOpen=false;detailMapSpotId=null;vm.selectPlace(null);approachSpot(spotId)})}
     if(showEditor)state.selectedPlace?.let{bundle->AnchorageEditorDialog(bundle,editingSpotId,{showEditor=false;editingSpotId=null}){name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius->vm.updateSelected(name,description,notes,spotId,spotName,approachNotes,spotNotes,depth,rode,radius);showEditor=false;editingSpotId=null}}
     if(confirmDelete)AlertDialog(
         onDismissRequest={confirmDelete=false},

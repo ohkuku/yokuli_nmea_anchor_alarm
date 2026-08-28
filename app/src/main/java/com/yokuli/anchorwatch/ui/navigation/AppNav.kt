@@ -71,13 +71,13 @@ fun AnchorApp(vm:MainViewModel){
             Destination(tr("Settings","设置"),Icons.Default.Settings),
         )
         val destinationTags=listOf("nav_anchor","nav_sail","nav_data","nav_settings")
-        val approachOwnsScreen=state.anchorageApproach.target!=null
-        Scaffold(bottomBar={if(!sailCockpitMode.value&&!approachOwnsScreen)NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
+        val fullscreenOwnsScreen=state.anchorageApproach.target!=null||state.tripMapDestination!=null
+        Scaffold(bottomBar={if(!sailCockpitMode.value&&!fullscreenOwnsScreen)NavigationBar{destinations.forEachIndexed{index,item->NavigationBarItem(state.page==index,{vm.page(index)},{Icon(item.icon,item.label)},modifier=Modifier.testTag(destinationTags[index]),label={Text(item.label)})}}}){padding->
             AppDestinationLayer(
-                fullscreenDestination=approachOwnsScreen,
+                fullscreenDestination=fullscreenOwnsScreen,
                 modifier=Modifier.fillMaxSize().padding(padding),
                 workspace={when(state.page){0->AnchorRootPage(state,vm);1->SailRootPage(state,vm);2->DataPage(state,vm);else->SettingsScreen(state,vm)}},
-                fullscreenHost={AnchorageApproachDestinationHost(state,vm)},
+                fullscreenHost={AnchorageApproachDestinationHost(state,vm);MarineTripMapDestinationHost(state,vm)},
             ){
                 AlarmTestBanner(state,vm,Modifier.align(Alignment.TopCenter))
                 if(state.alarmSnapshot.type!=AlarmType.ALARM_TEST)RuntimeFeedbackBanner(state,vm,Modifier.align(Alignment.TopCenter))

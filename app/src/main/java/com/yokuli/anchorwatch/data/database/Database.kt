@@ -16,7 +16,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-const val DATABASE_SCHEMA_VERSION = 21
+const val DATABASE_SCHEMA_VERSION = 22
 
 @Entity(tableName = "anchor_sessions")
 data class AnchorSessionEntity(
@@ -198,9 +198,10 @@ data class TripSessionEntity(
  val minDepthMeters:Double?=null,val minUkcMeters:Double?=null,val nmeaWasActiveAtStart:Boolean=false,val restoredAfterProcessDeath:Boolean=false,
 )
 
-@Entity(tableName="trip_samples",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"])])
+@Entity(tableName="trip_samples",foreignKeys=[ForeignKey(entity=TripSessionEntity::class,parentColumns=["id"],childColumns=["tripId"],onDelete=ForeignKey.CASCADE)],indices=[Index("tripId"),Index(value=["tripId","timestamp"]),Index(value=["tripId","recordingSequence"],unique=true)])
 data class TripSampleEntity(
  @PrimaryKey(autoGenerate=true)val id:Long=0,val tripId:Long,val timestamp:Long,
+ @ColumnInfo(defaultValue="0")val recordingSequence:Long=0,
  val latitude:Double?,val longitude:Double?,val positionSource:String,val positionQuality:String,val positionAgeMillis:Long?,
  val sogKnots:Double?,val cogTrueDegrees:Double?,val headingTrueDegrees:Double?,val headingSource:String,val headingAgeMillis:Long?,
  val depthMeters:Double?,val depthSource:String,val depthAgeMillis:Long?,val speedThroughWaterKnots:Double?,val stwSource:String?,val stwAgeMillis:Long?,
@@ -543,6 +544,7 @@ interface TripDao{
  @Query("UPDATE trip_dashboards SET updatedAt=:sortValue WHERE id=:id") suspend fun updateDashboardSort(id:String,sortValue:Long)
  @Query("SELECT * FROM trip_samples WHERE tripId=:tripId ORDER BY timestamp,id") suspend fun samples(tripId:Long):List<TripSampleEntity>
  @Query("SELECT * FROM trip_samples WHERE tripId=:tripId AND (timestamp>:afterTimestamp OR (timestamp=:afterTimestamp AND id>:afterId)) ORDER BY timestamp,id LIMIT :limit") suspend fun samplesPage(tripId:Long,afterTimestamp:Long,afterId:Long,limit:Int):List<TripSampleEntity>
+ @Query("SELECT COALESCE(MAX(recordingSequence),0) FROM trip_samples WHERE tripId=:tripId") suspend fun maxRecordingSequence(tripId:Long):Long
  @Query("SELECT EXISTS(SELECT 1 FROM trip_samples WHERE tripId=:tripId AND (positionSource='BOAT_NMEA' OR headingSource='BOAT_NMEA' OR depthSource='BOAT_NMEA' OR windSource='BOAT_NMEA' OR stwSource='BOAT_NMEA') LIMIT 1)") suspend fun hasNmeaSamples(tripId:Long):Boolean
  @Query("SELECT EXISTS(SELECT 1 FROM trip_samples WHERE tripId=:tripId AND depthMeters IS NOT NULL LIMIT 1)") suspend fun hasDepthSamples(tripId:Long):Boolean
  @Query("SELECT EXISTS(SELECT 1 FROM trip_samples WHERE tripId=:tripId AND (trueWindSpeedKnots IS NOT NULL OR apparentWindSpeedKnots IS NOT NULL) LIMIT 1)") suspend fun hasWindSamples(tripId:Long):Boolean
