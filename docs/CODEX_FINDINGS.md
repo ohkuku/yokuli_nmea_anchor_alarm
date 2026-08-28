@@ -645,3 +645,42 @@
 - Verification result: **Same-input mode now requires an already-open TCP input and reuses its exact transport generation. It never creates a dedicated client. The output publication generation is invalidated before Stop waits for an in-flight write; Stop never closes the shared socket. Congestion suppresses later same-socket TX instead of aborting/reconnecting RX. Socket writer serialization no longer holds the Socket intrinsic monitor across blocking output, so incoming NMEA remains readable. Route selection is explicit: reuse current TCP, separate TCP, or Advanced UDP; no route auto-starts. Targeted loopback/generation tests pass; full gates are recorded in the delivery report.**
 - Real hardware verified: **No — KC-2W + Raymarine/IS42 same-connection RX/TX/Stop remains `UNVERIFIED_HARDWARE`.**
 - Status: **FIXED IN CODE — LOOPBACK TESTED; KC-2W HARDWARE ACCEPTANCE REQUIRED**
+
+## Finding P0-046 — Manual/Map could skip the auditable WAITING activation
+
+- Severity: **P0 / anchor monitoring lifecycle was not deterministic**
+- User story: a user-confirmed Manual coordinate or Map point must first become a persisted `WAITING_FOR_GPS` session; the first accepted selected-source fix starts monitoring exactly once without changing that coordinate.
+- Evidence: GitHub device run 60 reached `ARMED` in `waitingSessionPrimesAlreadyAvailableRawFix`, but recorded zero `GPS_MONITORING_ACTIVATED` events. `AnchorWatchRuntime.arm()` derived its initial phase only from accepted-position readiness, so an already-accepted raw fix bypassed WAITING entirely.
+- Reproduction steps: connect a current NMEA fix, stop future server emissions, then ARM a Manual coordinate. Inspect the saved phase/event sequence.
+- Root cause: origin semantics and provider readiness were collapsed into one `waitingForGps = !acceptedReadiness.ready` condition. That contradicted the required `lock → persist WAITING → re-prime → activate` sequence.
+- Failing test: `waitingSessionPrimesAlreadyAvailableRawFix`; the Manual and Map recovery stories also retain assertions for no pre-activation points/samples, coordinate preservation and exactly one activation event.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Manual/Map now always persist WAITING before the post-lock integrity prime. A synchronously available accepted fix immediately performs the one serialized transition to ARMED/LEARNING and writes `GPS_MONITORING_ACTIVATED`; absent evidence remains WAITING. Current/Backdown behavior is unchanged. Local 620-test Debug suite, lint, APK assembly and Android-test source compilation pass; remote device execution is pending.**
+- Real hardware verified: **No — verify Manual and Map sessions once with absent NMEA, then restore the same connection and inspect the unchanged anchor coordinate.**
+- Status: **FIXED IN CODE — REMOTE DEVICE SHARDS AND HARDWARE QA PENDING**
+
+## Finding P1-047 — Device stories claimed provider evidence that their setup never acquired
+
+- Severity: **P1 / release-gate false failures obscured product regressions**
+- User story: integration tests must reproduce the same provider state their names claim, and UI tests must navigate stable semantic keys rather than incidental list indices.
+- Evidence: GitHub device run 60 injected emulator GNSS without starting `SystemLocationRepository`; its System ARM story therefore failed with `POSITION_WAITING`. Manual/Map tests left the process-wide explicit-disconnect latch set and never opened their silent NMEA transport, so changing the fake server's emission flag could not deliver a fix. The passive-loss story ignored the expected safety-owned `RECONNECTING` state. About/Feedback tests used out-of-range fixed indices, the onboarding assertion expected obsolete Chinese copy, and the Output test asked Compose to scroll to a child inside one oversized Lazy item.
+- Reproduction steps: run the three CI device shards from commit `247a1a7` and inspect the nine annotated failures from run 60.
+- Root cause: test preconditions and selectors drifted while production ownership, copy and LazyColumn structure became stricter. Increasing timeouts would not create the missing GNSS subscription/NMEA connection or fix invalid selectors.
+- Failing test: `freshSystemGpsArmCreatesAnActiveSessionWithoutNmea`, `manualCoordinateWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, `mapPickWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, `passiveLossKeepsWatchArmedAndRecordsImmediateAndTimedAlarms`, `aboutPageShowsRealMakerCrewAndOptionalSupportConfirmation`, `firstRunMakerPageHasCrewAndVoyageButNeverAsksForMoney`, `feedbackPageBuildsAnEditableEmailRequestWithoutSendingInsideTheApp`, and `nmeaInputAndOutputKeepReceiveAndSendPortsOnSeparateTopLevelPages`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **The device runner refreshes the emulator's configured GNSS position every five seconds so its monotonic measurement time remains current throughout installation and sharding; the System story then acquires that real process-wide GNSS fix before ARM. Manual/Map create one quiet formal RX connection before testing later data recovery. Passive loss accepts the safety retry state. About/Settings use keyed Lazy items, current localized copy is asserted, and Output navigation scrolls by top-level item. Assertions for accepted position, generation, WAITING, coordinate preservation and same-socket isolation were not weakened. Android-test Kotlin compilation passes; device execution remains pending CI.**
+- Real hardware verified: **No — these are automated test-harness corrections; the corresponding vessel acceptance matrix is still required.**
+- Status: **FIXED IN TEST/SELECTOR CODE — REMOTE DEVICE SHARDS PENDING**
+
+## Finding P1-048 — Failed Android shards could hang while collecting diagnostics
+
+- Severity: **P1 / CI failure evidence unavailable**
+- User story: when a device shard fails, the workflow must still finish and upload a bounded diagnostic artifact so the failing story can be fixed without rerunning every local emulator test.
+- Evidence: GitHub run 59 completed its tests, tore down the emulator, then remained stuck in `adb logcat -d`; all device jobs stayed running and exposed no final failure bundle.
+- Reproduction steps: let an emulator shard fail and terminate its emulator before `.github/scripts/collect_failure_bundle.sh` reaches the ADB collection commands.
+- Root cause: diagnostic collection treated `adb devices` and `adb logcat` as unbounded operations even though the emulator/ADB server might already be unavailable.
+- Failing test: CI run 59 lifecycle; this is a workflow failure-path test rather than an App test.
+- Fix commit: **`247a1a7`**
+- Verification result: **ADB device listing is bounded to 10 seconds and logcat to 20 seconds (with GNU/macOS timeout fallback). Run 60 completed every failed shard and uploaded the failure artifacts instead of hanging.**
+- Real hardware verified: **Not applicable — CI failure-path behavior was verified on GitHub-hosted Android emulators.**
+- Status: **FIXED AND VERIFIED IN CI**

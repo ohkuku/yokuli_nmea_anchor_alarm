@@ -48,12 +48,12 @@ Frozen baseline: `fb9d1875e10f06da4fe113c84190bb78f97340e0`
 | Final focused close-out | PASS | 89/89 across Stop barrier, output/server policy, reconnect generation, field retention, parser/framing, source invalidation and System-GPS startup policy |
 | Full Debug unit tests | PASS | Current follow-up run: 620 total, 0 failed/errors, 1 opt-in soak skipped by default. |
 | Android lint Debug | PASS | `lintDebug`; HTML report generated at `app/build/reports/lint-results-debug.html` |
-| Debug APK assemble | PASS | `assembleDebug`; `app/build/outputs/apk/debug/app-debug.apk` |
-| Android device-test source compile | PASS | `compileDebugAndroidTestKotlin`; fresh System/NMEA ARM, deterministic WAITING activation and all existing safety stories compile. Execution is delegated to the three CI device shards. |
+| Debug APK assemble | PASS | `assembleDebug`; `app/build/outputs/apk/debug/boat-watch-debug-1.0.0-247a1a70-dirty.apk` |
+| Android device-test source compile | PASS | `compileDebugAndroidTestKotlin`; fresh System/NMEA ARM, deterministic WAITING activation and all existing safety stories compile. The runner maintains a current emulator GNSS fixture every five seconds; execution is delegated to the three CI device shards. |
 | Product identity/free-feature policy | PASS | `.github/scripts/product_policy_guard.sh` |
 | API 36 launch smoke | PENDING REMOTE CI | Must pass on the pushed commit; no local emulator was started. |
-| Device integration shards 1–3 | PENDING REMOTE CI | Must pass on the pushed commit; no local emulator was started. |
-| Connected Android tests | PASS (aggregate) | Full run passed 91 and exposed five regressions; only those five were corrected and rerun 5/5, for aggregate 96/96. After the final Output diagnostics change, its directly related Compose test reran 1/1. A second monolithic run was intentionally avoided. |
+| Device integration shards 1–3 | PENDING REMOTE CI | Run 60 exposed nine product/test-precondition regressions and uploaded complete bounded failure artifacts. They are classified and corrected in Findings P0-046/P1-047; the pushed follow-up must pass all three shards. No local emulator was started. |
+| Connected Android tests | HISTORICAL PASS; CURRENT FOLLOW-UP PENDING | Earlier aggregate execution passed 96/96 plus one directly related Output rerun. Run 60 then exposed the deterministic WAITING lifecycle and test-harness drift introduced by the latest follow-up. Current Android-test sources compile; only GitHub's three shards will execute them. |
 | Deterministic 10-minute 1 Hz Heading soak | NOT RUN AFTER CADENCE CHANGE | Updated expectation: 600–601 complete HDT writes, maximum scheduled gap ≤ 1,200 ms |
 | Real-time 10-minute 1 Hz Fake TCP soak | NOT RUN AFTER CADENCE CHANGE | Updated expectation: exactly 600 complete non-blank HDT lines and every observed receiver gap ≤ 1,200 ms |
 | In-flight Stop byte barrier | PASS | Stop was held while a real loopback OutputStream was blocked; after release/join, local socket byte count did not increase beyond the count captured at Stop return |

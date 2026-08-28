@@ -82,9 +82,9 @@ fun AboutScreen(onBack: () -> Unit, onFeedback: () -> Unit) {
             ) {
                 item { AboutHero() }
                 item { StorySection() }
-                item { CrewSection() }
+                item(key = "about_crew") { CrewSection() }
                 item { YouTubeSection(::open) }
-                item { SupportSection { pendingSupportUrl = it } }
+                item(key = "about_support") { SupportSection { pendingSupportUrl = it } }
                 item { RoadmapSection() }
                 if (ProductBrand.contactEmail.isNotBlank()) {
                     item {

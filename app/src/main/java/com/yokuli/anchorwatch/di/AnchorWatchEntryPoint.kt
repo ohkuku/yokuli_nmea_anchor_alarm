@@ -11,6 +11,7 @@ import com.yokuli.anchorwatch.data.sharing.LocalNmeaServerSettingsRepository
 import com.yokuli.anchorwatch.data.sonar.SonarSurveyRecorder
 import com.yokuli.anchorwatch.data.vessel.OutputSettingsRepository
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
+import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -32,6 +33,7 @@ interface AnchorWatchEntryPoint {
     fun alarmUi(): AlarmUiRepository
     fun sharingServer(): NmeaSharingServer
     fun acceptedPosition(): AcceptedPositionRepository
+    fun systemLocation():SystemLocationRepository
     fun runtimeDiagnostics():RuntimeDiagnosticsRepository
     fun outputSettings():OutputSettingsRepository
     fun localNmeaServerSettings():LocalNmeaServerSettingsRepository
