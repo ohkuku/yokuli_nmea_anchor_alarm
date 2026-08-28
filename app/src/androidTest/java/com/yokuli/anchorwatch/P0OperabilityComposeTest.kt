@@ -1,5 +1,6 @@
 package com.yokuli.anchorwatch
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
@@ -10,6 +11,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -134,8 +136,11 @@ class P0OperabilityComposeTest{
     }
 
     @Test fun completedTripWithoutCoordinatesShowsAnExplicitRouteReason(){
-        compose.setContent{YokuliTheme{TripReportRouteMap(TripReplayData(emptyList(),emptyList()))}}
-        compose.waitForIdle()
+        // Give this normally full-screen report fragment a real viewport. A
+        // bare sub-composable host can briefly expose no semantics tree while
+        // the emulator is still attaching the test window.
+        compose.setContent{YokuliTheme{Box(Modifier.fillMaxSize()){TripReportRouteMap(TripReplayData(emptyList(),emptyList()))}}}
+        compose.waitUntil(5_000){compose.onAllNodesWithTag("trip_route_empty").fetchSemanticsNodes().size==1}
         // This is a report sub-composable normally hosted by a scrollable
         // screen. createComposeRule's bare host can report the root window as
         // not foreground-visible on some emulator shards even while the Card

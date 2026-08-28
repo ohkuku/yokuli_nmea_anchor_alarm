@@ -1206,7 +1206,10 @@ class AnchorSafetyFlowTest {
             preferences.save(preferences.settings.first().copy(nmeaSharingEnabled=true,nmeaSharingPort=port))
             ContextCompat.startForegroundService(context,Intent(context,AnchorForegroundService::class.java).setAction(AnchorForegroundService.SET_NMEA_SHARING).putExtra("enabled",true).putExtra("port",port))
             withTimeout(5_000){preferences.settings.first{!it.nmeaSharingEnabled}}
-            val migrated=withTimeout(5_000){localNmeaServerSettings.settings.first{it.configured&&it.port==port}}
+            // This migration crosses the service command queue plus two
+            // DataStore transactions. Busy hosted emulators can legitimately
+            // take longer than five seconds without changing the outcome.
+            val migrated=withTimeout(15_000){localNmeaServerSettings.settings.first{it.configured&&it.port==port}}
             assertFalse(migrated.serverRequested)
             assertFalse(outputSettings.settings.first().publicationEnabled)
             assertFalse(outputSettings.settings.first().transportMode==NmeaOutputTransportMode.TCP_SERVER)
