@@ -51,9 +51,10 @@ Frozen baseline: `fb9d1875e10f06da4fe113c84190bb78f97340e0`
 | Debug APK assemble | PASS | `assembleDebug`; `app/build/outputs/apk/debug/boat-watch-debug-1.0.0-247a1a70-dirty.apk` |
 | Android device-test source compile | PASS | `compileDebugAndroidTestKotlin`; fresh System/NMEA ARM, deterministic WAITING activation and all existing safety stories compile. The System ARM-race story establishes its raw Debug provider precondition directly because the API 34 emulator does not expose host geo injection as a repository-visible non-mock sample. |
 | Product identity/free-feature policy | PASS | `.github/scripts/product_policy_guard.sh` |
-| API 36 launch smoke | PASS ON RUN 61 | Android 16 / API 36 launch smoke completed successfully in 7m54s for `32abc9a`. The next follow-up must preserve it. |
-| Device integration shards 1–3 | FOLLOW-UP PENDING | Run 61: shard 3 passed; shard 1 exposed only the absent emulator GNSS precondition; shard 2 exposed sonar collector ordering plus a cross-table test observation race. Findings P0-049/P1-050 contain the fixes. All three shards must pass on the next push. |
-| Connected Android tests | HISTORICAL PASS; CURRENT FOLLOW-UP PENDING | Earlier aggregate execution passed 96/96 plus one Output rerun. Run 61 then passed shard 3 and produced bounded downloadable failure evidence for shards 1/2. The new focused sonar regression passes and Android-test sources compile; GitHub will execute the complete three-shard follow-up. |
+| API 36 launch smoke | PASS | GitHub Actions run 62 completed the Android 16 / API 36 launch smoke successfully in 8m23s for `580c884`. |
+| Device integration shards 1–3 | PASS | GitHub Actions run 62 completed all three device-integration shards successfully. The deterministic Debug provider precondition, sonar collector-order fix and independent Room-event observation all passed remotely. |
+| Connected Android tests | PASS | Run 62 completed the full three-shard connected-test matrix successfully. Run 61's bounded failure bundles remain the before-fix evidence for Findings P0-049/P1-050. |
+| Fully verified Debug APK publication | PASS | Run 62 published `boat-watch-debug-verified-580c884cf7fc2f5c2ea2ceaa1b0c628ba740e97c` and rolling `boat-watch-development-debug-62-580c884cf7fc2f5c2ea2ceaa1b0c628ba740e97c`; both have SHA-256 `7ca0063cb2e6fae474045420dc01d77352daa01b4d60a516d662def41942c56b`. |
 | Deterministic 10-minute 1 Hz Heading soak | NOT RUN AFTER CADENCE CHANGE | Updated expectation: 600–601 complete HDT writes, maximum scheduled gap ≤ 1,200 ms |
 | Real-time 10-minute 1 Hz Fake TCP soak | NOT RUN AFTER CADENCE CHANGE | Updated expectation: exactly 600 complete non-blank HDT lines and every observed receiver gap ≤ 1,200 ms |
 | In-flight Stop byte barrier | PASS | Stop was held while a real loopback OutputStream was blocked; after release/join, local socket byte count did not increase beyond the count captured at Stop return |
@@ -62,10 +63,11 @@ Frozen baseline: `fb9d1875e10f06da4fe113c84190bb78f97340e0`
 
 ## Release status
 
-The current `codex/develop` candidate restores generation-bound same-input
-full-duplex output without restoring the old destructive stall abort. Local
-unit, lint, Debug APK, Android-test compilation and product-policy gates pass.
-Remote API 36/device-shard results must be recorded after push. Real hardware
+Code commit `580c884cf7fc2f5c2ea2ceaa1b0c628ba740e97c` restores
+generation-bound same-input full-duplex output without restoring the old
+destructive stall abort. Local unit, lint, Debug APK, Android-test compilation
+and product-policy gates pass. GitHub Actions run 62 also passed all three
+device shards, API 36 smoke and verified-Debug publication. Real hardware
 remains explicitly `UNVERIFIED_HARDWARE`: perform one controlled KC-2W run with
 Raymarine/IS42 and packet capture before treating this as a production safety
 release.

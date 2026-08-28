@@ -655,9 +655,9 @@
 - Root cause: origin semantics and provider readiness were collapsed into one `waitingForGps = !acceptedReadiness.ready` condition. That contradicted the required `lock → persist WAITING → re-prime → activate` sequence.
 - Failing test: `waitingSessionPrimesAlreadyAvailableRawFix`; the Manual and Map recovery stories also retain assertions for no pre-activation points/samples, coordinate preservation and exactly one activation event.
 - Fix commit: **Current `codex/develop` delivery commit**
-- Verification result: **Manual/Map now always persist WAITING before the post-lock integrity prime. A synchronously available accepted fix immediately performs the one serialized transition to ARMED/LEARNING and writes `GPS_MONITORING_ACTIVATED`; absent evidence remains WAITING. Current/Backdown behavior is unchanged. Local 620-test Debug suite, lint, APK assembly and Android-test source compilation pass; remote device execution is pending.**
+- Verification result: **Manual/Map now always persist WAITING before the post-lock integrity prime. A synchronously available accepted fix immediately performs the one serialized transition to ARMED/LEARNING and writes `GPS_MONITORING_ACTIVATED`; absent evidence remains WAITING. Current/Backdown behavior is unchanged. Local 620-test Debug suite, lint, APK assembly and Android-test source compilation passed. GitHub Actions run 62 then passed all three device-integration shards and API 36 smoke.**
 - Real hardware verified: **No — verify Manual and Map sessions once with absent NMEA, then restore the same connection and inspect the unchanged anchor coordinate.**
-- Status: **FIXED IN CODE — REMOTE DEVICE SHARDS AND HARDWARE QA PENDING**
+- Status: **FIXED AND VERIFIED IN AUTOMATION — REAL-VESSEL QA PENDING**
 
 ## Finding P1-047 — Device stories claimed provider evidence that their setup never acquired
 
@@ -668,9 +668,9 @@
 - Root cause: test preconditions and selectors drifted while production ownership, copy and LazyColumn structure became stricter. Increasing timeouts would not create the missing GNSS subscription/NMEA connection or fix invalid selectors.
 - Failing test: `freshSystemGpsArmCreatesAnActiveSessionWithoutNmea`, `manualCoordinateWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, `mapPickWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, `passiveLossKeepsWatchArmedAndRecordsImmediateAndTimedAlarms`, `aboutPageShowsRealMakerCrewAndOptionalSupportConfirmation`, `firstRunMakerPageHasCrewAndVoyageButNeverAsksForMoney`, `feedbackPageBuildsAnEditableEmailRequestWithoutSendingInsideTheApp`, and `nmeaInputAndOutputKeepReceiveAndSendPortsOnSeparateTopLevelPages`.
 - Fix commit: **Current `codex/develop` delivery commit**
-- Verification result: **Run 61 proved that this emulator image did not expose host `adb emu geo fix` as a repository-visible non-mock GNSS sample. The System ARM-race story now establishes its actual precondition deterministically with a Debug-only raw GPS-provider `Location`, then exercises the production provider conversion, AcceptedPosition integrity, Service and Room path; release builds reject the test entry point. Manual/Map create one quiet formal RX connection before testing later data recovery. Passive loss accepts the safety retry state. About/Settings use keyed Lazy items, current localized copy is asserted, and Output navigation scrolls by top-level item. Assertions for accepted position, mock/provider rejection, generation, WAITING, coordinate preservation and same-socket isolation were not weakened.**
+- Verification result: **Run 61 proved that this emulator image did not expose host `adb emu geo fix` as a repository-visible non-mock GNSS sample. The System ARM-race story now establishes its actual precondition deterministically with a Debug-only raw GPS-provider `Location`, then exercises the production provider conversion, AcceptedPosition integrity, Service and Room path; release builds reject the test entry point. Manual/Map create one quiet formal RX connection before testing later data recovery. Passive loss accepts the safety retry state. About/Settings use keyed Lazy items, current localized copy is asserted, and Output navigation scrolls by top-level item. Assertions for accepted position, mock/provider rejection, generation, WAITING, coordinate preservation and same-socket isolation were not weakened. GitHub Actions run 62 passed every device shard.**
 - Real hardware verified: **No — these are automated test-harness corrections; the corresponding vessel acceptance matrix is still required.**
-- Status: **FIXED IN TEST/SELECTOR CODE — REMOTE DEVICE SHARDS PENDING**
+- Status: **FIXED AND VERIFIED IN ALL REMOTE DEVICE SHARDS**
 
 ## Finding P0-049 — Same-packet NMEA GPS and sonar depth could miss each other forever
 
@@ -681,9 +681,9 @@
 - Root cause: depth first saw the previous accepted position as stale and replaced the held depth; when the just-parsed position callback arrived, `SonarDepthHoldTracker` rejected it solely because its measurement timestamp preceded DPT by a few milliseconds. The same ordering repeated for every packet.
 - Failing test: `sonarRuntimePairsDepthOnlyWithGpsFromTheSameNmeaServer`; new JVM regression `samePacketPositionMeasuredJustBeforeDepthStillPairsAfterCollectorReordering`.
 - Fix commit: **Current `codex/develop` delivery commit**
-- Verification result: **A current NMEA position measured up to the existing 2-second live pairing window before the depth may now pair after collector reordering. Older positions remain rejected; provider checks, current-connection generation clearing, depth hold expiry and no-System-GPS sonar rules remain unchanged. Targeted JVM regression and Android-test compilation pass; remote device execution is pending.**
+- Verification result: **A current NMEA position measured up to the existing 2-second live pairing window before the depth may now pair after collector reordering. Older positions remain rejected; provider checks, current-connection generation clearing, depth hold expiry and no-System-GPS sonar rules remain unchanged. The targeted JVM regression passed, Android-test sources compiled, and GitHub Actions run 62 passed the affected device shard plus the complete matrix.**
 - Real hardware verified: **No — verify RMC/GGA + DPT/DBT from the real shared NMEA system during a short survey.**
-- Status: **FIXED IN CODE — REMOTE DEVICE SHARD AND HARDWARE QA PENDING**
+- Status: **FIXED AND VERIFIED IN AUTOMATION — REAL-NMEA/SONAR QA PENDING**
 
 ## Finding P1-050 — Environmental-disable story read the audit log between two Room writes
 
@@ -694,9 +694,9 @@
 - Root cause: `ConditionRuntime.updateConfig()` intentionally persists the session before appending audit events. Room invalidates those tables independently, so observing the first write does not prove the second transaction has emitted yet.
 - Failing test: `disconnectedInstrumentNeverTrapsAnAlreadyEnabledEnvironmentalAlert`.
 - Fix commit: **Current `codex/develop` delivery commit**
-- Verification result: **The behavior assertion still requires both outcomes, but now independently awaits the explicit event Flow instead of assuming cross-table emission order. No timeout was increased and no product assertion was removed. Android-test compilation passes; remote shard execution is pending.**
+- Verification result: **The behavior assertion still requires both outcomes, but now independently awaits the explicit event Flow instead of assuming cross-table emission order. No timeout was increased and no product assertion was removed. Android-test compilation passed, and GitHub Actions run 62 passed the affected shard plus the complete device matrix.**
 - Real hardware verified: **Not applicable — production persisted both facts; this correction removes a test observation race.**
-- Status: **FIXED IN TEST — REMOTE DEVICE SHARD PENDING**
+- Status: **FIXED AND VERIFIED IN ALL REMOTE DEVICE SHARDS**
 
 ## Finding P1-048 — Failed Android shards could hang while collecting diagnostics
 
