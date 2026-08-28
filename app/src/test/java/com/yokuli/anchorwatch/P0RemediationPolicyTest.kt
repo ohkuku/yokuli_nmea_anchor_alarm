@@ -7,6 +7,7 @@ import com.yokuli.anchorwatch.data.vessel.NmeaOutputPreset
 import com.yokuli.anchorwatch.data.vessel.withPreset
 import com.yokuli.anchorwatch.data.vessel.anyStreamSelected
 import com.yokuli.anchorwatch.domain.model.*
+import com.yokuli.anchorwatch.domain.anchor.AnchorSetupDepthPolicy
 import com.yokuli.anchorwatch.domain.safety.AnchorSetupReadinessEvaluator
 import com.yokuli.anchorwatch.domain.safety.AnchorSetupReadinessInput
 import com.yokuli.anchorwatch.domain.vessel.*
@@ -36,11 +37,32 @@ class P0RemediationPolicyTest {
     )
 
     @Test fun staleNmeaFixCannotSeedCurrentPositionAnchor(){assertEquals("ACCEPTED_POSITION_STALE",readiness(acceptedNmea(nmeaFix(1_000))).reason)}
-    @Test fun fixNewerThanACommandEntryClockIsNotMisreportedAsStale(){
+    @Test fun negativeAcceptedAgeIsReportedAsClockAheadNotStale(){
         val fix=nmeaFix(10_001)
         val staleEntrySnapshot=readiness(acceptedNmea(fix),now=10_000)
-        assertEquals("ACCEPTED_POSITION_CLOCK_ORDER_INVALID",staleEntrySnapshot.reason)
+        assertEquals("ACCEPTED_POSITION_CLOCK_AHEAD",staleEntrySnapshot.reason)
         assertTrue("ARM must compare after its synchronous prime",readiness(acceptedNmea(fix),now=10_002).ready)
+    }
+    @Test fun providerFixArrivingDuringArmIsReadyAtThePostPrimeDecisionClock(){
+        val armStartedAt=100_000L
+        val fix=nmeaFix(100_080L)
+        val decisionNow=100_120L
+        assertTrue(fix.receivedElapsedRealtime>armStartedAt)
+        val result=readiness(acceptedNmea(fix),now=decisionNow)
+        assertTrue(result.ready)
+        assertTrue(result.evidence.contains("age 40 ms"))
+    }
+    @Test fun conditionFreshnessUsesItsPostSnapshotDecisionClock(){
+        val armStartedAt=100_000L
+        val depthReceivedAt=100_080L
+        val conditionDecisionNow=100_120L
+        assertTrue(depthReceivedAt>armStartedAt)
+        assertTrue(AnchorSetupDepthPolicy.nmeaAvailable(
+            NmeaConnectionState.CONNECTED,
+            depthMeters=8.4,
+            receivedElapsedRealtime=depthReceivedAt,
+            nowElapsedRealtime=conditionDecisionNow,
+        ))
     }
     @Test fun rejectedPositionCannotSeedAnchorCentre(){assertFalse(readiness(acceptedNmea().copy(disposition="REJECTED",trust=FixTrust.REJECTED)).ready)}
     @Test fun quarantinedPositionCannotSeedAnchorCentre(){assertFalse(readiness(acceptedNmea().copy(disposition="QUARANTINED",trust=FixTrust.QUARANTINED)).ready)}

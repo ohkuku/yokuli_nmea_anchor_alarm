@@ -76,7 +76,7 @@ object AcceptedAnchorPositionPolicy {
         // negative age means the caller sampled its comparison clock before
         // it sampled this StateFlow; it is not stale. Keep the failure distinct
         // so any future caller-order regression cannot masquerade as old GPS.
-        if(age<0L)return no("ACCEPTED_POSITION_CLOCK_ORDER_INVALID","Accepted fix was sampled ${-age} ms after the comparison clock.")
+        if(age<0L)return no("ACCEPTED_POSITION_CLOCK_AHEAD","Accepted fix timestamp is ${-age} ms newer than the decision clock.")
         if(age>=maximumAgeMillis.coerceAtLeast(1L))return no("ACCEPTED_POSITION_STALE","Accepted position age: $age ms.")
         return when(requestedSource){
             GpsDataSource.NMEA->{

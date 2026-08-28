@@ -30,6 +30,34 @@ data class RuntimeUserFeedback(
 
 enum class RuntimeFeedbackContext { GENERAL, ARM_WATCH }
 
+/**
+ * Privacy-safe evidence for the most recent Anchor Watch position decision.
+ * Exact coordinates and raw NMEA sentences are deliberately excluded. Ages
+ * are retained verbatim (including a negative value) so a sampling-order bug
+ * can never be hidden by formatting or clamping.
+ */
+data class ArmPositionDiagnostic(
+    val requestedSource:String,
+    val outcome:String,
+    val readinessReason:String,
+    val armStartedElapsedRealtime:Long,
+    val decisionElapsedRealtime:Long,
+    val providerReceivedElapsedRealtime:Long?=null,
+    val providerAgeMillis:Long?=null,
+    val providerType:String?=null,
+    val acceptedSelectedSource:String,
+    val acceptedDisposition:String,
+    val acceptedReason:String?=null,
+    val acceptedReceivedElapsedRealtime:Long?=null,
+    val acceptedAgeMillis:Long?=null,
+    val acceptedLastElapsedRealtime:Long?=null,
+    val primeResultCount:Int=0,
+    val connectionState:String,
+    val connectionStartedElapsedRealtime:Long?=null,
+    val liveConnectionGeneration:Long,
+    val acceptedConnectionGeneration:Long?=null,
+)
+
 data class RuntimeDiagnostics(
     val acceptedFixCount:Long=0,
     val quarantinedFixCount:Long=0,
@@ -63,6 +91,7 @@ data class RuntimeDiagnostics(
     val restoreStage:String="IDLE",
     val restoreError:String?=null,
     val lastUserFeedback:RuntimeUserFeedback?=null,
+    val lastArmPositionDiagnostic:ArmPositionDiagnostic?=null,
 )
 
 /**
@@ -117,6 +146,8 @@ class RuntimeDiagnosticsRepository @Inject constructor(
     }}}
 
     fun recordEstimatorRun(durationMillis:Long){_state.update{it.copy(estimatorRuns=it.estimatorRuns+1,estimatorLastDurationMs=durationMillis,estimatorMaxDurationMs=maxOf(it.estimatorMaxDurationMs,durationMillis))}}
+
+    fun recordArmPositionDiagnostic(value:ArmPositionDiagnostic){_state.update{it.copy(lastArmPositionDiagnostic=value)}}
 
     /** Distinguishes a newly-created Android service from stale process state. */
     fun serviceStarting(){_state.update{it.copy(serviceGeneration=it.serviceGeneration+1,serviceReady=false,restoredSessionId=null,restoreStage="STARTING",restoreError=null)}}

@@ -676,6 +676,16 @@ private fun heldNmeaValue(value:Double?,received:Long?,unit:String,now:Long,fres
                 DiagnosticsRow(tr("Accepted / quarantined / rejected","可信 / 隔离 / 拒绝"),"${runtime.acceptedFixCount} / ${runtime.quarantinedFixCount} / ${runtime.rejectedFixCount}")
                 DiagnosticsRow(tr("NMEA reconnects","NMEA 重连次数"),runtime.nmeaReconnectCount.toString())
                 DiagnosticsRow(tr("Integrity time (last / max)","完整性检查耗时（最近 / 最大）"),"${runtime.positionIntegrityLastDurationMicros} / ${runtime.positionIntegrityMaxDurationMicros} µs")
+                runtime.lastArmPositionDiagnostic?.let{arm->
+                    HorizontalDivider();DiagnosticsSection(tr("Last anchor-start position decision","最近一次启动锚警的船位判断"))
+                    DiagnosticsRow(tr("Outcome / reason","结果 / 原因"),"${diagnosticState(arm.outcome)} · ${arm.readinessReason}")
+                    DiagnosticsRow(tr("Requested / accepted source","请求 / 可信来源"),"${diagnosticState(arm.requestedSource)} / ${diagnosticState(arm.acceptedSelectedSource)}")
+                    DiagnosticsRow(tr("Provider / accepted age","Provider / 可信船位年龄"),"${arm.providerAgeMillis?.let{"$it ms"}?:"—"} / ${arm.acceptedAgeMillis?.let{"$it ms"}?:"—"}")
+                    DiagnosticsRow(tr("Accepted disposition","可信处理结果"),"${diagnosticState(arm.acceptedDisposition)}${arm.acceptedReason?.let{" · $it"}.orEmpty()}")
+                    DiagnosticsRow(tr("Prime result count","同步提交结果数"),arm.primeResultCount.toString())
+                    DiagnosticsRow(tr("NMEA state / generation","NMEA 状态 / 连接代次"),"${diagnosticState(arm.connectionState)} · ${arm.acceptedConnectionGeneration?:"—"}/${arm.liveConnectionGeneration}")
+                    DiagnosticsRow(tr("ARM / decision clock","ARM / 判断时钟"),"${arm.armStartedElapsedRealtime} / ${arm.decisionElapsedRealtime} ms")
+                }
 
                 HorizontalDivider();DiagnosticsSection(tr("Anchor & sonar processing","锚点与声呐处理"))
                 DiagnosticsRow(tr("Centre estimator runs","中心估算次数"),"${runtime.estimatorRuns}  ·  ${runtime.estimatorLastDurationMs}/${runtime.estimatorMaxDurationMs} ms")

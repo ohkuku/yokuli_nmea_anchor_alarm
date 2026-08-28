@@ -70,6 +70,7 @@ import com.yokuli.anchorwatch.domain.model.NmeaConnectionState
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import com.yokuli.anchorwatch.location.AcceptedPositionRepository
+import com.yokuli.anchorwatch.location.AcceptedAnchorPositionPolicy
 import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
 import com.yokuli.anchorwatch.service.AnchorForegroundService
@@ -190,6 +191,29 @@ class AnchorSafetyFlowTest {
         ))
         assertEquals(fresh,acceptedPosition.state.value.acceptedFix?.receivedElapsedRealtime)
         assertEquals("ACCEPTED",acceptedPosition.state.value.disposition)
+    }
+
+    @Test fun duplicatePrimeWithFreshAcceptedStateStillRemainsReady() = runBlocking<Unit>{
+        val now=SystemClock.elapsedRealtime()
+        val fix=NavigationFix(
+            latitude=-36.8485,longitude=174.7633,receivedElapsedRealtime=now,
+            horizontalAccuracyMeters=4.0,positionProvider=PositionProvider.ANDROID_GNSS,
+            sourceSentence="TEST_DUPLICATE_GNSS",valid=true,
+        )
+        acceptedPosition.unlockSource(null)
+        assertTrue(acceptedPosition.beginArmAttempt(GpsDataSource.SYSTEM))
+        assertTrue(acceptedPosition.submit(GpsDataSource.SYSTEM,fix).isNotEmpty())
+        assertTrue("A duplicate synchronous prime is expected to be deduplicated",acceptedPosition.submit(GpsDataSource.SYSTEM,fix).isEmpty())
+        val readiness=AcceptedAnchorPositionPolicy.evaluate(
+            state=acceptedPosition.state.value,
+            requestedSource=GpsDataSource.SYSTEM,
+            nowElapsedRealtime=SystemClock.elapsedRealtime(),
+            maximumAgeMillis=15_000L,
+            nmeaConnection=NmeaConnectionState.DISCONNECTED,
+            nmeaConnectionStartedElapsedRealtime=null,
+            nmeaConnectionGeneration=navigation.connectionGeneration(),
+        )
+        assertTrue("Readiness must use accepted state, not prime result count",readiness.ready)
     }
 
     @Test fun freshSystemGpsArmCreatesAnActiveSessionWithoutNmea() = runBlocking<Unit>{
