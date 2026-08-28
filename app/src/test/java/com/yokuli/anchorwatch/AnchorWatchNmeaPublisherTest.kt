@@ -23,7 +23,32 @@ class AnchorWatchNmeaPublisherTest{
         val identity=if(phone)VesselSourceIdentity("phone:vessel-heading",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="VESSEL_COMPASS",displayName="Phone vessel heading")else null
         return VesselObservation(value,source,receivedElapsedRealtime=received,quality=VesselDataQuality.GOOD,freshness=VesselDataFreshness.FRESH,sourceIdentity=identity,sourceClass=if(phone)VesselSourceClass.PHONE_VESSEL_HEADING else VesselSourceClass.BOAT_NMEA,provenanceDetail=if(phone)VesselProvenance.PhoneSensor("Mounted phone heading",3)else null)
     }
-    private fun encodeHeading(snapshot:VesselDataSnapshot,now:Long,settings:NmeaDeviceOutputSettings=dedicatedDestination,inputGeneration:Long?=null,inputProfile:String?=null)=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,settings,now,inputTransportGeneration=inputGeneration,inputProfileId=inputProfile,mountCalibration=aligned,runtimeMountState=PhoneVesselMountState.VESSEL_MOUNTED)
+    private fun encodeHeading(snapshot:VesselDataSnapshot,now:Long,settings:NmeaDeviceOutputSettings=dedicatedDestination,inputGeneration:Long?=null,inputProfile:String?=null,mountState:PhoneVesselMountState=PhoneVesselMountState.VESSEL_MOUNTED,calibration:VesselMountCalibration=aligned)=encoder.encode(AnchorWatchNmeaStream.HEADING,snapshot,settings,now,inputTransportGeneration=inputGeneration,inputProfileId=inputProfile,mountCalibration=calibration,runtimeMountState=mountState)
+
+    @Test fun freshAlignedHeadingPublishesHdtWithoutTripMount(){
+        val batch=encodeHeading(VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=1_000)),1_000,mountState=PhoneVesselMountState.HANDHELD,calibration=aligned.copy(mountState=PhoneVesselMountState.HANDHELD,mountConfirmedVersion=0))
+        assertEquals(1,batch.sentences.size)
+        assertTrue(batch.sentences.single().contains("HDT,123.40,T"))
+        assertNull(batch.suppressionReason)
+    }
+
+    @Test fun headingAlignmentEpochMismatchIsExposedByEncoder(){
+        val batch=encodeHeading(VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=1_000)),1_000,mountState=PhoneVesselMountState.HANDHELD,calibration=aligned.copy(headingAlignmentVersion=4))
+        assertTrue(batch.sentences.isEmpty())
+        assertEquals("HEADING_ALIGNMENT_EPOCH_MISMATCH",batch.suppressionReason)
+    }
+
+    @Test fun staleAlignedHeadingDoesNotPublishHdtAndExplainsWhy(){
+        val batch=encodeHeading(VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=1_000)),3_001,mountState=PhoneVesselMountState.HANDHELD)
+        assertTrue(batch.sentences.isEmpty())
+        assertEquals("PHONE_HEADING_STALE",batch.suppressionReason)
+    }
+
+    @Test fun disabledHeadingReportsUserDisabled(){
+        val batch=encodeHeading(VesselDataSnapshot(headingTrueDegrees=heading(123.4,received=1_000)),1_000,settings=dedicatedDestination.copy(phoneHeadingEnabled=false))
+        assertTrue(batch.sentences.isEmpty())
+        assertEquals("USER_DISABLED",batch.suppressionReason)
+    }
 
     @Test fun everyStreamUsesOneHertzAndConstantHeadingNeverBecomesBlank(){
         assertTrue(AnchorWatchNmeaStream.entries.all{it.periodMillis==1_000L})

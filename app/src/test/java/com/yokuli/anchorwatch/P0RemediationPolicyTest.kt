@@ -16,6 +16,7 @@ import com.yokuli.anchorwatch.location.AnchorRawPositionPrimingPolicy
 import com.yokuli.anchorwatch.location.AcceptedPositionState
 import com.yokuli.anchorwatch.location.NewAnchorPositionSourcePolicy
 import com.yokuli.anchorwatch.location.vessel.PhoneVesselMountState
+import com.yokuli.anchorwatch.location.vessel.PhoneVesselOutputReadinessPolicy
 import com.yokuli.anchorwatch.location.vessel.VesselMountCalibration
 import com.yokuli.anchorwatch.runtime.output.PhoneOwnedPublicationProvenancePolicy
 import com.yokuli.anchorwatch.runtime.output.PhoneVesselHeadingPublicationPolicy
@@ -127,13 +128,17 @@ class P0RemediationPolicyTest {
         123.0,VesselDataSource.PHONE_MAGNETOMETER,receivedElapsedRealtime=received,freshness=freshness,
         sourceIdentity=headingIdentity,sourceClass=sourceClass,provenanceDetail=VesselProvenance.PhoneSensor("heading",calibrationVersion),
     )
-    @Test fun handheldPhoneNeverPublishesHdt(){assertEquals("PHONE_NOT_VESSEL_MOUNTED",PhoneVesselHeadingPublicationPolicy.evaluate(heading(),aligned,PhoneVesselMountState.HANDHELD,10_000).reason)}
+    @Test fun alignedHeadingPublishesWithoutTripMountSession(){assertTrue(PhoneVesselHeadingPublicationPolicy.evaluate(heading(),aligned.copy(mountState=PhoneVesselMountState.HANDHELD,mountConfirmedVersion=0),PhoneVesselMountState.HANDHELD,10_000).allowed)}
+    @Test fun alignedHeadingDoesNotRequireVesselMountedAttitudeFrame(){assertTrue(PhoneVesselHeadingPublicationPolicy.evaluate(heading(),aligned.copy(mountState=PhoneVesselMountState.MOUNT_SUSPECT,attitudeInvalidatedAt=3),PhoneVesselMountState.MOUNT_SUSPECT,10_000).allowed)}
     @Test fun uncalibratedPhoneNeverPublishesHdt(){assertEquals("HEADING_ALIGNMENT_REQUIRED",PhoneVesselHeadingPublicationPolicy.evaluate(heading(),VesselMountCalibration(),PhoneVesselMountState.VESSEL_MOUNTED,10_000).reason)}
     @Test fun phoneDeviceCompassCannotFallbackIntoVesselHdt(){assertEquals("NOT_PHONE_VESSEL_HEADING",PhoneVesselHeadingPublicationPolicy.evaluate(heading(sourceClass=VesselSourceClass.PHONE_DEVICE_COMPASS),aligned,PhoneVesselMountState.VESSEL_MOUNTED,10_000).reason)}
     @Test fun heldHeadingIsNeverRepublishedAsFreshHdt(){assertEquals("HELD_OR_STALE_HEADING",PhoneVesselHeadingPublicationPolicy.evaluate(heading(VesselDataFreshness.HELD),aligned,PhoneVesselMountState.VESSEL_MOUNTED,10_000).reason)}
     @Test fun staleHeadingIsNeverRepublished(){assertEquals("PHONE_HEADING_STALE",PhoneVesselHeadingPublicationPolicy.evaluate(heading(received=1_000),aligned,PhoneVesselMountState.VESSEL_MOUNTED,10_000).reason)}
-    @Test fun headingResumesOnlyAfterCurrentMountEpochConfirmation(){assertEquals("HEADING_ALIGNMENT_EPOCH_MISMATCH",PhoneVesselHeadingPublicationPolicy.evaluate(heading(calibrationVersion=2),aligned,PhoneVesselMountState.VESSEL_MOUNTED,10_000).reason)}
-    @Test fun currentAlignedMountedPhoneVesselHeadingMayPublish(){assertTrue(PhoneVesselHeadingPublicationPolicy.evaluate(heading(),aligned,PhoneVesselMountState.VESSEL_MOUNTED,10_000).allowed)}
+    @Test fun headingResumesOnlyAfterCurrentAlignmentEpochConfirmation(){assertEquals("HEADING_ALIGNMENT_EPOCH_MISMATCH",PhoneVesselHeadingPublicationPolicy.evaluate(heading(calibrationVersion=2),aligned,PhoneVesselMountState.HANDHELD,10_000).reason)}
+    @Test fun headingReadyUiMatchesPublisherEligibility(){
+        val calibration=aligned.copy(mountState=PhoneVesselMountState.HANDHELD,mountConfirmedVersion=0)
+        assertEquals(PhoneVesselOutputReadinessPolicy.evaluate(calibration,PhoneVesselMountState.HANDHELD).ready,PhoneVesselHeadingPublicationPolicy.evaluate(heading(),calibration,PhoneVesselMountState.HANDHELD,10_000).allowed)
+    }
 
     private val phone=VesselSourceIdentity("phone:gnss",sourceType=VesselSourceType.PHONE_SENSOR,phoneSensorType="GNSS",displayName="Phone GNSS")
     private val boat=VesselSourceIdentity("nmea:boat:7:RMC",sourceType=VesselSourceType.NMEA_INPUT,sentenceType="RMC",displayName="Boat GPS")

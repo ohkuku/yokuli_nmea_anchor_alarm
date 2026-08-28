@@ -25,4 +25,13 @@ object NmeaStreamReadinessPolicy {
     }
 
     fun sensor(fresh:Boolean)=if(fresh)NmeaStreamReadiness.READY else NmeaStreamReadiness.STANDBY
+
+    /** Maps an exact stream-local suppression reason to presentation state.
+     * WAITING_CALIBRATION is reserved for a real missing/obsolete calibration;
+     * the exact reason remains separately visible in TX diagnostics. */
+    fun forSuppression(stream:AnchorWatchNmeaStream,reason:String?):NmeaStreamReadiness=when{
+        stream==AnchorWatchNmeaStream.HEADING&&reason in setOf("HEADING_ALIGNMENT_REQUIRED","HEADING_ALIGNMENT_EPOCH_MISMATCH")->NmeaStreamReadiness.WAITING_CALIBRATION
+        stream==AnchorWatchNmeaStream.POSITION&&reason=="PHONE_GPS_STALE"->NmeaStreamReadiness.WAITING_POSITION
+        else->NmeaStreamReadiness.STANDBY
+    }
 }

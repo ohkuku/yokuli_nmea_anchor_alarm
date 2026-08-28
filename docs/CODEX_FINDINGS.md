@@ -735,4 +735,17 @@
 - Fix commit: **Current `codex/develop` delivery commit**
 - Verification result: **`SystemMonotonicClock` now delegates to Android `SystemClock.elapsedRealtime()`, the same domain used by NMEA ingestion, connection generations, Android Location and accepted GPS evidence. Strict negative-age diagnostics remain in place for a genuine future clock-domain regression; fresh fixes are no longer rejected because the phone slept. JVM AlarmEngine tests now pass explicit deterministic times instead of invoking an Android platform clock.**
 - Real hardware verified: **No — install the new APK and start one NMEA watch and one Phone-GPS watch after the screen has previously slept.**
-- Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD REQUIRED; REAL-DEVICE RECHECK REQUIRED**
+- Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD PASSED; REAL-DEVICE RECHECK REQUIRED**
+
+## Finding P1-053 — Heading output contradicted the Settings calibration contract
+
+- Severity: **P1 / completed Heading alignment still produced zero HDT sentences**
+- User story: after the sailor aligns the phone direction to the vessel bow, both Phone/App boat output and the Phone-hosted NMEA service may publish a fresh aligned HDT/HDG value. Trip Watch attitude mounting applies only to vessel-frame ROT, heel and pitch.
+- Evidence: `PhoneVesselOutputReadinessPolicy` and the Phone vessel sensors page reported Heading ready from `headingAligned`, but `PhoneOwnedRuntimeSafety` mount-gated `HEADING` and `PhoneVesselHeadingPublicationPolicy` independently required `VESSEL_MOUNTED`. The output page simultaneously told the user that Heading alignment and Trip attitude were independent and that HDT required a vessel-mounted phone.
+- Reproduction steps: complete Settings → Phone vessel sensors → Align now without opening a Trip attitude segment; enable Heading and start either NMEA sharing product. The UI reports `HEADING READY`, while runtime records `WAITING_CALIBRATION` and writes no HDT.
+- Root cause: two obsolete Trip-attitude mount gates remained in the Heading publication path after the product contract separated durable Heading alignment from temporary vessel-frame motion capture.
+- Failing test: `alignedHeadingPublishesWithoutTripMountSession`, `alignedHeadingDoesNotRequireVesselMountedAttitudeFrame`, `headingReadyUiMatchesPublisherEligibility`, `freshAlignedHeadingPublishesHdtWithoutTripMount`, plus ROT/Attitude preservation and exact-suppression regressions in `NmeaStreamReadinessPolicyTest` and `AnchorWatchNmeaPublisherTest`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Runtime mount suppression now applies only to `RATE_OF_TURN` and `ATTITUDE`. Heading publication still requires an aligned direct Phone vessel-heading source, a fresh measurement no older than two seconds, valid Phone-sensor provenance and the current Heading-alignment epoch, but no Trip mount state. The encoder preserves exact suppression reasons and treats a disabled Heading switch as `USER_DISABLED`; `WAITING_CALIBRATION` is reserved for missing or obsolete alignment. Boat TX and the local Phone NMEA service share this encoder. Conflicting output and service copy was corrected. Targeted JVM tests passed, Android-test sources compiled, and the Debug APK assembled.**
+- Real hardware verified: **No — align once outside Trip Watch, start each sharing product separately and confirm stable 1 Hz HDT at the receiver; then rotate the phone, realign and verify the new heading. Confirm ROT/heel/pitch remain absent until a Trip attitude frame is explicitly active.**
+- Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD PASSED; REAL-NMEA RECEIVER QA REQUIRED**

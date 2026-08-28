@@ -85,12 +85,27 @@ class NmeaStreamReadinessPolicyTest {
     }
 
     @Test fun invalidAttitudeSegmentSuppressesOnlyMotionOnEveryTransport(){
-        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
         assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.RATE_OF_TURN,PhoneVesselMountState.MOUNT_SUSPECT))
         assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.ATTITUDE,PhoneVesselMountState.MOUNT_SUSPECT))
         assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.POSITION,PhoneVesselMountState.MOUNT_SUSPECT))
         assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.SAME_AS_INPUT_CONNECTION,AnchorWatchNmeaStream.PRESSURE,PhoneVesselMountState.MOUNT_SUSPECT))
-        assertEquals("MOUNT_SUSPECT",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+        assertNull(PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.HEADING,PhoneVesselMountState.MOUNT_SUSPECT))
+    }
+
+    @Test fun rotStillRequiresVesselMountedPhone(){
+        assertEquals("PHONE_NOT_MOUNTED",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.RATE_OF_TURN,PhoneVesselMountState.HANDHELD))
+    }
+
+    @Test fun attitudeStillRequiresVesselMountedPhone(){
+        assertEquals("PHONE_NOT_MOUNTED",PhoneOwnedRuntimeSafety.suppression(NmeaOutputTransportMode.DEDICATED_TCP,AnchorWatchNmeaStream.ATTITUDE,PhoneVesselMountState.HANDHELD))
+    }
+
+    @Test fun waitingCalibrationIsReservedForActualHeadingAlignmentProblems(){
+        assertEquals(NmeaStreamReadiness.WAITING_CALIBRATION,NmeaStreamReadinessPolicy.forSuppression(AnchorWatchNmeaStream.HEADING,"HEADING_ALIGNMENT_REQUIRED"))
+        assertEquals(NmeaStreamReadiness.WAITING_CALIBRATION,NmeaStreamReadinessPolicy.forSuppression(AnchorWatchNmeaStream.HEADING,"HEADING_ALIGNMENT_EPOCH_MISMATCH"))
+        assertEquals(NmeaStreamReadiness.STANDBY,NmeaStreamReadinessPolicy.forSuppression(AnchorWatchNmeaStream.HEADING,"PHONE_HEADING_STALE"))
+        assertEquals(NmeaStreamReadiness.STANDBY,NmeaStreamReadinessPolicy.forSuppression(AnchorWatchNmeaStream.HEADING,"USER_DISABLED"))
     }
 
     @Test fun missingHeadingAlignmentNeverBlocksTheTransportSession(){

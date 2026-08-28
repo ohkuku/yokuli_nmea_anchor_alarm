@@ -133,7 +133,7 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
         try{
         val encoded=when(stream){
             AnchorWatchNmeaStream.POSITION->if(!settings.phonePositionEnabled)EncodedStream(suppressionReason="USER_DISABLED")else localPosition(phoneFix,nowElapsed)
-            AnchorWatchNmeaStream.HEADING->localHeading(snapshot,settings.phoneHeadingFormat,nowElapsed,mountCalibration,runtimeMountState)
+            AnchorWatchNmeaStream.HEADING->if(!settings.phoneHeadingEnabled)EncodedStream(suppressionReason="USER_DISABLED")else localHeading(snapshot,settings.phoneHeadingFormat,nowElapsed,mountCalibration,runtimeMountState)
             AnchorWatchNmeaStream.RATE_OF_TURN->if(!settings.phoneRateOfTurnEnabled)EncodedStream(suppressionReason="USER_DISABLED")else localRateOfTurn(snapshot,nowElapsed)
             AnchorWatchNmeaStream.ATTITUDE->if(!settings.phoneAttitudeEnabled)EncodedStream(suppressionReason="USER_DISABLED")else localAttitude(snapshot,nowElapsed)
             AnchorWatchNmeaStream.PRESSURE->if(!settings.phonePressureEnabled)EncodedStream(suppressionReason="USER_DISABLED")else localPressure(snapshot,nowElapsed)
@@ -155,12 +155,15 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
     }
 
     private fun localHeading(snapshot:VesselDataSnapshot,format:PhoneHeadingOutputFormat,now:Long,calibration:VesselMountCalibration,mountState:PhoneVesselMountState):EncodedStream{
+        var suppressionReason:String?=null
         fun current(metric:VesselMetricId,selected:VesselObservation<Double>):PublishedMetricValue<Double>?{
             val candidate=snapshot.candidates[metric].orEmpty().filterIsInstance<com.yokuli.anchorwatch.domain.vessel.VesselSourceCandidate<Double>>().firstOrNull{it.sourceClass==VesselSourceClass.PHONE_VESSEL_HEADING&&it.source.sourceType==VesselSourceType.PHONE_SENSOR&&it.explicitValidity in setOf(CandidateValidity.ELIGIBLE,CandidateValidity.LOW_QUALITY)}
             val observation=candidate?.toObservation<Double>()?:selected
             val eligibility=PhoneVesselHeadingPublicationPolicy.evaluate(observation,calibration,mountState,now,candidate?.explicitValidity?:CandidateValidity.ELIGIBLE)
-            if(!eligibility.allowed)return null
-            return PublishedMetricValue(observation.value?:return null,observation.sourceIdentity?.persistentKey?:return null,false,false)
+            if(!eligibility.allowed){if(suppressionReason==null)suppressionReason=eligibility.reason;return null}
+            val value=observation.value?:run{if(suppressionReason==null)suppressionReason="MISSING_HEADING_VALUE";return null}
+            val source=observation.sourceIdentity?.persistentKey?:run{if(suppressionReason==null)suppressionReason="MISSING_PHONE_SENSOR_PROVENANCE";return null}
+            return PublishedMetricValue(value,source,false,false)
         }
         val trueHeading=current(VesselMetricId.HEADING_TRUE,snapshot.headingTrueDegrees)
         val magnetic=current(VesselMetricId.HEADING_MAGNETIC,snapshot.headingMagneticDegrees)
@@ -168,7 +171,7 @@ class AnchorWatchNmeaFeedEncoder @Inject constructor(
             if(format!=PhoneHeadingOutputFormat.HDG_MAGNETIC&&trueHeading!=null)add(mux.phoneHeading(trueHeading.value))
             if(format!=PhoneHeadingOutputFormat.HDT_TRUE&&magnetic!=null){val variation=trueHeading?.let{signedAngle(it.value-magnetic.value)};add(mux.phoneMagneticHeading(magnetic.value,variation))}
         }
-        return EncodedStream(sentences,trueHeading?.sourceStableKey?:magnetic?.sourceStableKey,if(sentences.isEmpty())"PHONE_VESSEL_HEADING_NOT_CURRENT_OR_MOUNTED" else null,sourceConflict(snapshot,VesselMetricId.HEADING_TRUE,setOf(VesselSourceClass.PHONE_VESSEL_HEADING)))
+        return EncodedStream(sentences,trueHeading?.sourceStableKey?:magnetic?.sourceStableKey,if(sentences.isEmpty())suppressionReason?:"NO_CURRENT_ALIGNED_PHONE_HEADING" else null,sourceConflict(snapshot,VesselMetricId.HEADING_TRUE,setOf(VesselSourceClass.PHONE_VESSEL_HEADING)))
     }
 
     private fun localRateOfTurn(snapshot:VesselDataSnapshot,now:Long):EncodedStream{

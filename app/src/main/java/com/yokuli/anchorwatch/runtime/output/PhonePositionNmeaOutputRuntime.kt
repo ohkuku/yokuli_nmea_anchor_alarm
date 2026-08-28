@@ -212,7 +212,7 @@ class AnchorWatchNmeaPublisher @Inject constructor(
             // receiving boat network also has a value for the same field. The
             // receiving instrument owns source selection; this publisher owns
             // only validity, provenance and a stable heartbeat.
-            outputConnection.recordDecision(name,policy,publicationDecision,ready,NmeaStreamReadinessPolicy.sensor(ready))
+            outputConnection.recordDecision(name,policy,publicationDecision,ready,if(ready)NmeaStreamReadiness.READY else NmeaStreamReadinessPolicy.forSuppression(stream,batch.suppressionReason))
             if(ready)prepare(generation,name,batch.sentences,now,batch.sourceStableKey,inputTransportGeneration)else{outputConnection.recordSuppressed(name,batch.suppressionReason?:"NO_COMPLETE_VALUE");null}
         }
         prepared.forEach{batch->pending.offer(batch)?.let{outputConnection.recordDropped(it.stream,"A newer 1 Hz value replaced this blocked stream batch.")}}
@@ -255,7 +255,7 @@ object FormalOutputSessionReadinessPolicy{
 object PhoneOwnedRuntimeSafety{
     fun suppression(mode:NmeaOutputTransportMode,stream:AnchorWatchNmeaStream,mountState:PhoneVesselMountState):String?{
         @Suppress("UNUSED_VARIABLE") val destinationOnly=mode
-        if(stream !in setOf(AnchorWatchNmeaStream.RATE_OF_TURN,AnchorWatchNmeaStream.ATTITUDE,AnchorWatchNmeaStream.HEADING))return null
+        if(stream !in setOf(AnchorWatchNmeaStream.RATE_OF_TURN,AnchorWatchNmeaStream.ATTITUDE))return null
         if(mountState==PhoneVesselMountState.VESSEL_MOUNTED)return null
         return if(mountState==PhoneVesselMountState.MOUNT_SUSPECT)"MOUNT_SUSPECT" else "PHONE_NOT_MOUNTED"
     }
