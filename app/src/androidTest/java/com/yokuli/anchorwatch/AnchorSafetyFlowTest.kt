@@ -35,6 +35,7 @@ import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
 import com.yokuli.anchorwatch.data.database.DepthSampleEntity
 import com.yokuli.anchorwatch.data.database.SonarDao
 import com.yokuli.anchorwatch.data.database.TripDao
+import com.yokuli.anchorwatch.data.database.TripSessionEntity
 import com.yokuli.anchorwatch.data.database.SonarSurveyEntity
 import com.yokuli.anchorwatch.data.nmea.ConnectionProfile
 import com.yokuli.anchorwatch.data.nmea.NmeaChecksum
@@ -529,6 +530,35 @@ class AnchorSafetyFlowTest {
             }
             compose.onNodeWithTag("trip_cockpit_mode").performClick()
             compose.onNodeWithTag("nav_anchor").assertExists()
+        }
+    }
+
+    @Test fun completedTripWithoutCoordinatesExplainsTheMissingRouteInRealHistory() = runBlocking<Unit> {
+        preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,appLanguage=AppLanguage.ENGLISH))
+        val tripId=tripDao.insertSession(TripSessionEntity(
+            name="No-position route story",
+            startedAt=System.currentTimeMillis(),
+            endedAt=System.currentTimeMillis(),
+            active=false,
+            boatLengthMeters=10.6,
+            draftMeters=1.8,
+            positionPreference="PHONE",
+            headingPreference="PHONE",
+            phoneMotionEnabled=false,
+            mountCalibrationVersion=null,
+        ))
+        try{
+            ActivityScenario.launch(MainActivity::class.java).use{
+                compose.onNodeWithTag("nav_sail").performClick()
+                compose.onNodeWithTag("sail_tab_1").performClick()
+                compose.waitUntil(10_000){compose.onAllNodesWithTag("trip_history_open_$tripId").fetchSemanticsNodes().size==1}
+                compose.onNodeWithTag("trip_history_open_$tripId").performClick()
+                compose.waitUntil(10_000){compose.onAllNodesWithTag("trip_route_empty").fetchSemanticsNodes().size==1}
+                compose.onNodeWithTag("trip_route_empty").assertIsDisplayed()
+                compose.onNodeWithText("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.").assertIsDisplayed()
+            }
+        }finally{
+            tripDao.deleteCompleted(tripId)
         }
     }
 
