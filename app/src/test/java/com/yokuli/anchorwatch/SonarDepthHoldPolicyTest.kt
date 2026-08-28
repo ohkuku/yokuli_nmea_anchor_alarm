@@ -53,6 +53,13 @@ class SonarDepthHoldPolicyTest {
         val fresh=observation(6.2,101_000);tracker.acceptRealDepth(fresh,DepthProvenance.from(fresh,0.0),3,fix(80.0,101_000));val result=tracker.acceptPosition(fix(81.0,101_500))!!
         assertEquals(6.2,result.depth.provenance.finalDepthMeters,0.0);assertEquals(500,result.ageMillis);assertTrue(result.depth.travelledMeters<2.0);assertEquals(SonarDepthHoldState.LIVE,result.decision.state)
     }
+    @Test fun samePacketPositionMeasuredJustBeforeDepthStillPairsAfterCollectorReordering(){
+        val tracker=SonarDepthHoldTracker();val depth=observation(6.1,10_003)
+        tracker.acceptRealDepth(depth,DepthProvenance.from(depth,0.0),7,null)
+        val paired=tracker.acceptPosition(fix(0.0,10_000))
+        assertNotNull(paired);assertEquals(0L,paired!!.ageMillis);assertEquals(SonarDepthHoldState.LIVE,paired.decision.state)
+        assertTrue(tracker.acceptPosition(fix(0.0,8_002))==null)
+    }
     @Test fun reconnectClearsOldDepthButDelayedCollectorCannotClearNewGenerationDepth(){
         val tracker=SonarDepthHoldTracker();val old=observation(6.1,1_000);tracker.acceptRealDepth(old,DepthProvenance.from(old,0.0),2,null);assertTrue(tracker.clearForConnectionGeneration(3));assertTrue(tracker.current==null)
         val fresh=observation(6.4,2_000);tracker.acceptRealDepth(fresh,DepthProvenance.from(fresh,0.0),3,null);assertFalse(tracker.clearForConnectionGeneration(3));assertEquals(6.4,tracker.current!!.provenance.finalDepthMeters,0.0)

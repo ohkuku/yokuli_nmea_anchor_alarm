@@ -59,7 +59,13 @@ class SonarDepthHoldTracker {
 
     fun acceptPosition(fix:NavigationFix):SonarHeldPosition?{
         val depth=current?:return null
-        if(fix.receivedElapsedRealtime<depth.depthElapsedRealtime)return null
+        // One NMEA read commonly contains RMC/GGA immediately before DPT/DBT.
+        // Navigation and depth are accepted by independent collectors, so the
+        // position callback may run after the depth callback even though its
+        // measurement timestamp is a few milliseconds earlier. Pair that
+        // same-stream evidence inside the live window; truly old positions are
+        // still rejected and connection-generation changes clear the hold.
+        if(depth.depthElapsedRealtime-fix.receivedElapsedRealtime>SonarDepthHoldPolicy.LIVE_MILLIS)return null
         val previousLat=depth.lastPositionLatitude;val previousLon=depth.lastPositionLongitude
         val step=if(previousLat!=null&&previousLon!=null)AnchorGeometry.distanceMeters(previousLat,previousLon,fix.latitude,fix.longitude)else null
         val ignored=step?.takeIf{it>SonarDepthHoldPolicy.MAX_ACCUMULATED_STEP_METERS}

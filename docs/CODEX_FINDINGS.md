@@ -668,9 +668,35 @@
 - Root cause: test preconditions and selectors drifted while production ownership, copy and LazyColumn structure became stricter. Increasing timeouts would not create the missing GNSS subscription/NMEA connection or fix invalid selectors.
 - Failing test: `freshSystemGpsArmCreatesAnActiveSessionWithoutNmea`, `manualCoordinateWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, `mapPickWaitsForFirstAcceptedGpsThenArmsWithoutMovingAnchor`, `passiveLossKeepsWatchArmedAndRecordsImmediateAndTimedAlarms`, `aboutPageShowsRealMakerCrewAndOptionalSupportConfirmation`, `firstRunMakerPageHasCrewAndVoyageButNeverAsksForMoney`, `feedbackPageBuildsAnEditableEmailRequestWithoutSendingInsideTheApp`, and `nmeaInputAndOutputKeepReceiveAndSendPortsOnSeparateTopLevelPages`.
 - Fix commit: **Current `codex/develop` delivery commit**
-- Verification result: **The device runner refreshes the emulator's configured GNSS position every five seconds so its monotonic measurement time remains current throughout installation and sharding; the System story then acquires that real process-wide GNSS fix before ARM. Manual/Map create one quiet formal RX connection before testing later data recovery. Passive loss accepts the safety retry state. About/Settings use keyed Lazy items, current localized copy is asserted, and Output navigation scrolls by top-level item. Assertions for accepted position, generation, WAITING, coordinate preservation and same-socket isolation were not weakened. Android-test Kotlin compilation passes; device execution remains pending CI.**
+- Verification result: **Run 61 proved that this emulator image did not expose host `adb emu geo fix` as a repository-visible non-mock GNSS sample. The System ARM-race story now establishes its actual precondition deterministically with a Debug-only raw GPS-provider `Location`, then exercises the production provider conversion, AcceptedPosition integrity, Service and Room path; release builds reject the test entry point. Manual/Map create one quiet formal RX connection before testing later data recovery. Passive loss accepts the safety retry state. About/Settings use keyed Lazy items, current localized copy is asserted, and Output navigation scrolls by top-level item. Assertions for accepted position, mock/provider rejection, generation, WAITING, coordinate preservation and same-socket isolation were not weakened.**
 - Real hardware verified: **No — these are automated test-harness corrections; the corresponding vessel acceptance matrix is still required.**
 - Status: **FIXED IN TEST/SELECTOR CODE — REMOTE DEVICE SHARDS PENDING**
+
+## Finding P0-049 — Same-packet NMEA GPS and sonar depth could miss each other forever
+
+- Severity: **P0 / a valid sonar survey remained active but recorded zero samples**
+- User story: RMC/GGA and DPT/DBT received from the same current NMEA connection within one live pairing window must create a depth point regardless of which asynchronous collector finishes first.
+- Evidence: GitHub run 61 showed current same-stream evidence only 3 ms apart (`position=379651`, `depth=379654`), but the recorder remained at `sampleCount=0` with `REJECTED_STALE_POSITION`.
+- Reproduction steps: send RMC immediately followed by DPT every two seconds, start a survey after both streams are fresh, and schedule the depth collector ahead of the position-integrity collector.
+- Root cause: depth first saw the previous accepted position as stale and replaced the held depth; when the just-parsed position callback arrived, `SonarDepthHoldTracker` rejected it solely because its measurement timestamp preceded DPT by a few milliseconds. The same ordering repeated for every packet.
+- Failing test: `sonarRuntimePairsDepthOnlyWithGpsFromTheSameNmeaServer`; new JVM regression `samePacketPositionMeasuredJustBeforeDepthStillPairsAfterCollectorReordering`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **A current NMEA position measured up to the existing 2-second live pairing window before the depth may now pair after collector reordering. Older positions remain rejected; provider checks, current-connection generation clearing, depth hold expiry and no-System-GPS sonar rules remain unchanged. Targeted JVM regression and Android-test compilation pass; remote device execution is pending.**
+- Real hardware verified: **No — verify RMC/GGA + DPT/DBT from the real shared NMEA system during a short survey.**
+- Status: **FIXED IN CODE — REMOTE DEVICE SHARD AND HARDWARE QA PENDING**
+
+## Finding P1-050 — Environmental-disable story read the audit log between two Room writes
+
+- Severity: **P1 / device release gate false failure**
+- User story: disabling an already-enabled environmental guard while NMEA is disconnected must both persist the disabled state and append its explicit audit event.
+- Evidence: run 61 observed the session with `depthGuardEnabled=false`, then immediately failed because its one-time event snapshot did not yet contain `DEPTH_GUARD_DISABLED`.
+- Reproduction steps: issue `UPDATE_CONDITION_GUARDS`, await only the session-row Flow, and synchronously read the first event-list emission.
+- Root cause: `ConditionRuntime.updateConfig()` intentionally persists the session before appending audit events. Room invalidates those tables independently, so observing the first write does not prove the second transaction has emitted yet.
+- Failing test: `disconnectedInstrumentNeverTrapsAnAlreadyEnabledEnvironmentalAlert`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **The behavior assertion still requires both outcomes, but now independently awaits the explicit event Flow instead of assuming cross-table emission order. No timeout was increased and no product assertion was removed. Android-test compilation passes; remote shard execution is pending.**
+- Real hardware verified: **Not applicable — production persisted both facts; this correction removes a test observation race.**
+- Status: **FIXED IN TEST — REMOTE DEVICE SHARD PENDING**
 
 ## Finding P1-048 — Failed Android shards could hang while collecting diagnostics
 

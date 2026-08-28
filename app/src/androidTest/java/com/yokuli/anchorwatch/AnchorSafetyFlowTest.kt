@@ -3,6 +3,9 @@ package com.yokuli.anchorwatch
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.location.Location
+import android.location.LocationManager
+import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -168,11 +171,13 @@ class AnchorSafetyFlowTest {
     @Test fun freshSystemGpsArmCreatesAnActiveSessionWithoutNmea() = runBlocking<Unit>{
         navigation.disconnectAll()
         preferences.save(AppSettings(gpsDataSource=GpsDataSource.SYSTEM,gpsLossSeconds=20,appLanguage=AppLanguage.ENGLISH))
-        // adb geo fix populates Android's GNSS provider, but the process-wide
-        // repository must actually acquire it before this story can claim the
-        // P0 precondition "fresh raw selected-provider fix already exists".
-        systemLocation.setPreviewEnabled(true)
-        withTimeout(10_000){systemLocation.fix.first{fix->fix?.valid==true&&fix.positionProvider==PositionProvider.ANDROID_GNSS}}
+        // This P0 story is about the synchronous provider -> integrity -> ARM
+        // race, not emulator-console delivery. Establish the exact fresh raw
+        // provider precondition deterministically in the Debug test process.
+        systemLocation.publishProviderLocationForTest(Location(LocationManager.GPS_PROVIDER).apply{
+            latitude=-36.8485;longitude=174.7633;accuracy=4f;time=System.currentTimeMillis()
+            elapsedRealtimeNanos=SystemClock.elapsedRealtimeNanos()
+        })
         val arm=Intent(context,AnchorForegroundService::class.java)
             .setAction(AnchorForegroundService.ARM)
             .putExtra("lat",-36.8485)
@@ -841,7 +846,8 @@ class AnchorSafetyFlowTest {
 
         val active=withTimeout(5_000){dao.sessions().first{rows->rows.any{it.id==sessionId&&!it.depthGuardEnabled}}.first{it.id==sessionId}}
         assertTrue(!active.depthGuardEnabled)
-        assertTrue(dao.events(sessionId).first().any{it.type=="DEPTH_GUARD_DISABLED"})
+        val events=withTimeout(5_000){dao.events(sessionId).first{rows->rows.any{it.type=="DEPTH_GUARD_DISABLED"}}}
+        assertTrue(events.any{it.type=="DEPTH_GUARD_DISABLED"})
     }
 
     @Test fun automaticReconnectRecordsRecoveryWithoutStoppingWatch() = runBlocking<Unit> {

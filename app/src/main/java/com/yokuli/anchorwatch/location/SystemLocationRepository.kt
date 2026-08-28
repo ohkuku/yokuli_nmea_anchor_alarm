@@ -9,8 +9,10 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
 import android.os.SystemClock
+import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationCompat
+import com.yokuli.anchorwatch.BuildConfig
 import com.yokuli.anchorwatch.domain.model.NavigationFix
 import com.yokuli.anchorwatch.domain.model.PositionProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -64,6 +66,16 @@ class SystemLocationRepository @Inject constructor(
         )
         _fix.value = value
         if (value.valid) appendRecent(value)
+    }
+
+    /** Establishes the exact raw-provider precondition needed by black-box ARM
+     * race tests. It still enters through [publish], so provider conversion,
+     * mock rejection and every downstream integrity rule remain production
+     * code. Release builds cannot call this entry point. */
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun publishProviderLocationForTest(location:Location) {
+        check(BuildConfig.DEBUG) { "Provider test injection is disabled in release builds" }
+        publish(location)
     }
 
     fun hasPermission(): Boolean = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
