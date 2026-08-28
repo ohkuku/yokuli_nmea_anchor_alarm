@@ -299,7 +299,11 @@ private fun coordinatePair(startLat:Double?,startLon:Double?,endLat:Double?,endL
 @Composable internal fun TripRouteThumbnail(segments:List<com.yokuli.anchorwatch.data.trip.TripTrackSegment>,modifier:Modifier=Modifier){
     val points=segments.flatMap{it.points}.filter{it.hasPosition}
     if(points.isEmpty()){
-        Card(modifier.testTag("trip_route_empty")){Box(Modifier.fillMaxSize().padding(12.dp),contentAlignment=Alignment.Center){Text(tr("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.","本次航程没有记录到可用坐标；仪表样本与事件仍可在下方查看。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
+        // Keep the caller's map/open action semantics on the Card and expose
+        // the empty state as its own child. Chaining two testTag modifiers on
+        // one node makes one identity overwrite the other after semantics are
+        // collapsed, leaving assistive tooling unable to identify the reason.
+        Card(modifier){Box(Modifier.fillMaxSize().padding(12.dp).testTag("trip_route_empty"),contentAlignment=Alignment.Center){Text(tr("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.","本次航程没有记录到可用坐标；仪表样本与事件仍可在下方查看。"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
         return
     }
     val lineColor=MaterialTheme.colorScheme.primary;val pointColor=MaterialTheme.colorScheme.tertiary;val background=MaterialTheme.colorScheme.surfaceVariant

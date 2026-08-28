@@ -553,6 +553,8 @@ class AnchorSafetyFlowTest {
                 compose.onNodeWithTag("sail_tab_1").performClick()
                 compose.waitUntil(10_000){compose.onAllNodesWithTag("trip_history_open_$tripId").fetchSemanticsNodes().size==1}
                 compose.onNodeWithTag("trip_history_open_$tripId").performClick()
+                compose.waitUntil(5_000){compose.onAllNodesWithTag("trip_history_route_$tripId").fetchSemanticsNodes().size==1}
+                compose.onNodeWithTag("trip_history_route_$tripId").performScrollTo()
                 compose.waitUntil(10_000){compose.onAllNodesWithTag("trip_route_empty").fetchSemanticsNodes().size==1}
                 compose.onNodeWithTag("trip_route_empty").assertIsDisplayed()
                 compose.onNodeWithText("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.").assertIsDisplayed()
