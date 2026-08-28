@@ -555,9 +555,14 @@ class AnchorSafetyFlowTest {
                 compose.onNodeWithTag("trip_history_open_$tripId").performClick()
                 compose.waitUntil(5_000){compose.onAllNodesWithTag("trip_history_route_$tripId").fetchSemanticsNodes().size==1}
                 compose.onNodeWithTag("trip_history_route_$tripId").performScrollTo()
-                compose.waitUntil(10_000){compose.onAllNodesWithTag("trip_route_empty").fetchSemanticsNodes().size==1}
-                compose.onNodeWithTag("trip_route_empty").assertIsDisplayed()
-                compose.onNodeWithText("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.").assertIsDisplayed()
+                // The route Card is clickable and therefore merges its child
+                // semantics in the accessibility tree. Inspect the unmerged
+                // tree when targeting the deliberately distinct empty-state
+                // child, then still require real viewport visibility and the
+                // exact user-facing reason.
+                compose.waitUntil(10_000){compose.onAllNodesWithTag("trip_route_empty",useUnmergedTree=true).fetchSemanticsNodes().size==1}
+                compose.onNodeWithTag("trip_route_empty",useUnmergedTree=true).assertIsDisplayed()
+                compose.onNodeWithText("No usable coordinates were recorded for this trip. Instrument samples and events remain available below.",useUnmergedTree=true).assertIsDisplayed()
             }
         }finally{
             tripDao.deleteCompleted(tripId)
