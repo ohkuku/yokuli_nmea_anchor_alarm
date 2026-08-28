@@ -135,7 +135,7 @@ internal fun WatchPanel(state: MainUiState, boatHeading:Double?,arm: () -> Unit,
                 active==null->if(freshFix)tr("Ready to set anchor${if(newAnchorSource==GpsDataSource.DEMO)" · Demo uses the confirmed start coordinate" else ""}","已可下锚${if(newAnchorSource==GpsDataSource.DEMO)" · 演示使用已确认的起点坐标" else ""}") else tr("GPS health is degraded · Set anchor remains available and monitoring will warn after start","GPS 健康降级 · 仍可设置锚点，启动后监控会发出警告")
                 active.paused->tr("Centre, track and ${active.alarmRadiusMeters.toInt()} m range preserved","中心、轨迹和 ${active.alarmRadiusMeters.toInt()} 米范围已保留")
                 waitingForGps->tr("Anchor coordinate saved · vessel movement is not being monitored yet","锚点坐标已保存 · 尚未开始监测船位移动")
-                !centerReady->tr("${learningDistance?.toInt()?:"--"} m / ${active.alarmRadiusMeters.toInt()} m temporary boundary • ${state.points.size} fixes","临时边界 ${learningDistance?.toInt()?:"--"} / ${active.alarmRadiusMeters.toInt()} 米 · ${state.points.size} 个定位点")
+                !centerReady->tr("${learningDistance?.toInt()?:"--"} m / ${active.alarmRadiusMeters.toInt()} m temporary boundary • ${state.activeLearningPointCount} fixes","临时边界 ${learningDistance?.toInt()?:"--"} / ${active.alarmRadiusMeters.toInt()} 米 · ${state.activeLearningPointCount} 个定位点")
                 else->tr("${distance?.toInt() ?: "--"} m / ${active.alarmRadiusMeters.toInt()} m","${distance?.toInt() ?: "--"} / ${active.alarmRadiusMeters.toInt()} 米")
             }, style = if(active==null||active.paused||waitingForGps||!centerReady)MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         } }

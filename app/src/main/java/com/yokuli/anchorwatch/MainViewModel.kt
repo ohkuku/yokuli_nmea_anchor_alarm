@@ -223,6 +223,8 @@ data class MainUiState(
     val sessions:List<AnchorSessionEntity> = emptyList(),
     val active:AnchorSessionEntity?=null,
     val points:List<TrackPointEntity> = emptyList(),
+    /** Full current centre-analysis count; [points] is only the bounded map trail. */
+    val activeLearningPointCount:Int=0,
     val follow:Boolean=true,
     val page:Int=0,
     val anchorSection:Int=0,
@@ -361,6 +363,7 @@ class MainViewModel @Inject constructor(
     private val _ui=MutableStateFlow(MainUiState(anchorSetupDraft=restoredAnchorSetupDraft,tripMapDestination=restoredTripMapDestination));val ui=_ui.asStateFlow()
     private var pointsJob:Job?=null
     private var observedSessionId:Long?=null
+    private var observedEstimationEpochStartedAt:Long?=null
     private var sonarSamplesJob:Job?=null
     private var observedSonarSurveyId:Long?=null
     private val anchorageNearbyTracker=AnchorageNearbyEpisodeTracker()
@@ -594,13 +597,27 @@ class MainViewModel @Inject constructor(
     }
 
     private fun observePoints(session:AnchorSessionEntity?){
-        if(pointsJob?.isActive==true&&observedSessionId==session?.id)return
+        val epochStartedAt=session?.let{it.estimationEpochStartedAt?:it.startedAt}
+        if(pointsJob?.isActive==true&&observedSessionId==session?.id&&observedEstimationEpochStartedAt==epochStartedAt)return
         pointsJob?.cancel()
         observedSessionId=session?.id
-        if(session==null){_ui.update{it.copy(points=emptyList())};return}
+        observedEstimationEpochStartedAt=epochStartedAt
+        if(session==null){_ui.update{it.copy(points=emptyList(),activeLearningPointCount=0)};return}
         // AnchorWatchRuntime owns centre estimation. Compose observes only the
-        // bounded render trail, avoiding an all-session query and refit per insert.
-        pointsJob=viewModelScope.launch{dao.recentPoints(session.id,MAX_ACTIVE_TRAIL_POINTS).collect{points->_ui.update{it.copy(points=points)}}}
+        // bounded render trail. Seed the full count once, then extend it from
+        // monotonically increasing row IDs so a long watch does not rerun COUNT
+        // over its entire history for every one-second fix.
+        pointsJob=viewModelScope.launch{
+            val baseline=dao.pointCountSnapshotSince(session.id,requireNotNull(epochStartedAt))
+            var count=baseline.pointCount
+            var lastCountedId=baseline.maxPointId
+            dao.recentPoints(session.id,MAX_ACTIVE_TRAIL_POINTS).collect{points->
+                val newPoints=points.count{it.id>lastCountedId&&it.timestamp>=epochStartedAt}
+                count+=newPoints
+                lastCountedId=maxOf(lastCountedId,points.maxOfOrNull{it.id}?:lastCountedId)
+                _ui.update{it.copy(points=points,activeLearningPointCount=count)}
+            }
+        }
     }
 
     private fun observeSonarSamples(surveyId:Long?){

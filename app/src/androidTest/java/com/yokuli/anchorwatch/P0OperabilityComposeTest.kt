@@ -16,6 +16,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import com.yokuli.anchorwatch.data.vessel.VesselDataSettings
+import com.yokuli.anchorwatch.data.database.AnchorSessionEntity
+import com.yokuli.anchorwatch.domain.model.AnchorCenterStatus
 import com.yokuli.anchorwatch.data.trip.TripReplayData
 import com.yokuli.anchorwatch.domain.vessel.CandidateValidity
 import com.yokuli.anchorwatch.domain.vessel.VesselDataSnapshot
@@ -50,6 +52,32 @@ class P0OperabilityComposeTest{
         compose.onNodeWithTag("set_anchor_primary").assertIsDisplayed().assertIsEnabled().performClick()
         compose.onNodeWithText("Anchor Watch cannot start yet").assertIsDisplayed()
         compose.onNodeWithText("Safety settings are still loading. Wait for the Ready status, then try again.").assertIsDisplayed()
+    }
+
+    @Test fun centreLearningProgressIsNotCappedByTheBoundedMapTrail(){
+        val active=AnchorSessionEntity(
+            startedAt=1L,
+            anchorLatitude=-36.8485,
+            anchorLongitude=174.7633,
+            rodeLengthMeters=40.0,
+            waterDepthMeters=8.0,
+            bowRollerHeightMeters=1.0,
+            gpsAntennaOffsetMeters=0.0,
+            expectedSwingRadiusMeters=40.0,
+            warningRadiusMeters=65.0,
+            alarmRadiusMeters=80.0,
+            placementMode="BACKDOWN",
+            centerStatus=AnchorCenterStatus.LEARNING.name,
+            estimationEpoch=1,
+            estimationEpochStartedAt=1L,
+        )
+        compose.setContent{
+            YokuliTheme{WatchPanel(
+                state=MainUiState(active=active,activeLearningPointCount=6_125),boatHeading=null,arm={},adjust={},manageVesselData={},resetCentreAnalysis={},conditionUpdate={_ ->},resetWindBaseline={},viewNearby={_ ->},
+                nearbyActions=SavedAnchorageCardActions({_ ->},{_ ->},{_ ->}),pause={},resume={},lift={},openAnchorMap={},recalculateCentre={},reconnectNmea={},openNmea={},openGpsSources={},
+            )}
+        }
+        compose.onNodeWithText("-- m / 80 m temporary boundary • 6125 fixes").assertIsDisplayed()
     }
 
     @Test fun rootWorkspaceSwipeDoesNotChangeSection(){
