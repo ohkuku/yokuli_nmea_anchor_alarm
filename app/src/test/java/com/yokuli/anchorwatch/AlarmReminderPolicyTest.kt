@@ -4,6 +4,7 @@ import com.yokuli.anchorwatch.domain.anchor.AlarmReminderPolicy
 import com.yokuli.anchorwatch.domain.model.AlarmSnapshot
 import com.yokuli.anchorwatch.domain.model.AlarmState
 import com.yokuli.anchorwatch.domain.model.AlarmType
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,5 +21,16 @@ class AlarmReminderPolicyTest {
 
     @Test fun pausedWatchNeverSoundsEvenAfterSnoozeExpires() {
         assertFalse(AlarmReminderPolicy.shouldSound(alarm, paused = true, snoozedUntil = null, nowMillis = 0L))
+    }
+
+    @Test fun anchorWarningUsesTheSameGlobalAlarmAudioAndSnoozePath() {
+        val warning = AlarmSnapshot(state = AlarmState.WARNING, distanceMeters = 45.0)
+        assertTrue(AlarmReminderPolicy.shouldSound(warning, paused = false, snoozedUntil = null, nowMillis = 10_000L))
+        assertFalse(AlarmReminderPolicy.shouldSound(warning, paused = false, snoozedUntil = 20_000L, nowMillis = 10_000L))
+    }
+
+    @Test fun fullAlarmBreaksAnEarlierWarningSnooze() {
+        val warning = AlarmSnapshot(state = AlarmState.WARNING, distanceMeters = 45.0)
+        assertEquals(null,AlarmReminderPolicy.snoozeAfterTransition(warning,alarm,60_000L))
     }
 }

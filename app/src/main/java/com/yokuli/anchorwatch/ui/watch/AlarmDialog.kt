@@ -86,9 +86,11 @@ import java.text.DateFormat
 internal data class AlarmPresentation(val title:String,val primaryValue:String,val detail:String)
 
 @Composable private fun alarmPresentation(primary:String?,alarm:com.yokuli.anchorwatch.domain.model.AlarmSnapshot,active:AnchorSessionEntity,state:MainUiState):AlarmPresentation=when(primary){
+    "ANCHOR_WARNING"->AlarmPresentation(tr("ANCHOR WARNING","锚警预警"),"${alarm.distanceMeters?.toInt()?:"—"} m",tr("The vessel has crossed the ${active.warningRadiusMeters.toInt()} m warning boundary. The full alarm boundary is ${active.alarmRadiusMeters.toInt()} m.","船只已越过 ${active.warningRadiusMeters.toInt()} 米预警范围；${active.alarmRadiusMeters.toInt()} 米将触发正式警报。"))
     "SHALLOW"->AlarmPresentation(tr("SHALLOW WATER ALARM","浅水警报"),state.conditions.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:"—",tr("Below the ${active.shallowDepthAlarmMeters} m shallow threshold.","低于 ${active.shallowDepthAlarmMeters} 米浅水阈值。"))
     "DEEP"->AlarmPresentation(tr("DEEP WATER ALARM","深水警报"),state.conditions.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:"—",tr("Above the ${active.deepDepthAlarmMeters} m deep-water threshold.","高于 ${active.deepDepthAlarmMeters} 米深水阈值。"))
     "WIND"->AlarmPresentation(tr("HIGH WIND ALARM","大风警报"),state.conditions.windSpeed.filteredSpeedKnots?.let{"%.1f kn ${state.conditions.windSpeed.source}".format(it)}?:"—",tr("The alarm threshold is ${active.windAlarmKnots} kn.","警报阈值为 ${active.windAlarmKnots} 节。"))
+    "WIND_WARNING"->AlarmPresentation(tr("HIGH WIND WARNING","大风预警"),state.conditions.windSpeed.filteredSpeedKnots?.let{"%.1f kn ${state.conditions.windSpeed.source}".format(it)}?:"—",tr("The warning threshold is ${active.windWarningKnots} kn; the full alarm threshold is ${active.windAlarmKnots} kn.","预警阈值为 ${active.windWarningKnots} 节；正式警报阈值为 ${active.windAlarmKnots} 节。"))
     "SHIFT"->AlarmPresentation(tr("WIND SHIFT ALARM","风向突变警报"),state.conditions.windShift.shiftDegrees?.let{"${it.toInt()}°"}?:"—",tr("Fixed baseline ${state.conditions.windShift.baselineDirectionDegrees?.toInt()?:"—"}° → current ${state.conditions.windShift.currentDirectionDegrees?.toInt()?:"—"}°.","固定基线 ${state.conditions.windShift.baselineDirectionDegrees?.toInt()?:"—"}° → 当前 ${state.conditions.windShift.currentDirectionDegrees?.toInt()?:"—"}°。"))
     "DEPTH_DATA"->AlarmPresentation(tr("DEPTH DATA LOST","水深数据丢失"),"—",tr("The depth guard is still enabled, but it cannot evaluate safety without fresh DPT/DBT data. Reconnect NMEA or explicitly disable this guard.","水深警戒仍处于开启状态，但缺少新鲜 DPT/DBT 数据时无法判断安全。请恢复 NMEA，或明确关闭该警戒。"))
     "WIND_DATA"->AlarmPresentation(tr("WIND DATA LOST","风数据丢失"),"—",tr("A wind guard is still enabled, but its required live NMEA data is unavailable. Reconnect NMEA or explicitly disable the unavailable guard.","风警戒仍处于开启状态，但所需实时 NMEA 数据不可用。请恢复 NMEA，或明确关闭不可用的警戒。"))
@@ -108,18 +110,18 @@ internal data class AlarmPresentation(val title:String,val primaryValue:String,v
     // confirmation controls the user is trying to verify. AnchorApp shows a global,
     // non-modal banner instead.
     if(alarm.type==AlarmType.ALARM_TEST)return
-    val now=System.currentTimeMillis();val anchorAudible=alarm.state==AlarmState.ALARM&&alarm.type!=null&&(active?.alarmSnoozedUntil?:0L)<=now
+    val now=System.currentTimeMillis();val anchorAudible=(alarm.state==AlarmState.WARNING||alarm.state==AlarmState.ALARM&&alarm.type!=null)&&(active?.alarmSnoozedUntil?:0L)<=now
     val depthAudible=(state.conditions.depth.alarmActive||state.conditions.depth.dataUnavailable)&&(active?.depthAlarmSnoozedUntil?:0L)<=now
-    val windAudible=(state.conditions.windSpeed.alarmActive||state.conditions.windSpeed.dataUnavailable)&&(active?.windAlarmSnoozedUntil?:0L)<=now
+    val windAudible=(state.conditions.windSpeed.warningActive||state.conditions.windSpeed.alarmActive||state.conditions.windSpeed.dataUnavailable)&&(active?.windAlarmSnoozedUntil?:0L)<=now
     val shiftAudible=(state.conditions.windShift.alarmActive||state.conditions.windShift.dataUnavailable)&&(active?.windShiftAlarmSnoozedUntil?:0L)<=now
     val activeAlerts=buildList{
-        if(anchorAudible)add(SafetyAlert(ConditionAlarmSource.ANCHOR,SafetyAlert.Severity.ALARM,if(alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED)"anchor" else "critical source lost",alarm.type?.name?:""))
+        if(anchorAudible)add(SafetyAlert(ConditionAlarmSource.ANCHOR,if(alarm.state==AlarmState.WARNING)SafetyAlert.Severity.WARNING else SafetyAlert.Severity.ALARM,if(alarm.state==AlarmState.WARNING)"anchor warning" else if(alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED)"anchor" else "critical source lost",alarm.type?.name?:""))
         if(depthAudible)add(SafetyAlert(ConditionAlarmSource.DEPTH,SafetyAlert.Severity.ALARM,when{state.conditions.depth.dataUnavailable->"depth data lost";state.conditions.depth.status==DepthGuardStatus.SHALLOW_ALARM->"shallow";else->"deep"},state.conditions.depth.status.name))
-        if(windAudible)add(SafetyAlert(ConditionAlarmSource.WIND_SPEED,SafetyAlert.Severity.ALARM,if(state.conditions.windSpeed.dataUnavailable)"wind data lost" else "wind speed alarm",state.conditions.windSpeed.status.name))
+        if(windAudible)add(SafetyAlert(ConditionAlarmSource.WIND_SPEED,if(state.conditions.windSpeed.status==WindSpeedGuardStatus.WARNING)SafetyAlert.Severity.WARNING else SafetyAlert.Severity.ALARM,when{state.conditions.windSpeed.dataUnavailable->"wind data lost";state.conditions.windSpeed.status==WindSpeedGuardStatus.WARNING->"wind warning";else->"wind speed alarm"},state.conditions.windSpeed.status.name))
         if(shiftAudible)add(SafetyAlert(ConditionAlarmSource.WIND_SHIFT,SafetyAlert.Severity.ALARM,if(state.conditions.windShift.dataUnavailable)"wind direction data lost" else "wind shift",state.conditions.windShift.status.name))
     }
     val primaryAlert=SafetyAlertAggregator.sorted(activeAlerts).firstOrNull()
-    val primary=when(primaryAlert?.source){ConditionAlarmSource.DEPTH->if(state.conditions.depth.dataUnavailable)"DEPTH_DATA" else if(state.conditions.depth.status==DepthGuardStatus.SHALLOW_ALARM)"SHALLOW" else "DEEP";ConditionAlarmSource.ANCHOR->"ANCHOR";ConditionAlarmSource.WIND_SPEED->if(state.conditions.windSpeed.dataUnavailable)"WIND_DATA" else "WIND";ConditionAlarmSource.WIND_SHIFT->if(state.conditions.windShift.dataUnavailable)"WIND_DATA" else "SHIFT";else->null}
+    val primary=when(primaryAlert?.source){ConditionAlarmSource.DEPTH->if(state.conditions.depth.dataUnavailable)"DEPTH_DATA" else if(state.conditions.depth.status==DepthGuardStatus.SHALLOW_ALARM)"SHALLOW" else "DEEP";ConditionAlarmSource.ANCHOR->if(alarm.state==AlarmState.WARNING)"ANCHOR_WARNING" else "ANCHOR";ConditionAlarmSource.WIND_SPEED->when{state.conditions.windSpeed.dataUnavailable->"WIND_DATA";state.conditions.windSpeed.status==WindSpeedGuardStatus.WARNING->"WIND_WARNING";else->"WIND"};ConditionAlarmSource.WIND_SHIFT->if(state.conditions.windShift.dataUnavailable)"WIND_DATA" else "SHIFT";else->null}
     val visible=active?.paused==false&&primary!=null
     val radiusAlarm=primary=="ANCHOR"&&alarm.type==AlarmType.ANCHOR_RADIUS_EXCEEDED
     val positionSource=runCatching{GpsDataSource.valueOf(active?.positionSource.orEmpty())}.getOrDefault(state.settings.gpsDataSource)
@@ -133,7 +135,7 @@ internal data class AlarmPresentation(val title:String,val primaryValue:String,v
     }else{
         Dialog(onDismissRequest={},properties=DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false)){
             Surface(Modifier.fillMaxWidth().padding(horizontal=8.dp),shape=MaterialTheme.shapes.extraLarge,tonalElevation=8.dp){Column(Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(22.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                Text(presentation?.title?:tr("ANCHOR WATCH ALARM","锚警系统警报"),modifier=Modifier.testTag("in_app_anchor_alarm"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+                Text(presentation?.title?:tr("ANCHOR WATCH ALARM","锚警系统警报"),modifier=Modifier.testTag("in_app_anchor_alarm"),color=if(primaryAlert?.severity==SafetyAlert.Severity.WARNING)MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
                 presentation?.primaryValue?.takeIf{it.isNotBlank()}?.let{Text(it,style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)}
                 Text(presentation?.detail.orEmpty(),style=MaterialTheme.typography.titleMedium)
                 if(activeAlerts.size>1)Text(tr("+ ${activeAlerts.size-1} other active alert${if(activeAlerts.size>2)"s" else ""}","另有 ${activeAlerts.size-1} 项警报仍在生效"),fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.error)

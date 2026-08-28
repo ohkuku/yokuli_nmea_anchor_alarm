@@ -545,7 +545,7 @@ class YokuliRuntimeCoordinator @Inject constructor(
  }
 
  private fun refreshNotification(){
-  val anchor=anchorRuntime.snapshot();val snapshot=anchor.alarm;val active=anchor.session;val proxy=proxyRuntime.status.value;val now=wallClock.currentTimeMillis();val condition=conditionRuntime.state.value;val sonarContinuity=sonarContinuity();val anchorAlarm=active?.paused==false&&snapshot?.type!=null&&(snapshot.state==AlarmState.ALARM||snapshot.state==AlarmState.ACKNOWLEDGED);val depthSafetyAlarm=condition.depth.alarmActive||condition.depth.dataUnavailable;val windSafetyAlarm=condition.windSpeed.alarmActive||condition.windSpeed.dataUnavailable;val shiftSafetyAlarm=condition.windShift.alarmActive||condition.windShift.dataUnavailable;val conditionAlarm=active?.paused==false&&(depthSafetyAlarm||windSafetyAlarm||shiftSafetyAlarm);val alarmCondition=anchorAlarm||conditionAlarm;val audible=audioArbiter.snapshot(now).shouldSound;val snoozed=alarmCondition&&!audible;val remaining=listOfNotNull(active?.alarmSnoozedUntil,active?.depthAlarmSnoozedUntil,active?.windAlarmSnoozedUntil,active?.windShiftAlarmSnoozedUntil).filter{it>now}.minOrNull()?.let{((it-now+59_999)/60_000).coerceAtLeast(1)}
+  val anchor=anchorRuntime.snapshot();val snapshot=anchor.alarm;val active=anchor.session;val proxy=proxyRuntime.status.value;val now=wallClock.currentTimeMillis();val condition=conditionRuntime.state.value;val sonarContinuity=sonarContinuity();val anchorSafetyAlert=active?.paused==false&&(snapshot?.state==AlarmState.WARNING||snapshot?.type!=null&&snapshot.state in setOf(AlarmState.ALARM,AlarmState.ACKNOWLEDGED));val depthSafetyAlert=condition.depth.alarmActive||condition.depth.dataUnavailable;val windSafetyAlert=condition.windSpeed.warningActive||condition.windSpeed.alarmActive||condition.windSpeed.dataUnavailable;val shiftSafetyAlert=condition.windShift.alarmActive||condition.windShift.dataUnavailable;val conditionAlert=active?.paused==false&&(depthSafetyAlert||windSafetyAlert||shiftSafetyAlert);val safetyAlert=anchorSafetyAlert||conditionAlert;val audible=audioArbiter.snapshot(now).shouldSound;val snoozed=safetyAlert&&!audible;val remaining=listOfNotNull(active?.alarmSnoozedUntil,active?.depthAlarmSnoozedUntil,active?.windAlarmSnoozedUntil,active?.windShiftAlarmSnoozedUntil).filter{it>now}.minOrNull()?.let{((it-now+59_999)/60_000).coerceAtLeast(1)}
   val base=when{
    alarmTestActive->l("Alarm test sounding • open the App to confirm or stop","警报测试正在响铃 · 打开应用确认或停止")
    condition.depth.status==DepthGuardStatus.SHALLOW_ALARM->l("SHALLOW WATER ${condition.depth.filteredDepthMeters?.let{"%.1f m".format(it)}?:""}","浅水警报 ${condition.depth.filteredDepthMeters?.let{"%.1f 米".format(it)}?:""}")
@@ -557,6 +557,8 @@ class YokuliRuntimeCoordinator @Inject constructor(
    condition.windShift.status==WindShiftGuardStatus.ALARM->l("WIND SHIFT ${condition.windShift.shiftDegrees?.toInt()?:"—"}°","风向突变 ${condition.windShift.shiftDegrees?.toInt()?:"—"}°")
    condition.depth.dataUnavailable->l("DEPTH DATA LOST • guard cannot evaluate","水深数据丢失 · 警戒无法判断")
    condition.windSpeed.dataUnavailable||condition.windShift.dataUnavailable->l("WIND DATA LOST • guard cannot evaluate","风数据丢失 · 警戒无法判断")
+   snapshot?.state==AlarmState.WARNING&&active?.paused==false->l("ANCHOR WARNING ${snapshot.distanceMeters?.toInt()} m • alarm at ${active.alarmRadiusMeters.toInt()} m","锚警预警：距离 ${snapshot.distanceMeters?.toInt()} 米 · ${active.alarmRadiusMeters.toInt()} 米触发警报")
+   condition.windSpeed.status==WindSpeedGuardStatus.WARNING->l("HIGH WIND WARNING ${condition.windSpeed.filteredSpeedKnots?.let{"%.1f kn".format(it)}?:""}","大风预警 ${condition.windSpeed.filteredSpeedKnots?.let{"%.1f 节".format(it)}?:""}")
    active?.paused==true&&proxy.state==MockGpsState.ACTIVE->l("Anchor session paused • NMEA GPS proxy active","锚泊监控已暂停 · NMEA GPS 代理运行中")
    active?.paused==true->l("Anchor session paused","锚泊监控已暂停")
    active?.monitoringPhase==com.yokuli.anchorwatch.domain.model.AnchorMonitoringPhase.WAITING_FOR_GPS.name->l("Anchor session saved • waiting for accepted ${if(anchor.gpsSource==GpsDataSource.NMEA)"NMEA GPS" else "Phone GNSS"} • movement not monitored","锚泊会话已保存 · 等待可信${if(anchor.gpsSource==GpsDataSource.NMEA)" NMEA GPS" else "手机 GNSS"} · 尚未监测船位移动")
@@ -575,13 +577,13 @@ class YokuliRuntimeCoordinator @Inject constructor(
    tripRuntime.activeSession()?.paused==true->l("Trip Watch paused","航程监控已暂停")
    else->l("Safety monitor idle","安全监控待命")
   }
-  val activeAlertCount=(if(anchorAlarm)1 else 0)+(if(depthSafetyAlarm)1 else 0)+(if(windSafetyAlarm)1 else 0)+(if(shiftSafetyAlarm)1 else 0)
+  val activeAlertCount=(if(anchorSafetyAlert)1 else 0)+(if(depthSafetyAlert)1 else 0)+(if(windSafetyAlert)1 else 0)+(if(shiftSafetyAlert)1 else 0)
   val countedBase=if(activeAlertCount>1)l("$base • +${activeAlertCount-1} other active alert${if(activeAlertCount>2)"s" else ""}","$base · 另有 ${activeAlertCount-1} 项警报")else base
-  val text=if(snoozed&&alarmCondition)l("$countedBase • snoozed, remind in ${remaining?:alarmSnoozeMinutes}m","$countedBase · 已暂停响铃，${remaining?:alarmSnoozeMinutes} 分钟后再次提醒")else countedBase
+  val text=if(snoozed&&safetyAlert)l("$countedBase • snoozed, remind in ${remaining?:alarmSnoozeMinutes}m","$countedBase · 已暂停响铃，${remaining?:alarmSnoozeMinutes} 分钟后再次提醒")else countedBase
   // Updating through startForeground keeps the active service-type mask in
   // sync with background GNSS ownership; NotificationManager.notify alone
   // cannot promote an existing connected-device service to location use.
-  val currentNotification=notification(text,alarmCondition,snoozed)
+  val currentNotification=notification(text,safetyAlert,snoozed)
   val needsLocationType=resources.snapshot().needsSystemLocation&&systemLocation.hasPermission()
   if(needsLocationType!=foregroundLocationType)promoteForeground(currentNotification,needsLocationType)
   else notificationCoordinator.publishForeground(currentNotification)

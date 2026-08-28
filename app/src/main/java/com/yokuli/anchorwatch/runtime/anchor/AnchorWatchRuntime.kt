@@ -592,7 +592,8 @@ class AnchorWatchRuntime(
      * changes create epochs in [onAcceptedPosition]. */
 
     suspend fun snooze(){
-        val current=session?:return;if(current.paused||lastSnapshot?.type==null)return
+        val current=session?:return;val audibleState=lastSnapshot?.state
+        if(current.paused||audibleState !in setOf(AlarmState.WARNING,AlarmState.ALARM,AlarmState.ACKNOWLEDGED))return
         val minutes=preferences.settings.first().alarmSnoozeMinutes;val until=AlarmReminderPolicy.snoozeUntil(wallClock.currentTimeMillis(),minutes);val updated=current.copy(alarmSnoozedUntil=until);dao.insertEvent(AlarmEventEntity(sessionId=updated.id,timestamp=wallClock.currentTimeMillis(),type="ALARM_SNOOZED",detail="${minutes}m"));session=updated;dao.updateSession(updated);lastSnapshot=engine.acknowledge();alarmUi.publish(lastSnapshot!!);host.silence();host.refresh()
     }
 
@@ -829,7 +830,9 @@ class AnchorWatchRuntime(
     }
 
     private suspend fun updateAlarm(snapshot:AlarmSnapshot){
-        val now=wallClock.currentTimeMillis();var active=session;val settled=active
+        val now=wallClock.currentTimeMillis();val previousSnapshot=lastSnapshot;var active=session;val settled=active
+        val transitionedSnooze=AlarmReminderPolicy.snoozeAfterTransition(previousSnapshot,snapshot,settled?.alarmSnoozedUntil)
+        if(settled!=null&&transitionedSnooze!=settled.alarmSnoozedUntil){val updated=settled.copy(alarmSnoozedUntil=transitionedSnooze);active=updated;session=updated;dao.updateSession(updated)}
         if(snapshot.state!=AlarmState.ALARM&&snapshot.state!=AlarmState.WARNING&&snapshot.state!=AlarmState.ACKNOWLEDGED&&settled?.alarmSnoozedUntil!=null){val updated=settled.copy(alarmSnoozedUntil=null);active=updated;session=updated;dao.updateSession(updated)}
         val expired=active;if(expired?.alarmSnoozedUntil?.let{it<=now}==true){val updated=expired.copy(alarmSnoozedUntil=null);active=updated;session=updated;dao.updateSession(updated)}
         lastSnapshot=snapshot;alarmUi.publish(snapshot);val critical=snapshot.state==AlarmState.ALARM

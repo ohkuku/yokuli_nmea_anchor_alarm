@@ -99,7 +99,7 @@ class ConditionRuntime @Inject constructor(
         val memory=session?:return;val current=dao.session(memory.id)?.withConditionFieldsFrom(memory)?:memory;val snapshot=_state.value
         val updated=current.copy(
             depthAlarmSnoozedUntil=until.takeIf{snapshot.depth.alarmActive||snapshot.depth.dataUnavailable}?:current.depthAlarmSnoozedUntil,
-            windAlarmSnoozedUntil=until.takeIf{snapshot.windSpeed.alarmActive||snapshot.windSpeed.dataUnavailable}?:current.windAlarmSnoozedUntil,
+            windAlarmSnoozedUntil=until.takeIf{snapshot.windSpeed.warningActive||snapshot.windSpeed.alarmActive||snapshot.windSpeed.dataUnavailable}?:current.windAlarmSnoozedUntil,
             windShiftAlarmSnoozedUntil=until.takeIf{snapshot.windShift.alarmActive||snapshot.windShift.dataUnavailable}?:current.windShiftAlarmSnoozedUntil,
         );session=updated;dao.updateSession(updated)
     }
@@ -120,6 +120,7 @@ class ConditionRuntime @Inject constructor(
             maxObservedWindKnots=nextWind.filteredSpeedKnots?.let{maxOf(active.maxObservedWindKnots?:it,it)}?:active.maxObservedWindKnots,
             maxObservedWindSource=if(nextWind.filteredSpeedKnots!=null&&(active.maxObservedWindKnots==null||nextWind.filteredSpeedKnots>=active.maxObservedWindKnots))nextWind.source?.name else active.maxObservedWindSource,
         )
+        updated=updated.copy(windAlarmSnoozedUntil=ConditionAudibilityPolicy.windSnoozeAfterTransition(before.windSpeed,nextWind,updated.windAlarmSnoozedUntil))
         if(nextShift.baselineDirectionDegrees!=null&&active.windBaselineDirectionDegrees==null){val establishedAt=wallClock.currentTimeMillis();updated=updated.copy(windBaselineDirectionDegrees=nextShift.baselineDirectionDegrees,windBaselineEstablishedAt=establishedAt,windBaselineSource=nextShift.baselineSource?.name);persistedShift=nextShift.copy(baselineEstablishedAt=establishedAt);event("WIND_BASELINE_ESTABLISHED","baseline=${"%.0f".format(nextShift.baselineDirectionDegrees)};source=${nextShift.baselineSource?.name}")}
         updated=transitionEvents(updated,before,nextDepth,nextWind,persistedShift)
         if(updated!=active&&(nowElapsed-lastPersistElapsed>=30_000||updated.depthAlarmCount!=active.depthAlarmCount||updated.windAlarmCount!=active.windAlarmCount||updated.windBaselineDirectionDegrees!=active.windBaselineDirectionDegrees)){
@@ -141,11 +142,7 @@ class ConditionRuntime @Inject constructor(
     }
 
     fun currentSession()=session
-    fun audibleSources(nowWall:Long):Set<ConditionAlarmSource>{val active=session?:return emptySet();val value=_state.value;return buildSet{
-        if((value.depth.alarmActive||value.depth.dataUnavailable)&&(active.depthAlarmSnoozedUntil==null||active.depthAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.DEPTH)
-        if((value.windSpeed.alarmActive||value.windSpeed.dataUnavailable)&&(active.windAlarmSnoozedUntil==null||active.windAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.WIND_SPEED)
-        if((value.windShift.alarmActive||value.windShift.dataUnavailable)&&(active.windShiftAlarmSnoozedUntil==null||active.windShiftAlarmSnoozedUntil<=nowWall))add(ConditionAlarmSource.WIND_SHIFT)
-    }}
+    fun audibleSources(nowWall:Long):Set<ConditionAlarmSource>{val active=session?:return emptySet();return ConditionAudibilityPolicy.audibleSources(_state.value,ConditionSnoozeState(active.depthAlarmSnoozedUntil,active.windAlarmSnoozedUntil,active.windShiftAlarmSnoozedUntil),nowWall)}
 
     private suspend fun transitionEvents(current:AnchorSessionEntity,before:ConditionRuntimeSnapshot,depth:DepthGuardSnapshot,wind:WindSpeedGuardSnapshot,shift:WindShiftGuardSnapshot):AnchorSessionEntity{
         var updated=current

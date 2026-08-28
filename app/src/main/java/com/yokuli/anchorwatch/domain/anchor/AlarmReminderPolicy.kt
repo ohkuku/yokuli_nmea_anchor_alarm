@@ -11,5 +11,10 @@ object AlarmReminderPolicy {
         snoozedUntil != null && snoozedUntil > nowMillis
 
     fun shouldSound(snapshot: AlarmSnapshot, paused: Boolean, snoozedUntil: Long?, nowMillis: Long): Boolean =
-        !paused && snapshot.state == AlarmState.ALARM && !isSnoozed(snoozedUntil, nowMillis)
+        !paused && snapshot.state in setOf(AlarmState.WARNING, AlarmState.ALARM) &&
+            !isSnoozed(snoozedUntil, nowMillis)
+
+    /** A pre-alarm snooze must never suppress a later full alarm. */
+    fun snoozeAfterTransition(previous:AlarmSnapshot?,current:AlarmSnapshot,snoozedUntil:Long?):Long? =
+        if(previous?.state==AlarmState.WARNING&&current.state==AlarmState.ALARM)null else snoozedUntil
 }

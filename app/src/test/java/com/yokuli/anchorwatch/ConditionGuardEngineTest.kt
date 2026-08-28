@@ -61,6 +61,14 @@ class ConditionGuardEngineTest{
         assertEquals(DepthGuardStatus.DATA_UNAVAILABLE,engine.update(depthConfig,null,null,19_001).status)
     }
 
+    @Test fun windWarningUsesGlobalSafetyAudioUntilSnoozed(){
+        val warning=ConditionRuntimeSnapshot(windSpeed=WindSpeedGuardSnapshot(status=WindSpeedGuardStatus.WARNING,filteredSpeedKnots=28.0,warningActive=true))
+        assertEquals(setOf(ConditionAlarmSource.WIND_SPEED),ConditionAudibilityPolicy.audibleSources(warning,ConditionSnoozeState(),10_000L))
+        assertTrue(ConditionAudibilityPolicy.audibleSources(warning,ConditionSnoozeState(windUntil=20_000L),10_000L).isEmpty())
+        val alarm=warning.copy(windSpeed=warning.windSpeed.copy(status=WindSpeedGuardStatus.ALARM,alarmActive=true))
+        assertNull(ConditionAudibilityPolicy.windSnoozeAfterTransition(warning.windSpeed,alarm.windSpeed,20_000L))
+    }
+
     @Test fun stableCircularBaselineNeedsTwoMinutesThenShiftPersists(){
         val config=ConditionGuardConfig(windShiftEnabled=true,windShiftThresholdDegrees=70.0)
         val engine=WindShiftGuardEngine();var snapshot=WindShiftGuardSnapshot()

@@ -775,3 +775,16 @@
 - Verification result: **The refactored reusable instrument plots fresh true HDG/COG/TWD on a north-up rose, uses the existing NMEA course-trust gate for boat COG, applies phone speed hysteresis, animates across north by the shortest angle, and draws TWD at the source bearing with flow toward the centre. Magnetic-only HDG is shown as °M but never plotted on the true rose. Compact AWA/TWA labels preserve the relative frame.**
 - Real hardware verified: **No — compare the rose against the vessel instruments while crossing 359°/001°, then stop below the COG trust threshold.**
 - Status: **FIXED IN CODE — POLICY/COMPOSE TESTS WRITTEN; REAL-COCKPIT QA PENDING**
+
+## Finding P0-056 — Anchor and wind warnings never entered global safety audio
+
+- Severity: **P0 / pre-alarm safety warning was silent in foreground and background**
+- User story: crossing the anchor warning radius or sustaining the configured wind-warning threshold must use the foreground service's global Alarm-audio path, remain actionable with Snooze, and sound again immediately if the condition escalates into a full alarm.
+- Evidence: `AlarmEngine` emitted `AlarmState.WARNING`, but `AlarmReminderPolicy.shouldSound()` accepted only `ALARM`. `ConditionRuntime.audibleSources()` similarly ignored `WindSpeedGuardSnapshot.warningActive`. Both warnings therefore produced visual state or a normal notification while `AlarmAudioController` was never started.
+- Reproduction steps: start an anchor watch, move past the warning radius but remain inside the alarm radius; alternatively sustain wind above `windWarningKnots` but below `windAlarmKnots`. Observe the warning UI with no global sound. Snooze a warning and then cross the full alarm threshold to expose the separate escalation risk.
+- Root cause: warning state existed in the detection engines but was omitted from the shared audio, notification, in-App action and persisted Snooze policies.
+- Failing test: `AlarmReminderPolicyTest.anchorWarningUsesTheSameGlobalAlarmAudioAndSnoozePath`, `fullAlarmBreaksAnEarlierWarningSnooze`, and `ConditionGuardEngineTest.windWarningUsesGlobalSafetyAudioUntilSnoozed`.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **Anchor-radius and wind-speed warnings now enter the same service-owned looping `USAGE_ALARM` playback and vibration path as full alarms, receive high-priority/full-screen notification and in-App Snooze actions, and persist the correct source-specific Snooze. Warning → Alarm clears the warning Snooze so the higher-severity event sounds immediately. Settings now explains that normal Silent/Vibrate does not mute Alarm audio, exposes Android Sound and Do Not Disturb settings, and retains Alarm-volume-zero as a preflight blocker. Targeted JVM tests, Android-test source compilation and Debug assembly passed.**
+- Real hardware verified: **No — verify normal Silent, Vibrate, Samsung/secondary-phone Do Not Disturb modes, screen-off playback and Warning → Snooze → Alarm escalation. Android Do Not Disturb remains governed by the user's system policy.**
+- Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD PASSED; REAL-DEVICE AUDIO QA REQUIRED**

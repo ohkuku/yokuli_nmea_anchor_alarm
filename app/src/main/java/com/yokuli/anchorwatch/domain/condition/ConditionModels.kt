@@ -129,6 +129,27 @@ data class ConditionRuntimeSnapshot(
     val windShift:WindShiftGuardSnapshot=WindShiftGuardSnapshot(),
 )
 
+data class ConditionSnoozeState(
+    val depthUntil:Long?=null,
+    val windUntil:Long?=null,
+    val windShiftUntil:Long?=null,
+)
+
+/** One safety-audio policy for both pre-alarm warnings and full alarms. */
+object ConditionAudibilityPolicy{
+    fun audibleSources(value:ConditionRuntimeSnapshot,snooze:ConditionSnoozeState,nowWall:Long):Set<ConditionAlarmSource> = buildSet{
+        if((value.depth.alarmActive||value.depth.dataUnavailable)&&!snoozed(snooze.depthUntil,nowWall))add(ConditionAlarmSource.DEPTH)
+        if((value.windSpeed.warningActive||value.windSpeed.alarmActive||value.windSpeed.dataUnavailable)&&!snoozed(snooze.windUntil,nowWall))add(ConditionAlarmSource.WIND_SPEED)
+        if((value.windShift.alarmActive||value.windShift.dataUnavailable)&&!snoozed(snooze.windShiftUntil,nowWall))add(ConditionAlarmSource.WIND_SHIFT)
+    }
+
+    private fun snoozed(until:Long?,nowWall:Long)=until!=null&&until>nowWall
+
+    /** Escalating from the wind pre-warning to its alarm is a new event. */
+    fun windSnoozeAfterTransition(previous:WindSpeedGuardSnapshot,current:WindSpeedGuardSnapshot,snoozedUntil:Long?):Long? =
+        if(previous.status==WindSpeedGuardStatus.WARNING&&current.status==WindSpeedGuardStatus.ALARM)null else snoozedUntil
+}
+
 data class SafetyAlert(
     val source:ConditionAlarmSource,
     val severity:Severity,
