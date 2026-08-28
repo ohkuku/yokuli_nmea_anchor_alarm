@@ -75,6 +75,7 @@ import com.yokuli.anchorwatch.location.SystemLocationRepository
 import com.yokuli.anchorwatch.map.MapRuntimePolicy
 import com.yokuli.anchorwatch.service.AnchorForegroundService
 import com.yokuli.anchorwatch.runtime.RuntimeDiagnosticsRepository
+import com.yokuli.anchorwatch.runtime.SystemMonotonicClock
 import dagger.hilt.android.EntryPointAccessors
 import java.io.Closeable
 import java.net.ServerSocket
@@ -150,6 +151,13 @@ class AnchorSafetyFlowTest {
         outputSettings.save(NmeaDeviceOutputSettings())
         localNmeaServerSettings.requestStop()
         preferences.save(AppSettings(gpsDataSource = GpsDataSource.NMEA, gpsLossSeconds = 2))
+    }
+
+    @Test fun anchorRuntimeClockSharesAndroidGpsElapsedRealtimeDomain(){
+        val before=SystemClock.elapsedRealtime()
+        val runtimeNow=SystemMonotonicClock.elapsedRealtime()
+        val after=SystemClock.elapsedRealtime()
+        assertTrue("Anchor Runtime clock $runtimeNow is outside Android GPS clock interval $before..$after",runtimeNow in before..after)
     }
 
     @After fun cleanup() = runBlocking<Unit> {

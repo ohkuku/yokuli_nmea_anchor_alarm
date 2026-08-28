@@ -723,3 +723,16 @@
 - Verification result: **ARM now starts a new unlocked integrity/dedupe epoch, synchronously submits the current selected raw fix through the unchanged integrity filter, snapshots provider/accepted evidence and NMEA generation, and only then reads the monotonic comparison clock. A negative age is reported as `ACCEPTED_POSITION_CLOCK_AHEAD` and can no longer masquerade as stale. NMEA depth/wind gates follow the same evidence-before-clock rule, while the alarm engine receives a clock captured at its actual monitoring start. The last privacy-safe ARM position decision now records raw/accepted ages, disposition, prime count, connection state and both NMEA generations in Data → Runtime & health and the support bundle; coordinates and raw sentences are excluded. A zero prime count remains a dedupe result, never a GPS-failure gate. Targeted P0 JVM tests passed, Android-test sources compiled, and the Debug APK assembled successfully.**
 - Real hardware verified: **No — install the new APK and repeat Current-position ARM once with NMEA, then once with Phone GPS.**
 - Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD PASSED; REAL-DEVICE RECHECK REQUIRED**
+
+## Finding P0-052 — Anchor Runtime compared Android GPS against an incompatible monotonic clock
+
+- Severity: **P0 / both NMEA and Phone GPS were deterministically unable to start Anchor Watch on affected devices**
+- User story: a fresh accepted position and the ARM decision clock must use the same Android elapsed-realtime domain, including time spent in deep sleep.
+- Evidence: after the P0-051 diagnostic stopped calling a negative age `STALE`, the real device immediately reported `ACCEPTED_POSITION_CLOCK_AHEAD` for both NMEA and Phone GPS. GPS receive timestamps came from `SystemClock.elapsedRealtime()` / `Location.elapsedRealtimeNanos`, while the injected `SystemMonotonicClock` returned `System.nanoTime()/1_000_000`.
+- Reproduction steps: allow the Android device to accumulate suspend time, receive either a fresh NMEA fix or Android GNSS location, then start Current-position Anchor Watch. The accepted timestamp is ahead of Runtime's incompatible decision clock and ARM rejects synchronously.
+- Root cause: Android GPS uses the BOOTTIME elapsed-realtime domain, which includes deep sleep. Java `System.nanoTime()` must not be used as the App's interchangeable elapsed-realtime source; their suspend-time/origin semantics can differ.
+- Failing test: device regression `anchorRuntimeClockSharesAndroidGpsElapsedRealtimeDomain`; existing NMEA and System ARM stories cover both user paths.
+- Fix commit: **Current `codex/develop` delivery commit**
+- Verification result: **`SystemMonotonicClock` now delegates to Android `SystemClock.elapsedRealtime()`, the same domain used by NMEA ingestion, connection generations, Android Location and accepted GPS evidence. Strict negative-age diagnostics remain in place for a genuine future clock-domain regression; fresh fixes are no longer rejected because the phone slept. JVM AlarmEngine tests now pass explicit deterministic times instead of invoking an Android platform clock.**
+- Real hardware verified: **No — install the new APK and start one NMEA watch and one Phone-GPS watch after the screen has previously slept.**
+- Status: **FIXED IN CODE — TARGETED TEST/COMPILE/BUILD REQUIRED; REAL-DEVICE RECHECK REQUIRED**
