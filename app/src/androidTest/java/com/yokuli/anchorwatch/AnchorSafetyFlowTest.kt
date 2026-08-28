@@ -22,7 +22,6 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.printToString
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
@@ -504,21 +503,21 @@ class AnchorSafetyFlowTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithTag("nav_sail").performClick()
             compose.onNodeWithTag("mfd_page_OVERVIEW").assertIsDisplayed()
-            compose.onNodeWithTag("mfd_page_OVERVIEW").performTouchInput{swipeLeft()}
-            compose.waitUntil(5_000){compose.onAllNodesWithTag("mfd_page_SAILING").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithTag("mfd_page_SAILING").assertIsDisplayed()
+            // The Overview includes a real map preview which legitimately
+            // consumes map gestures. Switch pages through the visible MFD
+            // picker instead of assuming a centre swipe reached the pager.
+            compose.onNodeWithTag("trip_page_picker").performClick()
+            compose.onNodeWithTag("trip_page_picker_SAILING").performClick()
+            compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("mfd_page_SAILING").assertIsDisplayed();true}.getOrDefault(false)}
             val coreTitles=listOf("Speed through water (STW)","Speed over ground (SOG)","Heel angle (HEEL)","Velocity made good (VMG)","Apparent wind speed (AWS)","True wind speed (TWS)")
-            // HorizontalPager composes adjacent pages before its animation is
-            // settled. Existence of mfd_page_SAILING is therefore not itself
-            // a visibility barrier; await the actual first viewport.
-            compose.waitUntil(5_000){coreTitles.all{title->runCatching{compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed();true}.getOrDefault(false)}}
+            compose.waitForIdle()
             coreTitles.forEach{title->
                 try{compose.onNodeWithTag("marine_instrument_$title").assertIsDisplayed()}
                 catch(error:AssertionError){throw AssertionError("Core instrument '$title' was not fully visible.\n${compose.onRoot(useUnmergedTree=true).printToString(maxDepth=10)}",error)}
             }
-            compose.onNodeWithTag("mfd_page_SAILING").performTouchInput{swipeLeft()}
-            compose.waitUntil(5_000){compose.onAllNodesWithTag("mfd_page_NAV").fetchSemanticsNodes().isNotEmpty()}
-            compose.onNodeWithTag("mfd_page_NAV").assertIsDisplayed()
+            compose.onNodeWithTag("trip_page_picker").performClick()
+            compose.onNodeWithTag("trip_page_picker_NAV").performClick()
+            compose.waitUntil(5_000){runCatching{compose.onNodeWithTag("mfd_page_NAV").assertIsDisplayed();true}.getOrDefault(false)}
             compose.onNodeWithTag("trip_cockpit_mode").performClick()
             compose.onNodeWithTag("nav_anchor").assertDoesNotExist()
             compose.onNodeWithTag("start_trip").assertDoesNotExist()
