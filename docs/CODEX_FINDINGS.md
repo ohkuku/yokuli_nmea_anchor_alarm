@@ -840,3 +840,16 @@
 - Verification result: **The Sail page picker and every destination expose stable semantics tags; explicit menu selection now changes pages immediately rather than leaving a transient half-page animation. The test still requires all six instruments to be fully displayed. The map container keeps its merged click identity while the empty explanation owns a distinct child node in the unmerged semantics tree. Its regression is no longer an isolated sub-composable assertion: it inserts a completed no-position trip, launches the real Activity, opens Sail → Trips → that trip, scrolls the route into view, and requires both the visible child state and exact explanation in the actual history viewport. The migration test still asserts the full stopped/no-socket outcome but allows the asynchronous persistence path 15 seconds. Unit, Lint and Debug Assemble have explicit 20/15/15-minute step timeouts; existing always-run failure-bundle upload remains intact. Android-test sources compile locally. Final remote shard verification is required after push.**
 - Real hardware verified: **Not applicable — this finding concerns GitHub-hosted emulator/test orchestration.**
 - Status: **FIXED IN CODE — LOCAL TEST SOURCE COMPILE PASSED; REMOTE MATRIX PENDING**
+
+## Finding P0-061 — A Google Maps API key remained reachable in Git history
+
+- Severity: **P0 / published credential material**
+- User story: build credentials must come from ignored local configuration or GitHub Actions Secrets and must never remain readable in a public source commit, including deleted lines in reachable history.
+- Evidence: the public diff for old commit `1caf42d73f76db00719300409e4fffeeb80fe804` exposed the deleted `YOKULI_MAPS_API_KEY` assignment from its parent.
+- Reproduction steps: open that old commit diff and inspect the removed line in `gradle.properties`.
+- Root cause: an earlier build committed the Android Maps key directly to tracked root `gradle.properties`; a later deletion removed it only from the current tree, not from Git history.
+- Failing test: repository-history audit found two commits containing `YOKULI_MAPS_API_KEY=`.
+- Fix commit: **History rewrite plus the current `codex/develop` prevention commit**
+- Verification result: **All five branches and twelve tags were rewritten. An independent fresh mirror cloned from GitHub reports zero reachable history matches, and its complete branch/tag tip-tree manifest is byte-identical to the pre-rewrite manifest. CI now rejects Google API key-shaped values without echoing the matched credential, while common local secret-property and environment files are ignored.**
+- Real hardware verified: **Not applicable. The replacement key must still be restricted and validated in Google Cloud/Android builds.**
+- Status: **REMOTE REFS CLEAN; OLD GITHUB CACHED SHA VIEW AND GOOGLE KEY ROTATION REQUIRE OWNER ACTION**

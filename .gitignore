@@ -3,6 +3,11 @@
 .kotlin/
 .idea/
 local.properties
+secrets.properties
+keystore.properties
+.env
+.env.*
+!.env.example
 **/build/
 captures/
 .DS_Store
